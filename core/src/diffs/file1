@@ -1,0 +1,2178 @@
+diff --git a/src/ChangeLog b/src/ChangeLog
+index e97be5b..2636458 100644
+--- a/src/ChangeLog
++++ b/src/ChangeLog
+@@ -1,4 +1,7 @@
+ 24 Nov 2010
++	* removed PSDOP_xxx and GdDrawAreaInternal, all drawarea entry points
++	* convered portrait mode drawarea to convblit, used only for 1,2,4,8 bpp subdrivers
++	* converted drawarea drivers to convblits for 1,2,4,8 bpp subdrivers
+ 	* fixed nonzero srcx offset and word src index bugs in convblit_mask_mono blits
+ 21 Nov 2010
+ 	* cleaned up framebuffer screen driver/subdrivers
+diff --git a/src/FIXME b/src/FIXME
+index 49d8ce4..bc8fc30 100644
+--- a/src/FIXME
++++ b/src/FIXME
+@@ -1,6 +1,4 @@
+-Update broken for fontdemo3.sh in normal mode
+ bin/mdemo requires extra mouse press/move to redraw on X11
+-check X11 font display w/fontdemo2.sh doesn't work w/fblin32alpha driver (no convblit)
+ remove seperate driver procs and combine to single SUBDRIVER in screendevice
+ rename orgsubdriver, left_subdriver etc
+ add fast blit for GdArea/GrArea, remove printfs
+@@ -12,9 +10,8 @@ fix x11 driver kluges
+ need different way of SUBDRIVER left/right/down etc switching
+ 
+ test VTSWITCH
++fix vncserver.c support (drawarea, etc)
+ 
+-drawarea removal for non convblit drivers
+-test drawarea fallback cases for < 16bpp
+ GdBitmap/drawbitmap fallback for < 16bpp
+ 	fix psd->bpp >= 16 kluge in gen_drawtext (non convblit driver fallback to GdBitmap)
+ 
+diff --git a/src/drivers/fb.h b/src/drivers/fb.h
+index 1c62477..a6b4b42 100644
+--- a/src/drivers/fb.h
++++ b/src/drivers/fb.h
+@@ -585,7 +585,6 @@ void fbportrait_left_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start,
+ 	MWCOORD width, int height, int x_denominator, int y_denominator,
+ 	int src_x_fraction, int src_y_fraction,
+ 	int x_step_fraction, int y_step_fraction, int op);
+-void fbportrait_left_drawarea(PSD dstpsd, driver_gc_t * gc);
+ 
+ void fbportrait_right_drawpixel(PSD psd,MWCOORD x, MWCOORD y, MWPIXELVAL c);
+ MWPIXELVAL fbportrait_right_readpixel(PSD psd, MWCOORD x, MWCOORD y);
+@@ -598,7 +597,6 @@ void fbportrait_right_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start
+ 	MWCOORD width, int height, int x_denominator, int y_denominator,
+ 	int src_x_fraction, int src_y_fraction,
+ 	int x_step_fraction, int y_step_fraction, int op);
+-void fbportrait_right_drawarea(PSD dstpsd, driver_gc_t * gc);
+ 
+ void fbportrait_down_drawpixel(PSD psd,MWCOORD x, MWCOORD y, MWPIXELVAL c);
+ MWPIXELVAL fbportrait_down_readpixel(PSD psd, MWCOORD x, MWCOORD y);
+@@ -611,4 +609,3 @@ void fbportrait_down_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start,
+ 	MWCOORD width, int height, int x_denominator, int y_denominator,
+ 	int src_x_fraction, int src_y_fraction,
+ 	int x_step_fraction, int y_step_fraction, int op);
+-void fbportrait_down_drawarea(PSD dstpsd, driver_gc_t * gc);
+diff --git a/src/drivers/fblin1.c b/src/drivers/fblin1.c
+index fc0e672..1fe8d73 100644
+--- a/src/drivers/fblin1.c
++++ b/src/drivers/fblin1.c
+@@ -162,35 +162,23 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	DRAWOFF;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to MSB 1bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       data                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparentz.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear1_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8	dst, src;
+ 	int		i;
+ 	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_linelen;
++	int		slinelen = gc->src_pitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+-	MWPIXELVAL fg = gc->fg_color;
+-	MWPIXELVAL bg = gc->bg_color;
++	MWPIXELVAL fg = gc->fg_pixelval;
++	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+@@ -237,33 +225,6 @@ linear1_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	DRAWOFF;
+ }
+ 
+-static void
+-linear1_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-#if DEBUG
+-	assert(psd->addr != 0);
+-	/*assert(gc->width <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->width <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*DPRINTF("linear1_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-#endif
+-	switch (gc->op) {
+-	case PSDOP_ALPHACOL:
+-		DPRINTF("linear1_drawarea: PSDOP_ALPHACOL not supported\n");
+-		break;
+-	
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		DPRINTF("linear1_drawarea: PSDOP_BITMAP_BYTES_LSB_FIRST not supported\n");
+-		break;
+-	
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear1_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	  }
+-}
+-
+ static SUBDRIVER fblinear1_none = {
+ 	linear1_init,
+ 	linear1_drawpixel,
+@@ -272,7 +233,14 @@ static SUBDRIVER fblinear1_none = {
+ 	linear1_drawvertline,
+ 	gen_fillrect,
+ 	linear1_blit,
+-	linear1_drawarea
++	NULL,		/* DrawArea*/
++	NULL,		/* StretchBlitEx*/
++	linear1_convblit_copy_mask_mono_byte_msb,
++	NULL,		/* BlitCopyMaskMonoByteLSB*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	NULL,		/* BlitBlendMaskAlphaByte*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear1[4] = {
+diff --git a/src/drivers/fblin1rev.c b/src/drivers/fblin1rev.c
+index 886e464..0c01f6a 100644
+--- a/src/drivers/fblin1rev.c
++++ b/src/drivers/fblin1rev.c
+@@ -164,40 +164,28 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	DRAWOFF;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to LSB 1bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       data                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       gr_usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparentz.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear1_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8	dst, src;
+ 	int		i;
+ 	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_linelen;
++	int		slinelen = gc->src_pitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+-	MWPIXELVAL fg = gc->fg_color;
+-	MWPIXELVAL bg = gc->bg_color;
++	MWPIXELVAL fg = gc->fg_pixelval;
++	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+ 	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
+-	assert (gc->dstw > 0);
++	assert (gc->width > 0);
+ 	assert (gc->height > 0);
+ 	assert (gc->dstx+w <= psd->xres);
+ 	assert (gc->dsty+h <= psd->yres);
+@@ -212,7 +200,7 @@ linear1_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 		MWCOORD	dx = gc->dstx;
+ 		MWCOORD	sx = gc->srcx;
+ 
+-		if (gc->gr_usebg) {
++		if (gc->usebg) {
+ 			for(i=0; i<w; ++i) {
+ 				if ((*s >> (7-(sx&7))) & 01)
+ 					*d = (*d & notmask[dx&7]) | (fg << (dx&7));
+@@ -240,34 +228,6 @@ linear1_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	DRAWOFF;
+ }
+ 
+-static void
+-linear1_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-#if DEBUG
+-	assert(psd->addr != 0);
+-	/*assert(gc->dstw <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->dstw <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*DPRINTF("linear1_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-#endif
+-	switch (gc->op) {
+-	case PSDOP_ALPHACOL:
+-		DPRINTF("linear1_drawarea: PSDOP_ALPHACOL not supported\n");
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		DPRINTF("linear1_drawarea: PSDOP_BITMAP_BYTES_LSB_FIRST not supported\n");
+-		break;
+-	
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear1_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	
+-	  }
+-}
+-
+ static SUBDRIVER fblinear1_none = {
+ 	linear1_init,
+ 	linear1_drawpixel,
+@@ -276,7 +236,14 @@ static SUBDRIVER fblinear1_none = {
+ 	linear1_drawvertline,
+ 	gen_fillrect,
+ 	linear1_blit,
+-	linear1_drawarea
++	NULL,		/* DrawArea*/
++	NULL,		/* StretchBlitEx*/
++	linear1_convblit_copy_mask_mono_byte_msb,
++	NULL,		/* BlitCopyMaskMonoByteLSB*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	NULL,		/* BlitBlendMaskAlphaByte*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear1[4] = {
+diff --git a/src/drivers/fblin2.c b/src/drivers/fblin2.c
+index 08f0145..e7ad949 100644
+--- a/src/drivers/fblin2.c
++++ b/src/drivers/fblin2.c
+@@ -159,35 +159,23 @@ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	DRAWOFF;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to MSB 2bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       data                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparentz.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear2_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8	dst, src;
+ 	int		i;
+ 	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_linelen;
++	int		slinelen = gc->src_pitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+-	MWPIXELVAL fg = gc->fg_color;
+-	MWPIXELVAL bg = gc->bg_color;
++	MWPIXELVAL fg = gc->fg_pixelval;
++	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+@@ -236,33 +224,6 @@ linear2_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	DRAWOFF;
+ }
+ 
+-static void
+-linear2_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-#if DEBUG
+-	assert(psd->addr != 0);
+-	/*assert(gc->width <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->width <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*DPRINTF("linear2_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-#endif
+-	switch (gc->op) {
+-	case PSDOP_ALPHACOL:
+-		DPRINTF("linear2_drawarea: PSDOP_ALPHACOL not supported\n");
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		DPRINTF("linear2_drawarea: PSDOP_BITMAP_BYTES_LSB_FIRST not supported\n");
+-		break;
+-	
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear2_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	  }
+-}
+-
+ static SUBDRIVER fblinear2_none = {
+ 	linear2_init,
+ 	linear2_drawpixel,
+@@ -271,7 +232,14 @@ static SUBDRIVER fblinear2_none = {
+ 	linear2_drawvertline,
+ 	gen_fillrect,
+ 	linear2_blit,
+-	linear2_drawarea
++	NULL,		/* DrawArea*/
++	NULL,		/* StretchBlitEx*/
++	linear2_convblit_copy_mask_mono_byte_msb,
++	NULL,		/* BlitCopyMaskMonoByteLSB*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	NULL,		/* BlitBlendMaskAlphaByte*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear2[4] = {
+diff --git a/src/drivers/fblin2rev.c b/src/drivers/fblin2rev.c
+index b84d81c..7fcb297 100644
+--- a/src/drivers/fblin2rev.c
++++ b/src/drivers/fblin2rev.c
+@@ -159,35 +159,23 @@ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	DRAWOFF;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to LSB 1bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, height, width   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       data                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear2_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8	dst, src;
+ 	int		i;
+ 	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_linelen;
++	int		slinelen = gc->src_pitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+-	MWPIXELVAL fg = gc->fg_color;
+-	MWPIXELVAL bg = gc->bg_color;
++	MWPIXELVAL fg = gc->fg_pixelval;
++	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+@@ -236,33 +224,6 @@ linear2_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	DRAWOFF;
+ }
+ 
+-static void
+-linear2_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-#if DEBUG
+-	assert(psd->addr != 0);
+-	/*assert(gc->width <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->width <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*DPRINTF("linear1_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-#endif
+-	switch (gc->op) {
+-	case PSDOP_ALPHACOL:
+-		DPRINTF("linear2_drawarea: PSDOP_ALPHACOL not supported\n");
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		DPRINTF("linear2_drawarea: PSDOP_BITMAP_BYTES_LSB_FIRST not supported\n");
+-		break;
+-	
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear2_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	  }
+-}
+-
+ static SUBDRIVER fblinear2_none = {
+ 	linear2_init,
+ 	linear2_drawpixel,
+@@ -271,7 +232,14 @@ static SUBDRIVER fblinear2_none = {
+ 	linear2_drawvertline,
+ 	gen_fillrect,
+ 	linear2_blit,
+-	linear2_drawarea
++	NULL,		/* DrawArea*/
++	NULL,		/* StretchBlitEx*/
++	linear2_convblit_copy_mask_mono_byte_msb,
++	NULL,		/* BlitCopyMaskMonoByteLSB*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	NULL,		/* BlitBlendMaskAlphaByte*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear2[4] = {
+diff --git a/src/drivers/fblin32alpha.c b/src/drivers/fblin32alpha.c
+index 29780aa..3e766f2 100644
+--- a/src/drivers/fblin32alpha.c
++++ b/src/drivers/fblin32alpha.c
+@@ -775,29 +775,14 @@ linear32a_stretchblitex(PSD dstpsd,
+ 		dstpsd->Update(dstpsd, dest_x_start, dest_y_start, width, height);
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_LSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  This pixmap is ordered the wrong
+- * way around; it has the leftmost pixel (on the screen) in
+- * LSB (Bit 0) of the bytes.
+- *
+- * The reason why this non-intuitive bit ordering is used is
+- * to match the bit ordering used in the T1lib font rendering
+- * library.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to 8bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       pixels                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       gr_usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw T1LIB non-antialiased glyphs.
+  */
+ static void
+-linear32a_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
++linear32a_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ {
+ /*
+  * The difference between the MSB_FIRST and LSB_FIRST variants of
+@@ -847,12 +832,12 @@ linear32a_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 	/* The index into each scanline of the last byte to use. */
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+-	src = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + first_byte;
++	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+ 	dst = ((ADDR32) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
+-	fg = gc->fg_color;
+-	bg = gc->bg_color;
++	fg = gc->fg_pixelval;
++	bg = gc->bg_pixelval;
+ 
+-	advance_src = gc->src_linelen - last_byte + first_byte - 1;
++	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+ 	advance_dst = psd->linelen - gc->width;
+ 
+ 	if (first_byte != last_byte) {
+@@ -975,6 +960,9 @@ linear32a_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 			dst += advance_dst;
+ 		}
+ 	}
++
++	if (psd->Update)
++		psd->Update(psd, gc->dstx, gc->dsty, gc->width, gc->height);
+ 	DRAWOFF;
+ 
+ #undef MWI_IS_BIT_BEFORE_OR_EQUAL
+@@ -984,26 +972,14 @@ linear32a_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ #undef MWI_LAST_BIT
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to 8bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       pixels                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       gr_usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear32a_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear32a_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ /*
+  * The difference between the MSB_FIRST and LSB_FIRST variants of
+@@ -1053,12 +1029,12 @@ linear32a_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	/* The index into each scanline of the last byte to use. */
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+-	src = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + first_byte;
++	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+ 	dst = ((ADDR32) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
+-	fg = gc->fg_color;
+-	bg = gc->bg_color;
++	fg = gc->fg_pixelval;
++	bg = gc->bg_pixelval;
+ 
+-	advance_src = gc->src_linelen - last_byte + first_byte - 1;
++	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+ 	advance_dst = psd->linelen - gc->width;
+ 
+ 	if (first_byte != last_byte) {
+@@ -1176,6 +1152,9 @@ linear32a_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 			dst += advance_dst;
+ 		}
+ 	}
++
++	if (psd->Update)
++		psd->Update(psd, gc->dstx, gc->dsty, gc->width, gc->height);
+ 	DRAWOFF;
+ 
+ #undef MWI_IS_BIT_BEFORE_OR_EQUAL
+@@ -1186,8 +1165,13 @@ linear32a_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ }
+ 
+ 
++/*
++ * Routine to blend 8bpp alpha byte array with fg/bg to 8bpp
++ *
++ * Used to draw FT2 and T1LIB antialiased glyphs.
++ */
+ static void
+-linear32a_drawarea_alphacol(PSD psd, driver_gc_t * gc)
++linear32a_convblit_blend_mask_alpha_byte(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR32 dst;
+ 	ADDR8 alpha;
+@@ -1195,14 +1179,14 @@ linear32a_drawarea_alphacol(PSD psd, driver_gc_t * gc)
+ 	int x, y;
+ 	int src_row_step, dst_row_step;
+ 
+-	alpha = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	alpha = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	dst = ((ADDR32) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
+-	ps = gc->fg_color;
++	ps = gc->fg_pixelval;
+ 	psr = ps & 0x00FF0000UL;
+ 	psg = ps & 0x0000FF00UL;
+ 	psb = ps & 0x000000FFUL;
+ 
+-	src_row_step = gc->src_linelen - gc->width;
++	src_row_step = gc->src_pitch - gc->width;
+ 	dst_row_step = psd->linelen - gc->width;
+ 
+ 	DRAWON;
+@@ -1223,47 +1207,24 @@ linear32a_drawarea_alphacol(PSD psd, driver_gc_t * gc)
+ 				 * with one multiply and shift.
+ 				 */
+ 				as = 255 - as + 1;
+-				pd = gc->usebg? gc->bg_color: *dst;
++				pd = gc->usebg? gc->bg_pixelval: *dst;
+ 				*dst++ =
+ 					  ((((((pd & 0x00FF0000UL) - psr) * as) >> 8) + psr) & 0x00FF0000UL)
+ 					| ((((((pd & 0x0000FF00UL) - psg) * as) >> 8) + psg) & 0x0000FF00UL)
+ 					| ((((((pd & 0x000000FFUL) - psb) * as) >> 8) + psb) & 0x000000FFUL)
+ 					| ((((256-as) << 24) + ((pd & 0xFF000000UL) >> 8) * as) & 0xFF000000UL);
+ 			} else if(gc->usebg)		/* alpha is 0 - draw bkgnd*/
+-				*dst++ = gc->bg_color;
++				*dst++ = gc->bg_pixelval;
+ 			else
+ 				++dst;
+ 		}
+ 		alpha += src_row_step;
+ 		dst += dst_row_step;
+ 	}
+-	DRAWOFF;
+-}
+-
+-static void
+-linear32a_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-	assert(psd->addr != 0);
+-	/*assert(gc->width <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->width <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*DPRINTF("linear32a_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-
+-	switch (gc->op) {
+-	case PSDOP_ALPHACOL:
+-		linear32a_drawarea_alphacol(psd, gc);
+-		break;
+ 
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		linear32a_drawarea_bitmap_bytes_lsb_first(psd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear32a_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	}
++	if (psd->Update)
++		psd->Update(psd, gc->dstx, gc->dsty, gc->width, gc->height);
++	DRAWOFF;
+ }
+ 
+ static SUBDRIVER fblinear32alpha_none = {
+@@ -1274,8 +1235,14 @@ static SUBDRIVER fblinear32alpha_none = {
+ 	linear32a_drawvertline,
+ 	gen_fillrect,
+ 	linear32a_blit,
+-	linear32a_drawarea,
+-	linear32a_stretchblitex
++	NULL,		/* DrawArea*/
++	linear32a_stretchblitex,
++	linear32a_convblit_copy_mask_mono_byte_msb,	/* FT2 non-alias*/
++	linear32a_convblit_copy_mask_mono_byte_lsb,	/* T1LIB non-alias*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	linear32a_convblit_blend_mask_alpha_byte,		/* FT2/T1 anti-alias*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear32alpha[4] = {
+diff --git a/src/drivers/fblin4.c b/src/drivers/fblin4.c
+index 63838e8..15eee28 100644
+--- a/src/drivers/fblin4.c
++++ b/src/drivers/fblin4.c
+@@ -201,26 +201,14 @@ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	DRAWOFF;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to MS nibble 4bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, height, width   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       data                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ /*
+  * The difference between the MSB_FIRST and LSB_FIRST variants of
+@@ -270,13 +258,13 @@ linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	/* The index into each scanline of the last byte to use. */
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+-	src = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + first_byte;
++	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+ 	dst = ((ADDR8) psd->addr) + (psd->linelen * gc->dsty + gc->dstx) / 2;	/* 4bpp = 2 ppb */
+ 
+-	fg = gc->fg_color;
+-	bg = gc->bg_color;
++	fg = gc->fg_pixelval;
++	bg = gc->bg_pixelval;
+ 
+-	advance_src = gc->src_linelen - last_byte + first_byte - 1;
++	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+ 	advance_dst = psd->linelen - (gc->width / 2);				/* 4bpp = 2 ppb */
+ 
+ 	if (first_byte != last_byte) {
+@@ -431,26 +419,6 @@ linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ #undef MWI_LAST_BIT
+ }
+ 
+-static void
+-linear4_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-#if DEBUG
+-	assert(psd->addr != 0);
+-	/*assert(gc->width <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->width <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*printf("linear4_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-#endif
+-
+-	switch (gc->op) {
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear4_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	}
+-}
+-
+ static SUBDRIVER fblinear4_none = {
+ 	linear4_init,
+ 	linear4_drawpixel,
+@@ -459,7 +427,14 @@ static SUBDRIVER fblinear4_none = {
+ 	linear4_drawvertline,
+ 	gen_fillrect,
+ 	linear4_blit,
+-	linear4_drawarea
++	NULL,		/* DrawArea*/
++	NULL,		/* StretchBlitEx*/
++	linear4_convblit_copy_mask_mono_byte_msb,
++	NULL,		/* BlitCopyMaskMonoByteLSB*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	NULL,		/* BlitBlendMaskAlphaByte*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear4[4] = {
+diff --git a/src/drivers/fblin4rev.c b/src/drivers/fblin4rev.c
+index 9e8d5bb..0d5fbf0 100644
+--- a/src/drivers/fblin4rev.c
++++ b/src/drivers/fblin4rev.c
+@@ -188,26 +188,14 @@ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	DRAWOFF;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to LS nibble 4bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       pixels                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       gr_usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ /*
+  * The difference between the MSB_FIRST and LSB_FIRST variants of
+@@ -249,22 +237,22 @@ linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	prefix_first_bit = MWI_BIT_NO(gc->srcx & 7);
+ 
+ 	/* The bit in the last byte, which corresponds to the rightmost pixel. */
+-	postfix_last_bit = MWI_BIT_NO((gc->srcx + gc->dstw - 1) & 7);
++	postfix_last_bit = MWI_BIT_NO((gc->srcx + gc->width - 1) & 7);
+ 
+ 	/* The index into each scanline of the first byte to use. */
+ 	first_byte = gc->srcx >> 3;
+ 
+ 	/* The index into each scanline of the last byte to use. */
+-	last_byte = (gc->srcx + gc->dstw - 1) >> 3;
++	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+-	src = ((ADDR8) gc->pixels) + gc->src_linelen * gc->srcy + first_byte;
++	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+ 	dst = ((ADDR8) psd->addr) + (psd->linelen * gc->dsty + gc->dstx) / 2;	/* 4bpp = 2 ppb */
+ 
+-	fg = gc->fg_color;
+-	bg = gc->bg_color;
++	fg = gc->fg_pixelval;
++	bg = gc->bg_pixelval;
+ 
+-	advance_src = gc->src_linelen - last_byte + first_byte - 1;
+-	advance_dst = psd->linelen - (gc->dstw / 2);				/* 4bpp = 2 ppb */
++	advance_src = gc->src_pitch - last_byte + first_byte - 1;
++	advance_dst = psd->linelen - (gc->width / 2);				/* 4bpp = 2 ppb */
+ 
+ 	if (first_byte != last_byte) {
+ 		/* The total number of bytes to use, less the two special-cased
+@@ -296,8 +284,8 @@ linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	}
+ 
+ 	DRAWON;
+-	if (gc->gr_usebg) {
+-		for (y = 0; y < gc->dsth; y++) {
++	if (gc->usebg) {
++		for (y = 0; y < gc->height; y++) {
+ 			int x = 0;
+ 			int X = gc->dstx;
+ 			ADDR8 addr = ((ADDR8)psd->addr) + (X>>1) + (gc->dsty+y) * psd->linelen;
+@@ -346,7 +334,7 @@ linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 			dst += advance_dst;
+ 		}
+ 	} else {	/* don't use background */
+-		for (y = 0; y < gc->dsth; y++) {
++		for (y = 0; y < gc->height; y++) {
+ 			int x = 0;
+ 			int X = gc->dstx;
+ 			ADDR8 addr = ((ADDR8)psd->addr) + (X>>1) + (gc->dsty+y) * psd->linelen;
+@@ -418,25 +406,6 @@ linear4_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ #undef MWI_LAST_BIT
+ }
+ 
+-static void
+-linear4_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-#if DEBUG
+-	assert(psd->addr != 0);
+-	/*assert(gc->dstw <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->dstw <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->dsth <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->dstw <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*printf("linear4_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-#endif
+-	switch (gc->op) {
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear4_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	}
+-}
+-
+ static SUBDRIVER fblinear4_none = {
+ 	linear4_init,
+ 	linear4_drawpixel,
+@@ -445,7 +414,14 @@ static SUBDRIVER fblinear4_none = {
+ 	linear4_drawvertline,
+ 	gen_fillrect,
+ 	linear4_blit,
+-	linear4_drawarea
++	NULL,		/* DrawArea*/
++	NULL,		/* StretchBlitEx*/
++	linear4_convblit_copy_mask_mono_byte_msb,
++	NULL,		/* BlitCopyMaskMonoByteLSB*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	NULL,		/* BlitBlendMaskAlphaByte*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear4[4] = {
+diff --git a/src/drivers/fblin8.c b/src/drivers/fblin8.c
+index 32c3121..268c875 100644
+--- a/src/drivers/fblin8.c
++++ b/src/drivers/fblin8.c
+@@ -579,29 +579,14 @@ init_alpha_lookup(void)
+ 	return 1;
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_LSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  This pixmap is ordered the wrong
+- * way around; it has the leftmost pixel (on the screen) in
+- * LSB (Bit 0) of the bytes.
+- *
+- * The reason why this non-intuitive bit ordering is used is
+- * to match the bit ordering used in the T1lib font rendering
+- * library.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to 8bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       pixels                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw T1LIB non-antialiased glyphs.
+  */
+ static void
+-linear8_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
++linear8_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ {
+ /*
+  * The difference between the MSB_FIRST and LSB_FIRST variants of
+@@ -651,12 +636,12 @@ linear8_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 	/* The index into each scanline of the last byte to use. */
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+-	src = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + first_byte;
++	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+ 	dst = ((ADDR8) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
+-	fg = gc->fg_color;
+-	bg = gc->bg_color;
++	fg = gc->fg_pixelval;
++	bg = gc->bg_pixelval;
+ 
+-	advance_src = gc->src_linelen - last_byte + first_byte - 1;
++	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+ 	advance_dst = psd->linelen - gc->width;
+ 
+ 	if (first_byte != last_byte) {
+@@ -781,26 +766,14 @@ linear8_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ #undef MWI_LAST_BIT
+ }
+ 
+-/* psd->DrawArea operation PSDOP_BITMAP_BYTES_MSB_FIRST which
+- * takes a pixmap, each line is byte aligned, and copies it
+- * to the screen using fg_color and bg_color to replace a 1
+- * and 0 in the pixmap.  
+- *
+- * The bitmap is ordered how you'd expect, with the MSB used
+- * for the leftmost of the 8 pixels controlled by each byte.
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to 8bpp
++ * Bitmap is byte array.
+  *
+- * Variables used in the gc:
+- *       dstx, dsty, dsth, dstw   Destination rectangle
+- *       srcx, srcy               Source rectangle
+- *       src_linelen              Linesize in bytes of source
+- *       data                   Pixmap data
+- *       fg_color                 Color of a '1' bit
+- *       bg_color                 Color of a '0' bit
+- *       usebg                 If set, bg_color is used.  If zero,
+- *                                then '0' bits are transparent.
++ * Used to draw FT2 non-antialiased glyphs.
+  */
+ static void
+-linear8_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++linear8_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ /*
+  * The difference between the MSB_FIRST and LSB_FIRST variants of
+@@ -850,12 +823,12 @@ linear8_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	/* The index into each scanline of the last byte to use. */
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+-	src = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + first_byte;
++	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+ 	dst = ((ADDR8) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
+-	fg = gc->fg_color;
+-	bg = gc->bg_color;
++	fg = gc->fg_pixelval;
++	bg = gc->bg_pixelval;
+ 
+-	advance_src = gc->src_linelen - last_byte + first_byte - 1;
++	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+ 	advance_dst = psd->linelen - gc->width;
+ 
+ 	if (first_byte != last_byte) {
+@@ -980,8 +953,13 @@ linear8_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ #undef MWI_LAST_BIT
+ }
+ 
++/*
++ * Routine to blend 8bpp alpha byte array with fg/bg to 8bpp
++ *
++ * Used to draw FT2 and T1LIB antialiased glyphs.
++ */
+ static void
+-linear8_drawarea_alphacol(PSD psd, driver_gc_t * gc)
++linear8_convblit_blend_mask_alpha_byte(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 dst, alpha;
+ 	int x, y;
+@@ -994,22 +972,22 @@ linear8_drawarea_alphacol(PSD psd, driver_gc_t * gc)
+ 			return;
+ 	}
+ 
+-	alpha = ((ADDR8) gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	alpha = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	dst = ((ADDR8) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
+ 
+-	src_row_step = gc->src_linelen - gc->width;
++	src_row_step = gc->src_pitch - gc->width;
+ 	dst_row_step = psd->linelen - gc->width;
+ 
+ 	DRAWON;
+ 	for (y = 0; y < gc->height; y++) {
+ 		for (x = 0; x < gc->width; x++) {
+ 			if ((as = *alpha++) == 255)
+-				*dst++ = gc->fg_color;
++				*dst++ = gc->fg_pixelval;
+ 			else if (as != 0) {
+ 				/* Create 5 bit alpha value index for 256 color indexing*/
+ 
+ 				/* Get source RGB555 value for source alpha value*/
+-				unsigned short s = alpha_to_rgb[((as >> 3) << 8) + gc->fg_color];
++				unsigned short s = alpha_to_rgb[((as >> 3) << 8) + gc->fg_pixelval];
+ 
+ 				/* Get destination RGB555 value for dest alpha value*/
+ 				unsigned short d = alpha_to_rgb[(((as >> 3) ^ 31) << 8) + *dst];
+@@ -1017,7 +995,7 @@ linear8_drawarea_alphacol(PSD psd, driver_gc_t * gc)
+ 				/* Add RGB values together and get closest palette index to it*/
+ 				*dst++ = rgb_to_palindex[s + d];
+ 			} else if(gc->usebg)		/* alpha 0 - draw bkgnd*/
+-				*dst++ = gc->bg_color;
++				*dst++ = gc->bg_pixelval;
+ 			else
+ 				++dst;
+ 		}
+@@ -1027,32 +1005,6 @@ linear8_drawarea_alphacol(PSD psd, driver_gc_t * gc)
+ 	DRAWOFF;
+ }
+ 
+-static void
+-linear8_drawarea(PSD psd, driver_gc_t * gc)
+-{
+-	assert(psd->addr != 0);
+-	/*assert(gc->width <= gc->srcw); */
+-	assert(gc->dstx >= 0 && gc->dstx + gc->width <= psd->xres);
+-	/*assert(gc->dsty >= 0 && gc->dsty+gc->height <= psd->yres); */
+-	/*assert(gc->srcx >= 0 && gc->srcx+gc->width <= gc->srcw); */
+-	assert(gc->srcy >= 0);
+-	/*DPRINTF("linear8_drawarea op=%d dstx=%d dsty=%d\n", op, gc->dstx, gc->dsty);*/
+-
+-	switch (gc->op) {
+-	case PSDOP_ALPHACOL:
+-		linear8_drawarea_alphacol(psd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		linear8_drawarea_bitmap_bytes_lsb_first(psd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		linear8_drawarea_bitmap_bytes_msb_first(psd, gc);
+-		break;
+-	}
+-}
+-
+ static SUBDRIVER fblinear8_none = {
+ 	linear8_init,
+ 	linear8_drawpixel,
+@@ -1061,8 +1013,14 @@ static SUBDRIVER fblinear8_none = {
+ 	linear8_drawvertline,
+ 	gen_fillrect,
+ 	linear8_blit,
+-	linear8_drawarea,
+-	linear8_stretchblitex
++	NULL,		/* DrawArea*/
++	linear8_stretchblitex,
++	linear8_convblit_copy_mask_mono_byte_msb,	/* FT2 non-alias*/
++	linear8_convblit_copy_mask_mono_byte_lsb,	/* T1LIB non-alias*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	linear8_convblit_blend_mask_alpha_byte,		/* FT2/T1 anti-alias*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+ 
+ PSUBDRIVER fblinear8[4] = {
+diff --git a/src/drivers/fbportrait_down.c b/src/drivers/fbportrait_down.c
+index a611683..4546b98 100644
+--- a/src/drivers/fbportrait_down.c
++++ b/src/drivers/fbportrait_down.c
+@@ -94,33 +94,36 @@ fbportrait_down_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start, int
+ }
+ 
+ static void
+-fbportrait_down_drawarea_alphacol(PSD dstpsd, driver_gc_t * gc)
++fbportrait_down_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 alpha_in, alpha_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!dstpsd->BlitBlendMaskAlphaByte)
++		return;
+ 
+ 	/* create new gc with flipped coords*/
+ 	l_gc.dstx = dstpsd->xvirtres - gc->dstx - gc->width;
+ 	l_gc.dsty = dstpsd->yvirtres - gc->dsty - gc->height;
+ 	l_gc.srcx = 0;
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = gc->width;
++	l_gc.src_pitch = gc->width;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+ 	l_gc.width = gc->width;
+ 	l_gc.height = gc->height;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.width * l_gc.height)))
+ 		return;
+ 
+-	alpha_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	alpha_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -134,44 +137,47 @@ fbportrait_down_drawarea_alphacol(PSD dstpsd, driver_gc_t * gc)
+ 			out_x = (out_w - 1) - in_x;
+ 
+ 			//alpha_out[(out_y * out_w) + out_x] = alpha_in[(in_y * in_w) + in_x];
+-			alpha_out[(out_y * l_gc.src_linelen) + out_x] = alpha_in[(in_y * gc->src_linelen) + in_x];
++			alpha_out[(out_y * l_gc.src_pitch) + out_x] = alpha_in[(in_y * gc->src_pitch) + in_x];
+ 		}
+ 	}
+ 
+-	dstpsd->orgsubdriver->DrawArea(dstpsd, &l_gc);
++	dstpsd->orgsubdriver->BlitBlendMaskAlphaByte(dstpsd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+ static void
+-fbportrait_down_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++fbportrait_down_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 pixel_in, pixel_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!psd->BlitCopyMaskMonoByteMSB)
++		return;
+ 
+ 	/* create new gc with flipped coords*/
+ 	l_gc.dstx = psd->xvirtres - gc->dstx - gc->width;
+ 	l_gc.dsty = psd->yvirtres - gc->dsty - gc->height;
+ 	l_gc.srcx = 0;
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = gc->width;
++	l_gc.src_pitch = gc->width;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+ 	l_gc.width = gc->width;
+ 	l_gc.height = gc->height;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+-	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_linelen)))
++	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+-	memset(l_gc.data, 0, l_gc.height * l_gc.src_linelen);
++	memset(l_gc.data, 0, l_gc.height * l_gc.src_pitch);
+ 
+-	pixel_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	pixel_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -186,45 +192,48 @@ fbportrait_down_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 			out_x = (out_w - 1) - in_x;
+ 
+ 			//pixel_out[(out_y * out_w) + out_x] = pixel_in[(in_y * in_w) + in_x];
+-			if (pixel_in[in_y*gc->src_linelen + (in_x >> 3)] & (0x80 >> (in_x&7)))
+-				pixel_out[out_y*l_gc.src_linelen + (out_x >> 3)] |= (0x80 >> (out_x&7));
++			if (pixel_in[in_y*gc->src_pitch + (in_x >> 3)] & (0x80 >> (in_x&7)))
++				pixel_out[out_y*l_gc.src_pitch + (out_x >> 3)] |= (0x80 >> (out_x&7));
+ 		}
+ 	}
+ 
+-	psd->orgsubdriver->DrawArea(psd, &l_gc);
++	psd->orgsubdriver->BlitCopyMaskMonoByteMSB(psd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+ static void
+-fbportrait_down_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
++fbportrait_down_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 pixel_in, pixel_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!psd->BlitCopyMaskMonoByteLSB)
++		return;
+ 
+ 	/* create new gc with flipped coords*/
+ 	l_gc.dstx = psd->xvirtres - gc->dstx - gc->width;
+ 	l_gc.dsty = psd->yvirtres - gc->dsty - gc->height;
+ 	l_gc.srcx = 0;
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = gc->width;
++	l_gc.src_pitch = gc->width;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+ 	l_gc.width = gc->width;
+ 	l_gc.height = gc->height;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+-	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_linelen)))
++	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+-	memset(l_gc.data, 0, l_gc.height * l_gc.src_linelen);
++	memset(l_gc.data, 0, l_gc.height * l_gc.src_pitch);
+ 
+-	pixel_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	pixel_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -239,37 +248,16 @@ fbportrait_down_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 			out_x = (out_w - 1) - in_x;
+ 
+ 			//pixel_out[(out_y * out_w) + out_x] = pixel_in[(in_y * in_w) + in_x];
+-			if (pixel_in[in_y*gc->src_linelen + (in_x >> 3)] & (0x01 << (in_x&7)))
+-				pixel_out[out_y*l_gc.src_linelen + (out_x >> 3)] |= (0x01 << (out_x&7));
++			if (pixel_in[in_y*gc->src_pitch + (in_x >> 3)] & (0x01 << (in_x&7)))
++				pixel_out[out_y*l_gc.src_pitch + (out_x >> 3)] |= (0x01 << (out_x&7));
+ 		}
+ 	}
+ 
+-	psd->orgsubdriver->DrawArea(psd, &l_gc);
++	psd->orgsubdriver->BlitCopyMaskMonoByteLSB(psd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+-void
+-fbportrait_down_drawarea(PSD dstpsd, driver_gc_t * gc)
+-{
+-	if (!dstpsd->orgsubdriver->DrawArea)
+-		return;
+-
+-	switch(gc->op) {
+-	case PSDOP_ALPHACOL:
+-		fbportrait_down_drawarea_alphacol(dstpsd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		fbportrait_down_drawarea_bitmap_bytes_msb_first(dstpsd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		fbportrait_down_drawarea_bitmap_bytes_lsb_first(dstpsd, gc);
+-		break;
+-	}
+-}
+-
+ SUBDRIVER fbportrait_down = {
+ 	NULL,
+ 	fbportrait_down_drawpixel,
+@@ -278,6 +266,12 @@ SUBDRIVER fbportrait_down = {
+ 	fbportrait_down_drawvertline,
+ 	fbportrait_down_fillrect,
+ 	fbportrait_down_blit,
+-	fbportrait_down_drawarea,
+-	fbportrait_down_stretchblitex
++	NULL,		/* DrawArea*/
++	fbportrait_down_stretchblitex,
++	fbportrait_down_convblit_copy_mask_mono_byte_msb,	/* FT2 non-alias*/
++	fbportrait_down_convblit_copy_mask_mono_byte_lsb,	/* T1LIB non-alias*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	fbportrait_down_convblit_blend_mask_alpha_byte,		/* FT2/T1 anti-alias*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+diff --git a/src/drivers/fbportrait_left.c b/src/drivers/fbportrait_left.c
+index 7f752c1..18c2cb3 100644
+--- a/src/drivers/fbportrait_left.c
++++ b/src/drivers/fbportrait_left.c
+@@ -92,12 +92,15 @@ fbportrait_left_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start, int
+ }
+ 
+ static void
+-fbportrait_left_drawarea_alphacol(PSD dstpsd, driver_gc_t * gc)
++fbportrait_left_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 alpha_in, alpha_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!dstpsd->BlitBlendMaskAlphaByte)
++		return;
+ 
+ 	/* create new gc with rotated coords*/
+ 	l_gc.width = gc->height;
+@@ -106,19 +109,19 @@ fbportrait_left_drawarea_alphacol(PSD dstpsd, driver_gc_t * gc)
+ 	l_gc.dsty = dstpsd->xvirtres - gc->dstx - gc->width;
+ 	l_gc.srcx = 0;	//FIXME rotate may fail with srcx/srcy not zero
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = l_gc.width;	/* 1 byte alpha channel*/
++	l_gc.src_pitch = l_gc.width;	/* 1 byte alpha channel*/
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.width * l_gc.height)))
+ 		return;
+ 
+-	alpha_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	alpha_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -133,22 +136,25 @@ fbportrait_left_drawarea_alphacol(PSD dstpsd, driver_gc_t * gc)
+ 			out_x = in_y;
+ 
+ 			//alpha_out[(out_y * out_w) + out_x] = alpha_in[(in_y * in_w) + in_x];
+-			alpha_out[(out_y * l_gc.src_linelen) + out_x] = alpha_in[(in_y * gc->src_linelen) + in_x];
++			alpha_out[(out_y * l_gc.src_pitch) + out_x] = alpha_in[(in_y * gc->src_pitch) + in_x];
+ 		}
+ 	}
+ 
+-	dstpsd->orgsubdriver->DrawArea(dstpsd, &l_gc);
++	dstpsd->orgsubdriver->BlitBlendMaskAlphaByte(dstpsd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+ static void
+-fbportrait_left_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++fbportrait_left_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 pixel_in, pixel_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!psd->BlitCopyMaskMonoByteMSB)
++		return;
+ 
+ 	/* create new gc with rotated coords*/
+ 	l_gc.width = gc->height;
+@@ -157,20 +163,20 @@ fbportrait_left_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	l_gc.dsty = psd->xvirtres - gc->dstx - gc->width;
+ 	l_gc.srcx = 0;	//FIXME rotate may fail with srcx/srcy not zero
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = (l_gc.width + 7) / 8;
++	l_gc.src_pitch = (l_gc.width + 7) / 8;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+-	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_linelen)))
++	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+-	memset(l_gc.data, 0, l_gc.height * l_gc.src_linelen);
++	memset(l_gc.data, 0, l_gc.height * l_gc.src_pitch);
+ 
+-	pixel_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	pixel_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -185,23 +191,26 @@ fbportrait_left_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 			out_x = in_y;
+ 
+ 			//pixel_out[(out_y * out_w) + out_x] = pixel_in[(in_y * in_w) + in_x];
+-			if (pixel_in[in_y*gc->src_linelen + (in_x >> 3)] & (0x80 >> (in_x&7)))
+-				pixel_out[out_y*l_gc.src_linelen + (out_x >> 3)] |= (0x80 >> (out_x&7));
++			if (pixel_in[in_y*gc->src_pitch + (in_x >> 3)] & (0x80 >> (in_x&7)))
++				pixel_out[out_y*l_gc.src_pitch + (out_x >> 3)] |= (0x80 >> (out_x&7));
+ 		}
+ 	}
+ 
+-	psd->orgsubdriver->DrawArea(psd, &l_gc);
++	psd->orgsubdriver->BlitCopyMaskMonoByteMSB(psd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+ static void
+-fbportrait_left_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
++fbportrait_left_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 pixel_in, pixel_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!psd->BlitCopyMaskMonoByteLSB)
++		return;
+ 
+ 	/* create new gc with rotated coords*/
+ 	l_gc.width = gc->height;
+@@ -210,20 +219,20 @@ fbportrait_left_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 	l_gc.dsty = psd->xvirtres - gc->dstx - gc->width;
+ 	l_gc.srcx = 0;	//FIXME rotate may fail with srcx/srcy not zero
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = (l_gc.width + 7) / 8;
++	l_gc.src_pitch = (l_gc.width + 7) / 8;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+-	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_linelen)))
++	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+-	memset(l_gc.data, 0, l_gc.height * l_gc.src_linelen);
++	memset(l_gc.data, 0, l_gc.height * l_gc.src_pitch);
+ 
+-	pixel_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	pixel_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -238,37 +247,16 @@ fbportrait_left_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 			out_x = in_y;
+ 
+ 			//pixel_out[(out_y * out_w) + out_x] = pixel_in[(in_y * in_w) + in_x];
+-			if (pixel_in[in_y*gc->src_linelen + (in_x >> 3)] & (0x01 << (in_x&7)))
+-				pixel_out[out_y*l_gc.src_linelen + (out_x >> 3)] |= (0x01 << (out_x&7));
++			if (pixel_in[in_y*gc->src_pitch + (in_x >> 3)] & (0x01 << (in_x&7)))
++				pixel_out[out_y*l_gc.src_pitch + (out_x >> 3)] |= (0x01 << (out_x&7));
+ 		}
+ 	}
+ 
+-	psd->orgsubdriver->DrawArea(psd, &l_gc);
++	psd->orgsubdriver->BlitCopyMaskMonoByteLSB(psd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+-void
+-fbportrait_left_drawarea(PSD dstpsd, driver_gc_t * gc)
+-{
+-	if (!dstpsd->orgsubdriver->DrawArea)
+-		return;
+-
+-	switch(gc->op) {
+-	case PSDOP_ALPHACOL:
+-		fbportrait_left_drawarea_alphacol(dstpsd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		fbportrait_left_drawarea_bitmap_bytes_msb_first(dstpsd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		fbportrait_left_drawarea_bitmap_bytes_lsb_first(dstpsd, gc);
+-		break;
+-	}
+-}
+-
+ SUBDRIVER fbportrait_left = {
+ 	NULL,
+ 	fbportrait_left_drawpixel,
+@@ -277,6 +265,12 @@ SUBDRIVER fbportrait_left = {
+ 	fbportrait_left_drawvertline,
+ 	fbportrait_left_fillrect,
+ 	fbportrait_left_blit,
+-	fbportrait_left_drawarea,
+-	fbportrait_left_stretchblitex
++	NULL,		/* DrawArea*/
++	fbportrait_left_stretchblitex,
++	fbportrait_left_convblit_copy_mask_mono_byte_msb,	/* FT2 non-alias*/
++	fbportrait_left_convblit_copy_mask_mono_byte_lsb,	/* T1LIB non-alias*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	fbportrait_left_convblit_blend_mask_alpha_byte,		/* FT2/T1 anti-alias*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+diff --git a/src/drivers/fbportrait_right.c b/src/drivers/fbportrait_right.c
+index 76311f2..b381429 100644
+--- a/src/drivers/fbportrait_right.c
++++ b/src/drivers/fbportrait_right.c
+@@ -89,12 +89,15 @@ fbportrait_right_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start, int
+ }
+ 
+ static void
+-fbportrait_right_drawarea_alphacol(PSD dstpsd, driver_gc_t *gc)
++fbportrait_right_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 alpha_in, alpha_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!dstpsd->BlitBlendMaskAlphaByte)
++		return;
+ 
+ 	/* create new gc with rotated coords*/
+ 	l_gc.width = gc->height;
+@@ -103,19 +106,19 @@ fbportrait_right_drawarea_alphacol(PSD dstpsd, driver_gc_t *gc)
+ 	l_gc.dsty = gc->dstx;
+ 	l_gc.srcx = 0;
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = l_gc.width;
++	l_gc.src_pitch = l_gc.width;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.width * l_gc.height)))
+ 		return;
+ 
+-	alpha_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	alpha_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -129,22 +132,25 @@ fbportrait_right_drawarea_alphacol(PSD dstpsd, driver_gc_t *gc)
+ 			out_x = (out_w - 1) - in_y;
+ 
+ 			//alpha_out[(out_y * out_w) + out_x] = alpha_in[(in_y * in_w) + in_x];
+-			alpha_out[(out_y * l_gc.src_linelen) + out_x] = alpha_in[(in_y * gc->src_linelen) + in_x];
++			alpha_out[(out_y * l_gc.src_pitch) + out_x] = alpha_in[(in_y * gc->src_pitch) + in_x];
+ 		}
+ 	}
+ 
+-	dstpsd->orgsubdriver->DrawArea(dstpsd, &l_gc);
++	dstpsd->orgsubdriver->BlitBlendMaskAlphaByte(dstpsd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+ static void
+-fbportrait_right_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
++fbportrait_right_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 pixel_in, pixel_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!psd->BlitCopyMaskMonoByteMSB)
++		return;
+ 
+ 	/* create new gc with rotated coords*/
+ 	l_gc.width = gc->height;
+@@ -153,20 +159,20 @@ fbportrait_right_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 	l_gc.dsty = gc->dstx;
+ 	l_gc.srcx = 0;
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = (l_gc.width + 7) / 8;
++	l_gc.src_pitch = (l_gc.width + 7) / 8;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+-	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_linelen)))
++	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+-	memset(l_gc.data, 0, l_gc.height * l_gc.src_linelen);
++	memset(l_gc.data, 0, l_gc.height * l_gc.src_pitch);
+ 
+-	pixel_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	pixel_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -181,23 +187,26 @@ fbportrait_right_drawarea_bitmap_bytes_msb_first(PSD psd, driver_gc_t * gc)
+ 			out_x = (out_w - 1) - in_y;
+ 
+ 			//pixel_out[(out_y * out_w) + out_x] = pixel_in[(in_y * in_w) + in_x];
+-			if (pixel_in[in_y*gc->src_linelen + (in_x >> 3)] & (0x80 >> (in_x&7)))
+-				pixel_out[out_y*l_gc.src_linelen + (out_x >> 3)] |= (0x80 >> (out_x&7));
++			if (pixel_in[in_y*gc->src_pitch + (in_x >> 3)] & (0x80 >> (in_x&7)))
++				pixel_out[out_y*l_gc.src_pitch + (out_x >> 3)] |= (0x80 >> (out_x&7));
+ 		}
+ 	}
+ 
+-	psd->orgsubdriver->DrawArea(psd, &l_gc);
++	psd->orgsubdriver->BlitCopyMaskMonoByteMSB(psd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+ static void
+-fbportrait_right_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
++fbportrait_right_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ {
+ 	ADDR8 pixel_in, pixel_out;
+ 	MWCOORD	in_x, in_y, in_w, in_h;
+ 	MWCOORD	out_x, out_y, out_w, out_h;
+-	driver_gc_t	l_gc;
++	MWBLITPARMS	l_gc;
++
++	if (!psd->BlitCopyMaskMonoByteLSB)
++		return;
+ 
+ 	/* create new gc with rotated coords*/
+ 	l_gc.width = gc->height;
+@@ -206,20 +215,20 @@ fbportrait_right_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 	l_gc.dsty = gc->dstx;
+ 	l_gc.srcx = 0;
+ 	l_gc.srcy = 0;
+-	l_gc.src_linelen = (l_gc.width + 7) / 8;
++	l_gc.src_pitch = (l_gc.width + 7) / 8;
+ 
+ 	/* copy the rest*/
+ 	l_gc.op = gc->op;
+-	l_gc.fg_color = gc->fg_color;
+-	l_gc.bg_color = gc->bg_color;
++	l_gc.fg_pixelval = gc->fg_pixelval;
++	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+-	l_gc.dst_linelen = gc->dst_linelen;
++	l_gc.dst_pitch = gc->dst_pitch;
+ 
+-	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_linelen)))
++	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+-	memset(l_gc.data, 0, l_gc.height * l_gc.src_linelen);
++	memset(l_gc.data, 0, l_gc.height * l_gc.src_pitch);
+ 
+-	pixel_in = ((ADDR8)gc->data) + gc->src_linelen * gc->srcy + gc->srcx;
++	pixel_in = ((ADDR8)gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+ 	in_w = gc->width;
+ 	in_h = gc->height;
+ 
+@@ -234,37 +243,16 @@ fbportrait_right_drawarea_bitmap_bytes_lsb_first(PSD psd, driver_gc_t * gc)
+ 			out_x = (out_w - 1) - in_y;
+ 
+ 			//pixel_out[(out_y * out_w) + out_x] = pixel_in[(in_y * in_w) + in_x];
+-			if (pixel_in[in_y*gc->src_linelen + (in_x >> 3)] & (0x01 << (in_x&7)))
+-				pixel_out[out_y*l_gc.src_linelen + (out_x >> 3)] |= (0x01 << (out_x&7));
++			if (pixel_in[in_y*gc->src_pitch + (in_x >> 3)] & (0x01 << (in_x&7)))
++				pixel_out[out_y*l_gc.src_pitch + (out_x >> 3)] |= (0x01 << (out_x&7));
+ 		}
+ 	}
+ 
+-	psd->orgsubdriver->DrawArea(psd, &l_gc);
++	psd->orgsubdriver->BlitCopyMaskMonoByteLSB(psd, &l_gc);
+ 
+ 	FREEA(l_gc.data);
+ }
+ 
+-void
+-fbportrait_right_drawarea(PSD dstpsd, driver_gc_t * gc)
+-{
+-	if (!dstpsd->orgsubdriver->DrawArea)
+-		return;
+-
+-	switch(gc->op) {
+-	case PSDOP_ALPHACOL:
+-		fbportrait_right_drawarea_alphacol(dstpsd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_MSB_FIRST:
+-		fbportrait_right_drawarea_bitmap_bytes_msb_first(dstpsd, gc);
+-		break;
+-
+-	case PSDOP_BITMAP_BYTES_LSB_FIRST:
+-		fbportrait_right_drawarea_bitmap_bytes_lsb_first(dstpsd, gc);
+-		break;
+-	}
+-}
+-
+ SUBDRIVER fbportrait_right = {
+ 	NULL,
+ 	fbportrait_right_drawpixel,
+@@ -273,6 +261,12 @@ SUBDRIVER fbportrait_right = {
+ 	fbportrait_right_drawvertline,
+ 	fbportrait_right_fillrect,
+ 	fbportrait_right_blit,
+-	fbportrait_right_drawarea,
+-	fbportrait_right_stretchblitex
++	NULL,		/* DrawArea*/
++	fbportrait_right_stretchblitex,
++	fbportrait_right_convblit_copy_mask_mono_byte_msb,	/* FT2 non-alias*/
++	fbportrait_right_convblit_copy_mask_mono_byte_lsb,	/* T1LIB non-alias*/
++	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	fbportrait_right_convblit_blend_mask_alpha_byte,		/* FT2/T1 anti-alias*/
++	NULL,		/* BlitSrcOverRGBA8888*/
++	NULL		/* BlitCopyRGB888*/
+ };
+diff --git a/src/drivers/vncserver.c b/src/drivers/vncserver.c
+index ca933cc..836d4a6 100644
+--- a/src/drivers/vncserver.c
++++ b/src/drivers/vncserver.c
+@@ -62,7 +62,7 @@ static void	 (*_FillRect)(PSD psd,MWCOORD x1,MWCOORD y1,MWCOORD x2,
+                 MWCOORD y2,MWPIXELVAL c);
+ static void	 (*_Blit)(PSD destpsd, MWCOORD destx, MWCOORD desty, MWCOORD w,
+                 MWCOORD h,PSD srcpsd,MWCOORD srcx,MWCOORD srcy,long op);
+-static void	 (*_DrawArea)(PSD psd, driver_gc_t *gc);
++//static void	 (*_DrawArea)(PSD psd, driver_gc_t *gc);
+ static void  (*_StretchBlitEx)(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start, int dest_y_start,
+ 				MWCOORD width, int height, int x_denominator, int y_denominator,
+ 				int src_x_fraction, int src_y_fraction,
+@@ -99,13 +99,14 @@ static void stubDrawPixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ }
+ 
+ 
++#if 0
+ static void stubDrawArea(PSD psd, driver_gc_t *gc);
+ {
+         UndrawCursor();
+         _DrawArea(psd,gc);
+         MarkRect(gc->dstx, gc->dsty, gc->dstx + gc->dstw, gc->dstx + gc->dstw ); 
+ }
+-
++#endif
+ 
+ static void stubFillRect(PSD psd, MWCOORD x1, MWCOORD y1, MWCOORD x2, MWCOORD y2,
+ 	MWPIXELVAL c)
+@@ -560,7 +561,7 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
+    _DrawVertLine = psd->DrawVertLine;
+    _FillRect = psd->FillRect;
+    _Blit = psd->Blit;
+-   _DrawArea = psd->DrawArea;
++//   _DrawArea = psd->DrawArea;
+    _StretchBlitEx = psd->StretchBlitEx;
+    
+ 
+@@ -571,7 +572,7 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
+    psd->DrawVertLine = stubDrawVertLine;
+    psd->FillRect = stubFillRect;
+    psd->Blit = stubBlit;
+-   psd->DrawArea = stubDrawArea;
++//   psd->DrawArea = stubDrawArea;
+    psd->StretchBlitEx = stubStretchBlitEx;
+                         
+    /* Don't set bits x sample & samples x pixel, we'll do it later  */
+diff --git a/src/drivers/vtswitch.c b/src/drivers/vtswitch.c
+index b4b7536..3e15916 100644
+--- a/src/drivers/vtswitch.c
++++ b/src/drivers/vtswitch.c
+@@ -50,7 +50,7 @@ static void	null_fillrect(PSD psd,MWCOORD x1,MWCOORD y1,MWCOORD x2,
+ static void	null_blit(PSD dstpsd,MWCOORD destx,MWCOORD desty,MWCOORD w,
+ 			MWCOORD h,PSD srcpsd,MWCOORD srcx,MWCOORD srcy,
+ 			long op) {}
+-static void 	null_drawarea(PSD psd, driver_gc_t *gc, int op) {}
++static void null_drawarea(void) {}
+ static void	null_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start,
+ 			MWCOORD dest_y_start, MWCOORD width, MWCOORD height,
+ 			int x_denominator, int y_denominator,
+diff --git a/src/engine/convblit_8888.c b/src/engine/convblit_8888.c
+index 18a643a..7567236 100644
+--- a/src/engine/convblit_8888.c
++++ b/src/engine/convblit_8888.c
+@@ -143,7 +143,7 @@ static inline void convblit_8888(PSD psd, PMWBLITPARMS gc, int mode,
+ 		src += src_pitch;			/* src: next line down*/
+ 		dst += dst_pitch;
+ 	}
+-printf("convblit_8888\n");
++
+ 	/* update screen bits if driver requires it*/
+ 	if (!psd->Update)
+ 		return;
+diff --git a/src/engine/convblit_mask.c b/src/engine/convblit_mask.c
+index e820051..ef44453 100644
+--- a/src/engine/convblit_mask.c
++++ b/src/engine/convblit_mask.c
+@@ -576,7 +576,7 @@ static inline void convblit_blend_mask_alpha_byte(PSD psd, PMWBLITPARMS gc,
+ 		src += src_pitch;				/* src: next line down*/
+ 		dst += dst_pitch;
+ 	}
+-printf("convblit_mask_alpha\n");
++
+ 	/* update screen bits if driver requires it*/
+ 	if (!psd->Update)
+ 		return;
+diff --git a/src/engine/devblit.c b/src/engine/devblit.c
+index 6dd8b47..87ed4bf 100644
+--- a/src/engine/devblit.c
++++ b/src/engine/devblit.c
+@@ -245,7 +245,6 @@ void
+ GdConversionBlit(PSD psd, PMWBLITPARMS parms)
+ {
+ 	BlitFunc convblit;
+-	driver_gc_t	gc;
+ 	int op = 0;
+ 
+ 	/* setup destination for convblit*/
+@@ -256,12 +255,10 @@ GdConversionBlit(PSD psd, PMWBLITPARMS parms)
+ 	switch (parms->data_format) {
+ 	case MWIF_ALPHABYTE:			/* ft2 alias, t1lib alias*/
+ 		convblit = psd->BlitBlendMaskAlphaByte;		/* conv 8bpp alpha with fg/bg*/
+-		op = PSDOP_ALPHACOL;
+ 		break;
+ 
+ 	case MWIF_MONOBYTEMSB:			/* ft2 non-alias*/
+ 		convblit = psd->BlitCopyMaskMonoByteMSB;	/* conv mono byte MSBFirst*/
+-		op = PSDOP_BITMAP_BYTES_MSB_FIRST;
+ 		break;
+ 
+ 	case MWIF_MONOWORDMSB:			/* core mwcfont, pcf*/
+@@ -275,7 +272,6 @@ GdConversionBlit(PSD psd, PMWBLITPARMS parms)
+ 
+ 	case MWIF_MONOBYTELSB:			/* t1lib non-alias*/
+ 		convblit = psd->BlitCopyMaskMonoByteLSB;	/* conv mono byte LSBFirst*/
+-		op = PSDOP_BITMAP_BYTES_LSB_FIRST;
+ 		break;
+ 
+ 	case MWIF_RGBA8888:				/* png 32bpp w/alpha*/
+@@ -297,129 +293,7 @@ GdConversionBlit(PSD psd, PMWBLITPARMS parms)
+ 		return;
+ 	}
+ 
+-	DPRINTF("GdConversionBlit: no convblit, using DrawArea fallback\n");
+-	/* FIXME temp copy into deprecated driver_t gc and call DrawArea driver entry point*/
+-	gc.op = op;
+-	gc.width = parms->width;
+-	gc.height = parms->height;
+-	gc.dstx = parms->dstx;
+-	gc.dsty = parms->dsty;
+-	gc.srcx = parms->srcx;
+-	gc.srcy = parms->srcy;
+-	gc.src_linelen = parms->src_pitch;
+-	gc.fg_color = parms->fg_pixelval;		/* drawarea uses pixelval color*/
+-	gc.bg_color = parms->bg_pixelval;
+-	gc.usebg = parms->usebg;
+-	gc.data = parms->data;
+-	//gc->dst_linelen = 
+-	GdDrawAreaInternal(psd, &gc);
+-}
+-
+-/*
+- * A wrapper for psd->DrawArea which performs clipping.
+- * The gc->dst[x,y,w,h] values are clipped.  The gc->src[x,y]
+- * values are adjusted accordingly.
+- *
+- * This function does NOT have a fallback implementation
+- * if the function is not supported by the driver.
+- *
+- * It is the caller's responsibility to GdFixCursor(psd).
+- *
+- * This is a low-level function.
+- * FIXME THIS FUNCTION WILL BE REMOVED WHEN GdConversionBlit/GdConvBlitInternal FINISHED.
+- */
+-void
+-GdDrawAreaInternal(PSD psd, driver_gc_t * gc)
+-{
+-	MWCOORD x = gc->dstx;
+-	MWCOORD y = gc->dsty;
+-	MWCOORD width = gc->width;
+-	MWCOORD height = gc->height;
+-	MWCOORD srcx, srcy;
+-	MWCOORD rx1, rx2, ry1, ry2, rw, rh;
+-	int count;
+-#if DYNAMICREGIONS
+-	MWRECT *prc;
+-	extern MWCLIPREGION *clipregion;
+-#else
+-	MWCLIPRECT *prc;
+-	extern MWCLIPRECT cliprects[];
+-	extern int clipcount;
+-#endif
+-
+-	/* check for driver present*/
+-	if (!psd->DrawArea)
+-		return;
+-
+-	/* check clipping region*/
+-	switch(GdClipArea(psd, x, y, x + width - 1, y + height - 1)) {
+-	case CLIP_VISIBLE:
+-		psd->DrawArea(psd, gc);	/* all visible, draw all*/
+-		return;
+-
+-	case CLIP_INVISIBLE:
+-		return;
+-	}
+-
+-	/* partially clipped, we'll traverse visible region and draw*/
+-	srcx = gc->srcx;
+-	srcy = gc->srcy;
+-
+-#if DYNAMICREGIONS
+-	prc = clipregion->rects;
+-	count = clipregion->numRects;
+-#else
+-	prc = cliprects;
+-	count = clipcount;
+-#endif
+-
+-	while (count-- > 0) {
+-#if DYNAMICREGIONS
+-		rx1 = prc->left;
+-		ry1 = prc->top;
+-		rx2 = prc->right;
+-		ry2 = prc->bottom;
+-#else
+-		/* old clip-code*/
+-		rx1 = prc->x;
+-		ry1 = prc->y;
+-		rx2 = prc->x + prc->width;
+-		ry2 = prc->y + prc->height;
+-#endif
+-
+-		/* Check if this rect intersects with the one we draw */
+-		if (rx1 < x)
+-			rx1 = x;
+-		if (ry1 < y)
+-			ry1 = y;
+-		if (rx2 > x + width)
+-			rx2 = x + width;
+-		if (ry2 > y + height)
+-			ry2 = y + height;
+-
+-		rw = rx2 - rx1;
+-		rh = ry2 - ry1;
+-
+-		if (rw > 0 && rh > 0) {
+-			gc->dstx = rx1;
+-			gc->dsty = ry1;
+-			gc->width = rw;
+-			gc->height = rh;
+-			gc->srcx = srcx + rx1 - x;
+-			gc->srcy = srcy + ry1 - y;
+-			GdCheckCursor(psd, rx1, ry1, rx2 - 1, ry2 - 1);
+-			psd->DrawArea(psd, gc);
+-		}
+-		prc++;
+-	}
+-
+-	/* Reset everything, in case the caller re-uses it. */
+-	gc->dstx = x;
+-	gc->dsty = y;
+-	gc->width = width;
+-	gc->height = height;
+-	gc->srcx = srcx;
+-	gc->srcy = srcy;
++	DPRINTF("GdConversionBlit: No convblit available\n");
+ }
+ 
+ /**
+diff --git a/src/include/device.h b/src/include/device.h
+index 2eb4478..e0c54de 100644
+--- a/src/include/device.h
++++ b/src/include/device.h
+@@ -90,68 +90,7 @@
+ #error VTSWITCH depends on MW_FEATURE_TIMERS - disable VTSWITCH in config or enable MW_FEATURE_TIMERS in this file
+ #endif
+ 
+-/*
+- * Draws an alpha map to screen (e.g. an anti-aliased font).
+- * Params:
+- * dstx, dsty  - Destination for top left of image
+- * dstw, dsth  - Image size
+- * srcx, srcy  - Start co-ordinates in source alpha map
+- * src_linelen - Source image stride, in pixels
+- * data        - Alpha map.  Format: ADDR8, entries
+- *               are alpha values in range 0-255.
+- * fg_color    - The color to draw in, in the display format.
+- * bg_color    - Ignored.  FIXME Should be used if gr_usebg is set.
+- * gr_usebg    - Ignored.  FIXME If set, should blend to bg_color.
+- * pixels      - Ignored.
+- */
+-#define PSDOP_ALPHACOL	4
+-
+-/*
+- * Draws a mono bitmap to screen (e.g. a mono font).
+- * This variant takes the bitmap as an array of bytes,
+- * where the Least Significant Bit in each byte is
+- * used to set the left-most of the eight pixels
+- * controlled by that byte.  I.e:
+- *
+- * [ 1 1 1 1 0 0 0 1 ] == 0x8F
+- *
+- * Params:
+- * dstx, dsty  - Destination for top left of image
+- * dstw, dsth  - Image size
+- * srcx, srcy  - Start co-ordinates in source alpha map
+- * src_linelen - Source image stride, in pixels
+- * pixels      - The bitmap.  Format: ADDR8, LSB is drawn first.
+- * fg_color    - The color to draw "1" bits in, in the display format.
+- * bg_color    - The color to draw "0" bits in, in the display format.
+- * gr_usebg    - If zero, then "0" bits are transparent.  If nonzero,
+- *               then "0" bits are bg_color.
+- */
+-#define PSDOP_BITMAP_BYTES_LSB_FIRST	5
+-
+-/*
+- * Draws a mono bitmap to screen (e.g. a mono font).
+- * This variant takes the bitmap as an array of bytes,
+- * where the Most Significant Bit in each byte is
+- * used to set the left-most of the eight pixels
+- * controlled by that byte.  I.e:
+- *
+- * [ 1 1 1 1 0 0 0 1 ] == 0xF1
+- *
+- * Params:
+- * dstx, dsty  - Destination for top left of image
+- * dstw, dsth  - Image size
+- * srcx, srcy  - Start co-ordinates in source alpha map
+- * src_linelen - Source image stride, in pixels
+- * pixels      - The bitmap.  Format: ADDR8, MSB is drawn first.
+- * fg_color    - The color to draw "1" bits in, in the display format.
+- * bg_color    - The color to draw "0" bits in, in the display format.
+- * gr_usebg    - If zero, then "0" bits are transparent.  If nonzero,
+- *               then "0" bits are bg_color.
+- */
+-#define PSDOP_BITMAP_BYTES_MSB_FIRST	6
+-
+ /* screen subdriver entry points: one required for each draw function*/
+-/* NOTE: currently used for fb driver only*/
+ typedef struct {
+ 	int	 (*Init)(PSD psd);
+ 	void 	 (*DrawPixel)(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c);
+@@ -164,12 +103,7 @@ typedef struct {
+ 			MWCOORD y2,MWPIXELVAL c);
+ 	void	 (*Blit)(PSD destpsd, MWCOORD destx, MWCOORD desty, MWCOORD w,
+ 			MWCOORD h,PSD srcpsd,MWCOORD srcx,MWCOORD srcy,int op);
+-	void	 (*DrawArea)(PSD psd, driver_gc_t *gc);
+-	/* Note: StretchBlit() is deprecated, use StretchBlitEx()
+-	void	 (*StretchBlit)(PSD destpsd, MWCOORD destx, MWCOORD desty,
+-			MWCOORD dstw, MWCOORD dsth, PSD srcpsd, MWCOORD srcx,
+-			MWCOORD srcy, MWCOORD srcw, MWCOORD srch, int op);
+-	 */
++	void	 (*DrawArea)(void);		/* DEPRECATED*/
+ 	void 	 (*StretchBlitEx) (PSD dstpsd, PSD srcpsd,
+ 			MWCOORD dest_x_start, int dest_y_start,
+ 			MWCOORD width, int height,
+@@ -219,14 +153,10 @@ typedef struct _mwscreendevice {
+ 	void	(*FillRect)(PSD psd,MWCOORD x1,MWCOORD y1,MWCOORD x2,MWCOORD y2,
+ 			MWPIXELVAL c);
+ 	PMWCOREFONT builtin_fonts;
+-
+-	/* *void (*DrawText)(PSD psd,MWCOORD x,MWCOORD y,const MWUCHAR *str,
+-			int count, MWPIXELVAL fg, PMWFONT pfont);***/
+-
+ 	void	(*Blit)(PSD destpsd,MWCOORD destx,MWCOORD desty,MWCOORD w,
+ 			MWCOORD h,PSD srcpsd,MWCOORD srcx,MWCOORD srcy,int op);
+ 	void	(*PreSelect)(PSD psd);
+-	void	 (*DrawArea)(PSD psd, driver_gc_t *gc);
++	void	 (*DrawArea)(void);		/* DEPRECATED*/
+ 	int	(*SetIOPermissions)(PSD psd);
+ 	PSD	(*AllocateMemGC)(PSD psd);
+ 	MWBOOL	(*MapMemGC)(PSD mempsd,MWCOORD w,MWCOORD h,int planes,int bpp,
+@@ -336,7 +266,6 @@ void	GdReadArea(PSD psd,MWCOORD x,MWCOORD y,MWCOORD width,MWCOORD height,
+ void	GdArea(PSD psd,MWCOORD x,MWCOORD y,MWCOORD width,MWCOORD height,
+ 		void *pixels, int pixtype);
+ void	GdConversionBlit(PSD psd, PMWBLITPARMS parms);
+-void	GdDrawAreaInternal(PSD psd, driver_gc_t *gc);	/* to be deprecated*/
+ void	GdTranslateArea(MWCOORD width, MWCOORD height, void *in, int inpixtype,
+ 		MWCOORD inpitch, void *out, int outpixtype, int outpitch);
+ void	GdCopyArea(PSD psd,MWCOORD srcx,MWCOORD srcy,MWCOORD width,
+diff --git a/src/include/mwtypes.h b/src/include/mwtypes.h
+index 8b426fa..423656a 100644
+--- a/src/include/mwtypes.h
++++ b/src/include/mwtypes.h
+@@ -445,20 +445,6 @@ typedef struct {
+ //	PSD			alphachan;		/* alpha chan for MWROP_BLENDCHANNEL*/
+ } MWBLITPARMS, *PMWBLITPARMS;
+ 
+-typedef struct { // DEPRECATED
+-	int op;
+-	MWCOORD width, height;
+-	MWCOORD dstx, dsty;
+-	MWCOORD srcx, srcy;
+-	MWPIXELVAL fg_color;
+-	MWPIXELVAL bg_color;
+-	int usebg;
+-	void *data;
+-
+-	MWCOORD src_linelen;		// must be set in GdConversionBlit
+-	MWCOORD dst_linelen;		// must be set in GdConversionBlit
+-} driver_gc_t;
+-
+ /**
+  * Structure returned by GetFontInfo.
+  *

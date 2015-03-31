@@ -1,0 +1,2791 @@
+diff --git a/src/ChangeLog b/src/ChangeLog
+index ff6a349..5489a18 100644
+--- a/src/ChangeLog
++++ b/src/ChangeLog
+@@ -1,3 +1,4 @@
++	* remove psd->linelen, use psd->pitch for line length in bytes
+ 	* BMP, PNG image loaders use PSD, not MWIMAGEHDR
+ 	* pixmaps are now always width aligned to DWORD on right boundary
+ 	* GrGetImageInfo will work for pixmaps
+diff --git a/src/DEPRECATED b/src/DEPRECATED
+index 91f036f..636590d 100644
+--- a/src/DEPRECATED
++++ b/src/DEPRECATED
+@@ -37,7 +37,7 @@ fblin18.c		- 18bpp driver 666 format for ASM PXA270 with 18bit LCD
+ fblin32alpha.c	- 32bpp driver, reads/writes DWORD only (replaced by fblin32.c)
+ 
+ 
+-POSSIBLE OBSOLETE DRIVERS - NEED TESTING/UPDATING
++OBSOLETE DRIVERS - NEED TESTING/UPDATING, DEPRECATED UNTIL TESTED
+ fblin12.c		- 12bpp driver for Cirrus Logic
+ fblin4hp.c		- fast 4bpp driver for Vr41xx Palm
+ fblin4orion.c	- 4access Communications Orion machines
+diff --git a/src/FIXME b/src/FIXME
+index 237e9fe..ed31fc3 100644
+--- a/src/FIXME
++++ b/src/FIXME
+@@ -1,4 +1,3 @@
+-remove psd->linelen, use psd->pitch for line length in bytes, 32bpp bmps broken
+ how to handle child windows in buffered window scheme
+ resize buffered pixmap rather than erase to background color
+ allow bgpixmaps to work with buffered windows for pixmap init
+diff --git a/src/drivers/Objects.rules b/src/drivers/Objects.rules
+index b4f70a5..ad5bdc8 100644
+--- a/src/drivers/Objects.rules
++++ b/src/drivers/Objects.rules
+@@ -86,9 +86,7 @@ endif
+ 
+ ifeq ($(EM8400), Y)
+ MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+-MW_CORE_OBJS += \
+-	$(MW_DIR_OBJ)/drivers/scr_em84xx.o \
+-	$(MW_DIR_OBJ)/drivers/genfont.o
++MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_em84xx.o
+ endif
+ 
+ ifeq ($(HAVE_VNCSERVER_SUPPORT), Y)
+diff --git a/src/drivers/fblin1.c b/src/drivers/fblin1.c
+index 539545b..d65733c 100644
+--- a/src/drivers/fblin1.c
++++ b/src/drivers/fblin1.c
+@@ -2,8 +2,6 @@
+  * Copyright (c) 1999-2001, 2010 Greg Haerr <greg@censoft.com>
+  *
+  * 1bpp Packed Linear Video Driver for Microwindows (MSB first bit order)
+- *
+- * 	In this driver, psd->linelen is line byte length, not line pixel length
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -19,23 +17,12 @@
+ static const unsigned char notmask[8] = {
+ 	0x7f, 0xbf, 0xdf, 0xef, 0xf7, 0xfb, 0xfd, 0xfe};
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear1_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear1_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x>>3) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -52,21 +39,20 @@ linear1_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear1_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return (((ADDR8)psd->addr)[(x>>3) + y * psd->linelen] >> (7-(x&7)) ) & 0x01;
++	return ( *addr >> (7-(x&7)) ) & 0x01;
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear1_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x1>>3) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -94,10 +80,9 @@ linear1_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear1_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x>>3) + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -108,12 +93,12 @@ linear1_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_XOR)
+ 		while(y1++ <= y2) {
+ 			*addr ^= c << (7-(x&7));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	else
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&7]) | (c << (7-(x&7)));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	DRAWOFF;
+ }
+@@ -123,28 +108,25 @@ static void
+ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	PSD srcpsd, MWCOORD srcx, MWCOORD srcy, int op)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = dstpsd->linelen;
+-	int		slinelen = srcpsd->linelen;
+-
+-	assert (dstpsd->addr != 0);
++	int		dpitch = dstpsd->pitch;
++	int		spitch = srcpsd->pitch;
++	/* src is MSB 1bpp, dst is MSB 1bpp*/
++	ADDR8 dst = ((ADDR8)dstpsd->addr) + (dstx>>3) + dsty * dpitch;
++	ADDR8 src = ((ADDR8)srcpsd->addr) + (srcx>>3) + srcy * spitch;
++#if DEBUG
+ 	assert (dstx >= 0 && dstx < dstpsd->xres);
+ 	assert (dsty >= 0 && dsty < dstpsd->yres);
+ 	assert (w > 0);
+ 	assert (h > 0);
+-	assert (srcpsd->addr != 0);
+ 	assert (srcx >= 0 && srcx < srcpsd->xres);
+ 	assert (srcy >= 0 && srcy < srcpsd->yres);
+ 	assert (dstx+w <= dstpsd->xres);
+ 	assert (dsty+h <= dstpsd->yres);
+ 	assert (srcx+w <= srcpsd->xres);
+ 	assert (srcy+h <= srcpsd->yres);
+-
++#endif
+ 	DRAWON;
+-	/* src is MSB 1bpp, dst is MSB 1bpp*/
+-	dst = ((ADDR8)dstpsd->addr) + (dstx>>3) + dsty * dlinelen;
+-	src = ((ADDR8)srcpsd->addr) + (srcx>>3) + srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -157,8 +139,8 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 			if((++sx & 7) == 0)
+ 				++s;
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+@@ -172,16 +154,17 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ static void
+ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_pitch;
++	int		dpitch = gc->dst_pitch;
++	int		spitch = gc->src_pitch;
++	/* src is MSB 1bpp, dst is MSB 1bpp*/
++	ADDR8 dst = ((ADDR8)gc->data_out) + (gc->dstx>>3) + gc->dsty * dpitch;
++	ADDR8 src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * spitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+ 	MWPIXELVAL fg = gc->fg_pixelval;
+ 	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+ 	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
+ 	assert (gc->width > 0);
+@@ -190,9 +173,6 @@ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	assert (gc->dsty+h <= psd->yres);
+ #endif
+ 	DRAWON;
+-	/* src is MSB 1bpp, dst is MSB 1bpp*/
+-	dst = ((ADDR8)psd->addr) + (gc->dstx>>3) + gc->dsty * dlinelen;
+-	src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -220,14 +200,13 @@ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 					++s;
+ 			}
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+ 
+ static SUBDRIVER fblinear1_none = {
+-	linear1_init,
+ 	linear1_drawpixel,
+ 	linear1_readpixel,
+ 	linear1_drawhorzline,
+diff --git a/src/drivers/fblin16.c b/src/drivers/fblin16.c
+index 0893e8d..1a5776a 100644
+--- a/src/drivers/fblin16.c
++++ b/src/drivers/fblin16.c
+@@ -20,32 +20,19 @@
+ #include "fb.h"
+ #include "genmem.h"
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear16_init(PSD psd)
+-{
+-	if (!psd->size) {
+-		psd->size = psd->yres * psd->linelen;
+-		/* convert linelen from byte to pixel len for bpp 16, 24, 32*/
+-		psd->linelen /= 2;
+-	}
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear16_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR16	addr = ((ADDR16)psd->addr) + x + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x << 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+ #endif
+ 	DRAWON;
+ 	if(gr_mode == MWROP_COPY)
+-		*addr = c;
++		*((ADDR16)addr) = c;
+ 	else
+ 		APPLYOP(gr_mode, 1, (unsigned short), c, *(ADDR16), addr, 0, 0);
+ 	DRAWOFF;
+@@ -58,19 +45,19 @@ linear16_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear16_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x << 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return ((ADDR16)psd->addr)[x + y * psd->linelen];
++	return *((ADDR16)addr);
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear16_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR16	addr = ((ADDR16)psd->addr) + x1 + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 << 1);
+ 	int width = x2-x1+1;
+ #if DEBUG
+ 	assert (psd->addr != 0);
+@@ -86,7 +73,10 @@ linear16_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ 	{
+ 		int w = width;
+ 		while(--w >= 0)
+-			*addr++ = c;
++		{
++			*((ADDR16)addr) = c;
++			addr += 2;
++		}
+ 	}
+ 	else
+ 		APPLYOP(gr_mode, width, (unsigned short), c, *(ADDR32), addr, 0, 1);
+@@ -100,11 +90,10 @@ linear16_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear16_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	register ADDR16	addr = ((ADDR16)psd->addr) + x + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * psd->pitch + (x << 1);
+ 	int height = y2-y1+1;
+ #if DEBUG
+-	assert (addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -118,12 +107,12 @@ linear16_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 		int h = height;
+ 		while (--h >= 0)
+ 		{
+-			*addr = c;
+-			addr += linelen;
++			*((ADDR16)addr) = c;
++			addr += pitch;
+ 		}
+ 	}
+ 	else
+-		APPLYOP(gr_mode, height, (unsigned short), c, *(ADDR16), addr, 0, linelen);
++		APPLYOP(gr_mode, height, (unsigned short), c, *(ADDR16), addr, 0, pitch);
+ 	DRAWOFF;
+ 
+ 	if (psd->Update)
+@@ -131,7 +120,6 @@ linear16_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ }
+ 
+ static SUBDRIVER fblinear16_none = {
+-	linear16_init,
+ 	linear16_drawpixel,
+ 	linear16_readpixel,
+ 	linear16_drawhorzline,
+@@ -151,7 +139,6 @@ static SUBDRIVER fblinear16_none = {
+ };
+ 
+ static SUBDRIVER fblinear16_left = {
+-	NULL,
+ 	fbportrait_left_drawpixel,
+ 	fbportrait_left_readpixel,
+ 	fbportrait_left_drawhorzline,
+@@ -171,7 +158,6 @@ static SUBDRIVER fblinear16_left = {
+ };
+ 
+ static SUBDRIVER fblinear16_right = {
+-	NULL,
+ 	fbportrait_right_drawpixel,
+ 	fbportrait_right_readpixel,
+ 	fbportrait_right_drawhorzline,
+@@ -191,7 +177,6 @@ static SUBDRIVER fblinear16_right = {
+ };
+ 
+ static SUBDRIVER fblinear16_down = {
+-	NULL,
+ 	fbportrait_down_drawpixel,
+ 	fbportrait_down_readpixel,
+ 	fbportrait_down_drawhorzline,
+diff --git a/src/drivers/fblin1rev.c b/src/drivers/fblin1rev.c
+index 245eda3..0c93703 100644
+--- a/src/drivers/fblin1rev.c
++++ b/src/drivers/fblin1rev.c
+@@ -3,8 +3,6 @@
+  *
+  * 1bpp Packed Linear Video Driver for Microwindows (LSB first bit order)
+  * For Psion S5
+- *
+- * 	In this driver, psd->linelen is line byte length, not line pixel length
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -20,23 +18,12 @@
+ static const unsigned char notmask[8] = {
+ 	0xfe, 0xfd, 0xfb, 0xf7, 0xef, 0xdf, 0xbf, 0x7f};
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear1_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear1_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x>>3) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -53,21 +40,21 @@ linear1_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear1_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 3);
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return (((ADDR8)psd->addr)[(x>>3) + y * psd->linelen] >> (x&7) ) & 0x01;
++	return ( *addr >> (x&7) ) & 0x01;
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear1_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x1>>3) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -95,10 +82,9 @@ linear1_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear1_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x>>3) + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x >> 3);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -109,12 +95,12 @@ linear1_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_XOR)
+ 		while(y1++ <= y2) {
+ 			*addr ^= c << (x&7);
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	else
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&7]) | (c << (x&7));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	DRAWOFF;
+ }
+@@ -124,28 +110,25 @@ static void
+ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	PSD srcpsd, MWCOORD srcx, MWCOORD srcy, int op)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = dstpsd->linelen;
+-	int		slinelen = srcpsd->linelen;
+-
+-	assert (dstpsd->addr != 0);
++	int		dpitch = dstpsd->pitch;
++	int		spitch = srcpsd->pitch;
++	/* src is LSB 1bpp, dst is LSB 1bpp*/
++	ADDR8 dst = ((ADDR8)dstpsd->addr) + (dstx>>3) + dsty * dpitch;
++	ADDR8 src = ((ADDR8)srcpsd->addr) + (srcx>>3) + srcy * spitch;
++#if DEBUG
+ 	assert (dstx >= 0 && dstx < dstpsd->xres);
+ 	assert (dsty >= 0 && dsty < dstpsd->yres);
+ 	assert (w > 0);
+ 	assert (h > 0);
+-	assert (srcpsd->addr != 0);
+ 	assert (srcx >= 0 && srcx < srcpsd->xres);
+ 	assert (srcy >= 0 && srcy < srcpsd->yres);
+ 	assert (dstx+w <= dstpsd->xres);
+ 	assert (dsty+h <= dstpsd->yres);
+ 	assert (srcx+w <= srcpsd->xres);
+ 	assert (srcy+h <= srcpsd->yres);
+-
++#endif
+ 	DRAWON;
+-	/* src is LSB 1bpp, dst is LSB 1bpp*/
+-	dst = ((ADDR8)dstpsd->addr) + (dstx>>3) + dsty * dlinelen;
+-	src = ((ADDR8)srcpsd->addr) + (srcx>>3) + srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -159,8 +142,8 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 			if((++sx & 7) == 0)
+ 				++s;
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+@@ -174,16 +157,17 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ static void
+ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_pitch;
++	int		dpitch = gc->dst_pitch;
++	int		spitch = gc->src_pitch;
++	/* src is MSB 1bpp, dst is LSB 1bpp*/
++	ADDR8 dst = ((ADDR8)psd->addr) + (gc->dstx>>3) + gc->dsty * dpitch;
++	ADDR8 src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * spitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+ 	MWPIXELVAL fg = gc->fg_pixelval;
+ 	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+ 	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
+ 	assert (gc->width > 0);
+@@ -192,9 +176,6 @@ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	assert (gc->dsty+h <= psd->yres);
+ #endif
+ 	DRAWON;
+-	/* src is MSB 1bpp, dst is LSB 1bpp*/
+-	dst = ((ADDR8)psd->addr) + (gc->dstx>>3) + gc->dsty * dlinelen;
+-	src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -223,14 +204,13 @@ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 					++s;
+ 			}
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+ 
+ static SUBDRIVER fblinear1_none = {
+-	linear1_init,
+ 	linear1_drawpixel,
+ 	linear1_readpixel,
+ 	linear1_drawhorzline,
+diff --git a/src/drivers/fblin2.c b/src/drivers/fblin2.c
+index 0fb1f10..41b531d 100644
+--- a/src/drivers/fblin2.c
++++ b/src/drivers/fblin2.c
+@@ -3,8 +3,6 @@
+  *
+  * 2bpp Packed Linear Video Driver for Microwindows (MSB first bit order)
+  * This driver is written for the Vr41xx Palm PC machines
+- *
+- * 	In this driver, psd->linelen is line byte length, not line pixel length
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -15,23 +13,12 @@
+ 
+ static const unsigned char notmask[4] = { 0x3f, 0xcf, 0xf3, 0xfc};
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear2_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear2_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x>>2) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -48,21 +35,20 @@ linear2_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear2_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return (((ADDR8)psd->addr)[(x>>2) + y * psd->linelen] >> ((3-(x&3))<<1) ) & 0x03;
++	return ( *addr >> ((3-(x&3))<<1) ) & 0x03;
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear2_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x1>>2) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -90,8 +76,8 @@ linear2_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear2_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x>>2) + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x >> 2);
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+@@ -104,12 +90,12 @@ linear2_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_XOR)
+ 		while(y1++ <= y2) {
+ 			*addr ^= c << ((3-(x&3))<<1);
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	else
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&3]) | (c << ((3-(x&3))<<1));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	DRAWOFF;
+ }
+@@ -119,28 +105,25 @@ static void
+ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	PSD srcpsd, MWCOORD srcx, MWCOORD srcy, int op)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = dstpsd->linelen;
+-	int		slinelen = srcpsd->linelen;
+-
+-	assert (dstpsd->addr != 0);
++	int		dpitch = dstpsd->pitch;
++	int		spitch = srcpsd->pitch;
++	/* src is MSB 2bpp, dst is MSB 2bpp*/
++	ADDR8 dst = ((ADDR8)dstpsd->addr) + (dstx>>2) + dsty * dpitch;
++	ADDR8 src = ((ADDR8)srcpsd->addr) + (srcx>>2) + srcy * spitch;
++#if DEBUG
+ 	assert (dstx >= 0 && dstx < dstpsd->xres);
+ 	assert (dsty >= 0 && dsty < dstpsd->yres);
+ 	assert (w > 0);
+ 	assert (h > 0);
+-	assert (srcpsd->addr != 0);
+ 	assert (srcx >= 0 && srcx < srcpsd->xres);
+ 	assert (srcy >= 0 && srcy < srcpsd->yres);
+ 	assert (dstx+w <= dstpsd->xres);
+ 	assert (dsty+h <= dstpsd->yres);
+ 	assert (srcx+w <= srcpsd->xres);
+ 	assert (srcy+h <= srcpsd->yres);
+-
++#endif
+ 	DRAWON;
+-	/* src is MSB 2bpp, dst is MSB 2bpp*/
+-	dst = ((ADDR8)dstpsd->addr) + (dstx>>2) + dsty * dlinelen;
+-	src = ((ADDR8)srcpsd->addr) + (srcx>>2) + srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -154,8 +137,8 @@ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 			if((++sx & 3) == 0)
+ 				++s;
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+@@ -169,16 +152,17 @@ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ static void
+ linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_pitch;
++	int		dpitch = gc->dst_pitch;
++	int		spitch = gc->src_pitch;
++	/* src is MSB 1bpp, dst is MSB 2bpp*/
++	ADDR8 dst = ((ADDR8)gc->data_out) + (gc->dstx>>2) + gc->dsty * dpitch;
++	ADDR8 src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * spitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+ 	MWPIXELVAL fg = gc->fg_pixelval;
+ 	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+ 	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
+ 	assert (gc->width > 0);
+@@ -187,9 +171,6 @@ linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	assert (gc->dsty+h <= psd->yres);
+ #endif
+ 	DRAWON;
+-	/* src is MSB 1bpp, dst is MSB 2bpp*/
+-	dst = ((ADDR8)psd->addr) + (gc->dstx>>2) + gc->dsty * dlinelen;
+-	src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -219,14 +200,13 @@ linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 					++s;
+ 			}
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+ 
+ static SUBDRIVER fblinear2_none = {
+-	linear2_init,
+ 	linear2_drawpixel,
+ 	linear2_readpixel,
+ 	linear2_drawhorzline,
+diff --git a/src/drivers/fblin24.c b/src/drivers/fblin24.c
+index a9977f8..dc55f04 100644
+--- a/src/drivers/fblin24.c
++++ b/src/drivers/fblin24.c
+@@ -12,28 +12,15 @@
+ #include "fb.h"
+ #include "genmem.h"
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear24_init(PSD psd)
+-{
+-	if (!psd->size) {
+-		psd->size = psd->yres * psd->linelen;
+-		/* convert linelen from byte to pixel len for bpp 16, 24, 32*/
+-		psd->linelen /= 3;
+-	}
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear24_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x + y * psd->linelen) * 3;
++	register unsigned char *addr = psd->addr + y * psd->pitch + x * 3;
+ 	MWUCHAR r = PIXEL888RED(c);
+ 	MWUCHAR g = PIXEL888GREEN(c);
+ 	MWUCHAR b = PIXEL888BLUE(c);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+@@ -60,9 +47,8 @@ linear24_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear24_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x + y * psd->linelen) * 3;
++	register unsigned char *addr = psd->addr + y * psd->pitch + x * 3;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+@@ -73,13 +59,12 @@ linear24_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ static void
+ linear24_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x1 + y * psd->linelen) * 3;
++	register unsigned char *addr = psd->addr + y * psd->pitch + x1 * 3;
+ 	MWUCHAR r = PIXEL888RED(c);
+ 	MWUCHAR g = PIXEL888GREEN(c);
+ 	MWUCHAR b = PIXEL888BLUE(c);
+ 	int w = x2-x1+1;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -114,14 +99,13 @@ linear24_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear24_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x + y1 * psd->linelen) * 3;
+-	int	linelen = psd->linelen * 3;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + x * 3;
+ 	MWUCHAR r = PIXEL888RED(c);
+ 	MWUCHAR g = PIXEL888GREEN(c);
+ 	MWUCHAR b = PIXEL888BLUE(c);
+ 	int height = y2-y1+1;
+ #if DEBUG
+-	assert (addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -135,7 +119,7 @@ linear24_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 			addr[0] = b;
+ 			addr[1] = g;
+ 			addr[2] = r;
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	}
+ 	else
+@@ -145,7 +129,7 @@ linear24_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 			APPLYOP(gr_mode, 1, (MWUCHAR), b, *(ADDR8), addr, 0, 1);
+ 			APPLYOP(gr_mode, 1, (MWUCHAR), g, *(ADDR8), addr, 0, 1);
+ 			APPLYOP(gr_mode, 1, (MWUCHAR), r, *(ADDR8), addr, 0, 1);
+-			addr += linelen - 3;
++			addr += pitch - 3;
+ 		}
+ 	}
+ 	DRAWOFF;
+@@ -155,7 +139,6 @@ linear24_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ }
+ 
+ static SUBDRIVER fblinear24_none = {
+-	linear24_init,
+ 	linear24_drawpixel,
+ 	linear24_readpixel,
+ 	linear24_drawhorzline,
+@@ -175,7 +158,6 @@ static SUBDRIVER fblinear24_none = {
+ };
+ 
+ static SUBDRIVER fblinear24_left = {
+-	NULL,
+ 	fbportrait_left_drawpixel,
+ 	fbportrait_left_readpixel,
+ 	fbportrait_left_drawhorzline,
+@@ -195,7 +177,6 @@ static SUBDRIVER fblinear24_left = {
+ };
+ 
+ static SUBDRIVER fblinear24_right = {
+-	NULL,
+ 	fbportrait_right_drawpixel,
+ 	fbportrait_right_readpixel,
+ 	fbportrait_right_drawhorzline,
+@@ -215,7 +196,6 @@ static SUBDRIVER fblinear24_right = {
+ };
+ 
+ static SUBDRIVER fblinear24_down = {
+-	NULL,
+ 	fbportrait_down_drawpixel,
+ 	fbportrait_down_readpixel,
+ 	fbportrait_down_drawhorzline,
+diff --git a/src/drivers/fblin2rev.c b/src/drivers/fblin2rev.c
+index bfa5b71..27d7b89 100644
+--- a/src/drivers/fblin2rev.c
++++ b/src/drivers/fblin2rev.c
+@@ -3,8 +3,6 @@
+  *
+  * 2bpp Packed Linear Video Driver for Microwindows (LSB first bit order)
+  * For Psion S5
+- *
+- * 	In this driver, psd->linelen is line byte length, not line pixel length
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -15,23 +13,12 @@
+ 
+ static const unsigned char notmask[4] = { 0xfc, 0xf3, 0xcf, 0x3f };
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear2_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear2_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x>>2) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -48,21 +35,20 @@ linear2_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear2_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return (((ADDR8)psd->addr)[(x>>2) + y * psd->linelen] >> ((x&3)<<1) ) & 0x03;
++	return ( *addr >> ((x&3)<<1) ) & 0x03;
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear2_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x1>>2) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -90,10 +76,9 @@ linear2_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear2_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x>>2) + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x >> 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -104,12 +89,12 @@ linear2_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_XOR)
+ 		while(y1++ <= y2) {
+ 			*addr ^= c << ((x&3)<<1);
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	else
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&3]) | (c << ((x&3)<<1));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	DRAWOFF;
+ }
+@@ -119,28 +104,25 @@ static void
+ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	PSD srcpsd, MWCOORD srcx, MWCOORD srcy, int op)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = dstpsd->linelen;
+-	int		slinelen = srcpsd->linelen;
+-
+-	assert (dstpsd->addr != 0);
++	int		dpitch = dstpsd->pitch;
++	int		spitch = srcpsd->pitch;
++	/* src is LSB 2bpp, dst is LSB 2bpp*/
++	ADDR8 dst = ((ADDR8)dstpsd->addr) + (dstx>>2) + dsty * dpitch;
++	ADDR8 src = ((ADDR8)srcpsd->addr) + (srcx>>2) + srcy * spitch;
++#if DEBUG
+ 	assert (dstx >= 0 && dstx < dstpsd->xres);
+ 	assert (dsty >= 0 && dsty < dstpsd->yres);
+ 	assert (w > 0);
+ 	assert (h > 0);
+-	assert (srcpsd->addr != 0);
+ 	assert (srcx >= 0 && srcx < srcpsd->xres);
+ 	assert (srcy >= 0 && srcy < srcpsd->yres);
+ 	assert (dstx+w <= dstpsd->xres);
+ 	assert (dsty+h <= dstpsd->yres);
+ 	assert (srcx+w <= srcpsd->xres);
+ 	assert (srcy+h <= srcpsd->yres);
+-
++#endif
+ 	DRAWON;
+-	/* src is LSB 2bpp, dst is LSB 2bpp*/
+-	dst = ((ADDR8)dstpsd->addr) + (dstx>>2) + dsty * dlinelen;
+-	src = ((ADDR8)srcpsd->addr) + (srcx>>2) + srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -154,8 +136,8 @@ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 			if((++sx & 3) == 0)
+ 				++s;
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+@@ -169,16 +151,17 @@ linear2_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ static void
+ linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ {
+-	ADDR8	dst, src;
+ 	int		i;
+-	int		dlinelen = psd->linelen;
+-	int		slinelen = gc->src_pitch;
++	int		dpitch = gc->dst_pitch;
++	int		spitch = gc->src_pitch;
++	/* src is MSB 1bpp, dst is LSB 2bpp*/
++	ADDR8 dst = ((ADDR8)gc->data_out) + (gc->dstx>>2) + gc->dsty * dpitch;
++	ADDR8 src = ((ADDR8)gc->data) + (gc->srcx>>2) + gc->srcy * spitch;
+ 	MWCOORD	h = gc->height;
+ 	MWCOORD	w = gc->width;
+ 	MWPIXELVAL fg = gc->fg_pixelval;
+ 	MWPIXELVAL bg = gc->bg_pixelval;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+ 	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
+ 	assert (gc->width > 0);
+@@ -187,9 +170,6 @@ linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	assert (gc->dsty+h <= psd->yres);
+ #endif
+ 	DRAWON;
+-	/* src is MSB 1bpp, dst is LSB 2bpp*/
+-	dst = ((ADDR8)psd->addr) + (gc->dstx>>2) + gc->dsty * dlinelen;
+-	src = ((ADDR8)gc->data) + (gc->srcx>>2) + gc->srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -219,14 +199,13 @@ linear2_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 					++s;
+ 			}
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+ 
+ static SUBDRIVER fblinear2_none = {
+-	linear2_init,
+ 	linear2_drawpixel,
+ 	linear2_readpixel,
+ 	linear2_drawhorzline,
+diff --git a/src/drivers/fblin32.c b/src/drivers/fblin32.c
+index a6b60d1..2695621 100644
+--- a/src/drivers/fblin32.c
++++ b/src/drivers/fblin32.c
+@@ -15,31 +15,18 @@
+ #include "fb.h"
+ #include "genmem.h"
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear32_init(PSD psd)
+-{
+-	if (!psd->size) {
+-		psd->size = psd->yres * psd->linelen;
+-		/* convert linelen from byte to pixel len for bpp 16, 24, 32*/
+-		psd->linelen /= 4;
+-	}
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear32_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR32	addr = ((ADDR32)psd->addr) + x + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x << 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+ 	DRAWON;
+ 	if (gr_mode == MWROP_COPY)
+-		*addr = c;
++		*((ADDR32)addr) = c;
+ 	else
+ 		APPLYOP(gr_mode, 1, (uint32_t), c, *(ADDR32), addr, 0, 0);
+ 	DRAWOFF;
+@@ -52,22 +39,21 @@ linear32_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear32_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x << 2);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return ((ADDR32)psd->addr)[x + y * psd->linelen];
++	return *((ADDR32)addr);
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear32_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR32	addr = ((ADDR32)psd->addr) + x1 + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 << 2);
+ 	int width = x2-x1+1;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -77,8 +63,11 @@ linear32_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_COPY)
+ 	{
+ 		int w = width;
+-		while(--w >= 0)
+-			*addr++ = c;
++		while (--w >= 0)
++		{
++			*((ADDR32)addr) = c;
++			addr += 4;
++		}
+ 	}
+ 	else
+ 		APPLYOP(gr_mode, width, (uint32_t), c, *(ADDR32), addr, 0, 1);
+@@ -92,11 +81,10 @@ linear32_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear32_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	register ADDR32	addr = ((ADDR32)psd->addr) + x + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x << 2);
+ 	int height = y2-y1+1;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -108,12 +96,12 @@ linear32_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 		int h = height;
+ 		while (--h >= 0)
+ 		{
+-			*addr = c;
+-			addr += linelen;
++			*((ADDR32)addr) = c;
++			addr += pitch;
+ 		}
+ 	}
+ 	else
+-		APPLYOP(gr_mode, height, (uint32_t), c, *(ADDR32), addr, 0, linelen);
++		APPLYOP(gr_mode, height, (uint32_t), c, *(ADDR32), addr, 0, pitch);
+ 	DRAWOFF;
+ 
+ 	if (psd->Update)
+@@ -122,7 +110,6 @@ linear32_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 
+ /* BGRA subdriver*/
+ static SUBDRIVER fblinear32bgra_none = {
+-	linear32_init,
+ 	linear32_drawpixel,
+ 	linear32_readpixel,
+ 	linear32_drawhorzline,
+@@ -142,7 +129,6 @@ static SUBDRIVER fblinear32bgra_none = {
+ };
+ 
+ static SUBDRIVER fblinear32bgra_left = {
+-	NULL,
+ 	fbportrait_left_drawpixel,
+ 	fbportrait_left_readpixel,
+ 	fbportrait_left_drawhorzline,
+@@ -162,7 +148,6 @@ static SUBDRIVER fblinear32bgra_left = {
+ };
+ 
+ static SUBDRIVER fblinear32bgra_right = {
+-	NULL,
+ 	fbportrait_right_drawpixel,
+ 	fbportrait_right_readpixel,
+ 	fbportrait_right_drawhorzline,
+@@ -182,7 +167,6 @@ static SUBDRIVER fblinear32bgra_right = {
+ };
+ 
+ static SUBDRIVER fblinear32bgra_down = {
+-	NULL,
+ 	fbportrait_down_drawpixel,
+ 	fbportrait_down_readpixel,
+ 	fbportrait_down_drawhorzline,
+@@ -207,7 +191,6 @@ PSUBDRIVER fblinear32bgra[4] = {
+ 
+ /* RGBA subdriver*/
+ static SUBDRIVER fblinear32rgba_none = {
+-	linear32_init,
+ 	linear32_drawpixel,
+ 	linear32_readpixel,
+ 	linear32_drawhorzline,
+@@ -227,7 +210,6 @@ static SUBDRIVER fblinear32rgba_none = {
+ };
+ 
+ static SUBDRIVER fblinear32rgba_left = {
+-	NULL,
+ 	fbportrait_left_drawpixel,
+ 	fbportrait_left_readpixel,
+ 	fbportrait_left_drawhorzline,
+@@ -247,7 +229,6 @@ static SUBDRIVER fblinear32rgba_left = {
+ };
+ 
+ static SUBDRIVER fblinear32rgba_right = {
+-	NULL,
+ 	fbportrait_right_drawpixel,
+ 	fbportrait_right_readpixel,
+ 	fbportrait_right_drawhorzline,
+@@ -267,7 +248,6 @@ static SUBDRIVER fblinear32rgba_right = {
+ };
+ 
+ static SUBDRIVER fblinear32rgba_down = {
+-	NULL,
+ 	fbportrait_down_drawpixel,
+ 	fbportrait_down_readpixel,
+ 	fbportrait_down_drawhorzline,
+diff --git a/src/drivers/fblin4.c b/src/drivers/fblin4.c
+index 611693c..2b66d70 100644
+--- a/src/drivers/fblin4.c
++++ b/src/drivers/fblin4.c
+@@ -6,8 +6,6 @@
+  *
+  * If INVERT4BPP is defined, then the values are inverted before drawing.
+  * VTech Helio
+- *
+- * 	In this driver, psd->linelen is line byte length, not line pixel length
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -30,23 +28,12 @@ DEFINE_applyOpR
+ 
+ static const unsigned char notmask[2] = { 0x0f, 0xf0};
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear4_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear4_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x>>1) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -66,13 +53,13 @@ linear4_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear4_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 1);
+ 	MWPIXELVAL	c;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	c = (((ADDR8)psd->addr)[(x>>1) + y * psd->linelen] >> ((1-(x&1))<<2) ) & 0x0f;
++	c = ( *addr >> ((1-(x&1))<<2) ) & 0x0f;
+ 	INVERT(c);
+ 	return c;
+ }
+@@ -81,9 +68,8 @@ linear4_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ static void
+ linear4_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x1>>1) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 >> 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -113,10 +99,9 @@ linear4_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear4_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x>>1) + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x >> 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -128,13 +113,13 @@ linear4_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_COPY) {
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&1]) | (c << ((1-(x&1))<<2));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	} else {
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&1]) | 
+ 			    ((applyOpR(gr_mode, c, *addr >> ((1-(x&1))<<2)) & 0x0f) << ((1-(x&1))<<2));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	}
+ 	DRAWOFF;
+@@ -145,18 +130,16 @@ static void
+ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	PSD srcpsd, MWCOORD srcx, MWCOORD srcy, int op)
+ {
+-	ADDR8	dst;
+-	ADDR8	src;
+ 	int	i;
+-	int	dlinelen = dstpsd->linelen;
+-	int	slinelen = srcpsd->linelen;
++	int	dpitch = dstpsd->pitch;
++	int	spitch = srcpsd->pitch;
++	ADDR8 dst = dstpsd->addr + (dstx>>1) + dsty * dpitch;
++	ADDR8 src = srcpsd->addr + (srcx>>1) + srcy * spitch;
+ #if DEBUG
+-	assert (dstpsd->addr != 0);
+ 	assert (dstx >= 0 && dstx < dstpsd->xres);
+ 	assert (dsty >= 0 && dsty < dstpsd->yres);
+ 	assert (w > 0);
+ 	assert (h > 0);
+-	assert (srcpsd->addr != 0);
+ 	assert (srcx >= 0 && srcx < srcpsd->xres);
+ 	assert (srcy >= 0 && srcy < srcpsd->yres);
+ 	assert (dstx+w <= dstpsd->xres);
+@@ -166,8 +149,6 @@ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ #endif
+ 	if (op > MWROP_SIMPLE_MAX)
+ 		op = MWROP_COPY;
+-	dst = ((ADDR8)dstpsd->addr) + (dstx>>1) + dsty * dlinelen;
+-	src = ((ADDR8)srcpsd->addr) + (srcx>>1) + srcy * slinelen;
+ 
+ 	DRAWON;
+ 	while(--h >= 0) {
+@@ -196,8 +177,8 @@ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 				INVERT(c);
+ 			}
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+@@ -260,13 +241,13 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+ 	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+-	dst = ((ADDR8) psd->addr) + (psd->linelen * gc->dsty + gc->dstx) / 2;	/* 4bpp = 2 ppb */
++	dst = ((ADDR8) gc->data_out) + (gc->dst_pitch * gc->dsty + gc->dstx) / 2;	/* 4bpp = 2 ppb */
+ 
+ 	fg = gc->fg_pixelval;
+ 	bg = gc->bg_pixelval;
+ 
+ 	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+-	advance_dst = psd->linelen - (gc->width / 2);				/* 4bpp = 2 ppb */
++	advance_dst = gc->dst_pitch - (gc->width / 2);				/* 4bpp = 2 ppb */
+ 
+ 	if (first_byte != last_byte) {
+ 		/* The total number of bytes to use, less the two special-cased
+@@ -302,7 +283,7 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 		for (y = 0; y < gc->height; y++) {
+ 			int x = 0;
+ 			int X = gc->dstx;
+-			ADDR8 addr = ((ADDR8)psd->addr) + (X>>1) + (gc->dsty+y) * psd->linelen;
++			ADDR8 addr = ((ADDR8)gc->data_out) + (X>>1) + (gc->dsty+y) * gc->dst_pitch;
+ 
+ 			/* Do pixels of partial first byte */
+ 			if (prefix_first_bit) {
+@@ -351,7 +332,7 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 		for (y = 0; y < gc->height; y++) {
+ 			int x = 0;
+ 			int X = gc->dstx;
+-			ADDR8 addr = ((ADDR8)psd->addr) + (X>>1) + (gc->dsty+y) * psd->linelen;
++			ADDR8 addr = ((ADDR8)gc->data_out) + (X>>1) + (gc->dsty+y) * gc->dst_pitch;
+ 
+ 			/* Do pixels of partial first byte */
+ 			if (prefix_first_bit) {
+@@ -421,7 +402,6 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ }
+ 
+ static SUBDRIVER fblinear4_none = {
+-	linear4_init,
+ 	linear4_drawpixel,
+ 	linear4_readpixel,
+ 	linear4_drawhorzline,
+diff --git a/src/drivers/fblin4rev.c b/src/drivers/fblin4rev.c
+index 11736ca..9024820 100644
+--- a/src/drivers/fblin4rev.c
++++ b/src/drivers/fblin4rev.c
+@@ -5,8 +5,6 @@
+  * Psion S5
+  *
+  * If INVERT4BPP is defined, then the values are inverted before drawing.
+- *
+- * 	In this driver, psd->linelen is line byte length, not line pixel length
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -31,23 +29,12 @@
+ 
+ static const unsigned char notmask[2] = { 0xf0, 0x0f};
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear4_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear4_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x>>1) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -66,13 +53,13 @@ linear4_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear4_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x >> 1);
+ 	MWPIXELVAL	c;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	c = (((ADDR8)psd->addr)[(x>>1) + y * psd->linelen] >> ((x&1)<<2) ) & 0x0f;
++	c = ( *addr >> ((x&1)<<2) ) & 0x0f;
+ 	INVERT(c);
+ 	return c;
+ }
+@@ -81,9 +68,8 @@ linear4_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ static void
+ linear4_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8 addr = ((ADDR8)psd->addr) + (x1>>1) + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + (x1 >> 1);
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -112,8 +98,8 @@ linear4_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear4_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	ADDR8 addr = ((ADDR8)psd->addr) + (x>>1) + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + (x >> 1);
+ #if DEBUG
+ 	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+@@ -126,13 +112,13 @@ linear4_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	if(gr_mode == MWROP_XOR) {
+ 		while(y1++ <= y2) {
+ 			*addr ^= c << ((x&1)<<2);
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	} else {
+ 		INVERT(c);
+ 		while(y1++ <= y2) {
+ 			*addr = (*addr & notmask[x&1]) | (c << ((x&1)<<2));
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	}
+ 	DRAWOFF;
+@@ -143,18 +129,16 @@ static void
+ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	PSD srcpsd, MWCOORD srcx, MWCOORD srcy, int op)
+ {
+-	ADDR8	dst;
+-	ADDR8	src;
+ 	int	i;
+-	int	dlinelen = dstpsd->linelen;
+-	int	slinelen = srcpsd->linelen;
++	int	dpitch = dstpsd->pitch;
++	int	spitch = srcpsd->pitch;
++	ADDR8 dst = ((ADDR8)dstpsd->addr) + (dstx>>1) + dsty * dpitch;
++	ADDR8 src = ((ADDR8)srcpsd->addr) + (srcx>>1) + srcy * spitch;
+ #if DEBUG
+-	assert (dstpsd->addr != 0);
+ 	assert (dstx >= 0 && dstx < dstpsd->xres);
+ 	assert (dsty >= 0 && dsty < dstpsd->yres);
+ 	assert (w > 0);
+ 	assert (h > 0);
+-	assert (srcpsd->addr != 0);
+ 	assert (srcx >= 0 && srcx < srcpsd->xres);
+ 	assert (srcy >= 0 && srcy < srcpsd->yres);
+ 	assert (dstx+w <= dstpsd->xres);
+@@ -163,8 +147,6 @@ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	assert (srcy+h <= srcpsd->yres);
+ #endif
+ 	DRAWON;
+-	dst = ((ADDR8)dstpsd->addr) + (dstx>>1) + dsty * dlinelen;
+-	src = ((ADDR8)srcpsd->addr) + (srcx>>1) + srcy * slinelen;
+ 	while(--h >= 0) {
+ 		ADDR8	d = dst;
+ 		ADDR8	s = src;
+@@ -183,8 +165,8 @@ linear4_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 			if((++sx & 1) == 0)
+ 				++s;
+ 		}
+-		dst += dlinelen;
+-		src += slinelen;
++		dst += dpitch;
++		src += spitch;
+ 	}
+ 	DRAWOFF;
+ }
+@@ -247,13 +229,13 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+ 	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+-	dst = ((ADDR8) psd->addr) + (psd->linelen * gc->dsty + gc->dstx) / 2;	/* 4bpp = 2 ppb */
++	dst = ((ADDR8) gc->data_out) + (gc->dst_pitch * gc->dsty + gc->dstx) / 2;	/* 4bpp = 2 ppb */
+ 
+ 	fg = gc->fg_pixelval;
+ 	bg = gc->bg_pixelval;
+ 
+ 	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+-	advance_dst = psd->linelen - (gc->width / 2);				/* 4bpp = 2 ppb */
++	advance_dst = gc->dst_pitch - (gc->width / 2);				/* 4bpp = 2 ppb */
+ 
+ 	if (first_byte != last_byte) {
+ 		/* The total number of bytes to use, less the two special-cased
+@@ -289,7 +271,7 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 		for (y = 0; y < gc->height; y++) {
+ 			int x = 0;
+ 			int X = gc->dstx;
+-			ADDR8 addr = ((ADDR8)psd->addr) + (X>>1) + (gc->dsty+y) * psd->linelen;
++			ADDR8 addr = ((ADDR8)gc->data_out) + (X>>1) + (gc->dsty+y) * gc->dst_pitch;
+ 
+ 			/* Do pixels of partial first byte */
+ 			if (prefix_first_bit) {
+@@ -338,7 +320,7 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 		for (y = 0; y < gc->height; y++) {
+ 			int x = 0;
+ 			int X = gc->dstx;
+-			ADDR8 addr = ((ADDR8)psd->addr) + (X>>1) + (gc->dsty+y) * psd->linelen;
++			ADDR8 addr = ((ADDR8)gc->data_out) + (X>>1) + (gc->dsty+y) * gc->dst_pitch;
+ 
+ 			/* Do pixels of partial first byte */
+ 			if (prefix_first_bit) {
+@@ -408,7 +390,6 @@ linear4_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ }
+ 
+ static SUBDRIVER fblinear4_none = {
+-	linear4_init,
+ 	linear4_drawpixel,
+ 	linear4_readpixel,
+ 	linear4_drawhorzline,
+diff --git a/src/drivers/fblin8.c b/src/drivers/fblin8.c
+index 5a5d30d..3816949 100644
+--- a/src/drivers/fblin8.c
++++ b/src/drivers/fblin8.c
+@@ -34,23 +34,12 @@ static unsigned short *alpha_to_rgb = NULL;
+ static unsigned char  *rgb_to_palindex = NULL;
+ static int init_alpha_lookup(void);
+ 
+-/* Calc linelen and mmap size, return 0 on fail*/
+-static int
+-linear8_init(PSD psd)
+-{
+-	if (!psd->size)
+-		psd->size = psd->yres * psd->linelen;
+-	/* linelen in bytes for bpp 1, 2, 4, 8 so no change*/
+-	return 1;
+-}
+-
+ /* Set pixel at x, y, to pixelval c*/
+ static void
+ linear8_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8	addr = ((ADDR8)psd->addr) + x + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + x;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ 	assert (c < psd->ncolors);
+@@ -70,22 +59,21 @@ linear8_drawpixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
+ static MWPIXELVAL
+ linear8_readpixel(PSD psd, MWCOORD x, MWCOORD y)
+ {
++	register unsigned char *addr = psd->addr + y * psd->pitch + x;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y >= 0 && y < psd->yres);
+ #endif
+-	return ((ADDR8)psd->addr)[x + y * psd->linelen];
++	return *addr;
+ }
+ 
+ /* Draw horizontal line from x1,y to x2,y including final point*/
+ static void
+ linear8_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ {
+-	register ADDR8	addr = ((ADDR8)psd->addr) + x1 + y * psd->linelen;
++	register unsigned char *addr = psd->addr + y * psd->pitch + x1;
+ 	int width = x2-x1+1;
+ #if DEBUG
+-	assert (addr != 0);
+ 	assert (x1 >= 0 && x1 < psd->xres);
+ 	assert (x2 >= 0 && x2 < psd->xres);
+ 	assert (x2 >= x1);
+@@ -111,11 +99,10 @@ linear8_drawhorzline(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c)
+ static void
+ linear8_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ {
+-	int	linelen = psd->linelen;
+-	register ADDR8 addr = ((ADDR8)psd->addr) + x + y1 * linelen;
++	int	pitch = psd->pitch;
++	register unsigned char *addr = psd->addr + y1 * pitch + x;
+ 	int height = y2-y1+1;
+ #if DEBUG
+-	assert (psd->addr != 0);
+ 	assert (x >= 0 && x < psd->xres);
+ 	assert (y1 >= 0 && y1 < psd->yres);
+ 	assert (y2 >= 0 && y2 < psd->yres);
+@@ -129,11 +116,11 @@ linear8_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 		while (--h >= 0)
+ 		{
+ 			*addr = c;
+-			addr += linelen;
++			addr += pitch;
+ 		}
+ 	}
+ 	else
+-		APPLYOP(gr_mode, height, (unsigned char), c, *(ADDR8), addr, 0, linelen);
++		APPLYOP(gr_mode, height, (unsigned char), c, *(ADDR8), addr, 0, pitch);
+ 	DRAWOFF;
+ 
+ 	if (psd->Update)
+@@ -241,12 +228,12 @@ linear8_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+ 	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+-	dst = ((ADDR8) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
++	dst = ((ADDR8) gc->data_out) + gc->dst_pitch * gc->dsty + gc->dstx;
+ 	fg = gc->fg_pixelval;
+ 	bg = gc->bg_pixelval;
+ 
+ 	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+-	advance_dst = psd->linelen - gc->width;
++	advance_dst = gc->dst_pitch - gc->width;
+ 
+ 	if (first_byte != last_byte) {
+ 		/* The total number of bytes to use, less the two special-cased
+@@ -430,12 +417,12 @@ linear8_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	last_byte = (gc->srcx + gc->width - 1) >> 3;
+ 
+ 	src = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + first_byte;
+-	dst = ((ADDR8) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
++	dst = ((ADDR8) gc->data_out) + gc->dst_pitch * gc->dsty + gc->dstx;
+ 	fg = gc->fg_pixelval;
+ 	bg = gc->bg_pixelval;
+ 
+ 	advance_src = gc->src_pitch - last_byte + first_byte - 1;
+-	advance_dst = psd->linelen - gc->width;
++	advance_dst = gc->dst_pitch - gc->width;
+ 
+ 	if (first_byte != last_byte) {
+ 		/* The total number of bytes to use, less the two special-cased
+@@ -581,10 +568,10 @@ linear8_convblit_blend_mask_alpha_byte(PSD psd, PMWBLITPARMS gc)
+ 	}
+ 
+ 	alpha = ((ADDR8) gc->data) + gc->src_pitch * gc->srcy + gc->srcx;
+-	dst = ((ADDR8) psd->addr) + psd->linelen * gc->dsty + gc->dstx;
++	dst = ((ADDR8) gc->data_out) + gc->dst_pitch * gc->dsty + gc->dstx;
+ 
+ 	src_row_step = gc->src_pitch - gc->width;
+-	dst_row_step = psd->linelen - gc->width;
++	dst_row_step = gc->dst_pitch - gc->width;
+ 
+ 	DRAWON;
+ 	for (y = 0; y < gc->height; y++) {
+@@ -617,7 +604,6 @@ linear8_convblit_blend_mask_alpha_byte(PSD psd, PMWBLITPARMS gc)
+ }
+ 
+ static SUBDRIVER fblinear8_none = {
+-	linear8_init,
+ 	linear8_drawpixel,
+ 	linear8_readpixel,
+ 	linear8_drawhorzline,
+@@ -637,7 +623,6 @@ static SUBDRIVER fblinear8_none = {
+ };
+ 
+ SUBDRIVER fblinear8_left = {
+-	NULL,
+ 	fbportrait_left_drawpixel,
+ 	fbportrait_left_readpixel,
+ 	fbportrait_left_drawhorzline,
+@@ -657,7 +642,6 @@ SUBDRIVER fblinear8_left = {
+ };
+ 
+ SUBDRIVER fblinear8_right = {
+-	NULL,
+ 	fbportrait_right_drawpixel,
+ 	fbportrait_right_readpixel,
+ 	fbportrait_right_drawhorzline,
+@@ -677,7 +661,6 @@ SUBDRIVER fblinear8_right = {
+ };
+ 
+ SUBDRIVER fblinear8_down = {
+-	NULL,
+ 	fbportrait_down_drawpixel,
+ 	fbportrait_down_readpixel,
+ 	fbportrait_down_drawhorzline,
+diff --git a/src/drivers/fbportrait_down.c b/src/drivers/fbportrait_down.c
+index a48a7e0..aae7abd 100644
+--- a/src/drivers/fbportrait_down.c
++++ b/src/drivers/fbportrait_down.c
+@@ -103,6 +103,7 @@ fbportrait_down_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc)
+ 	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+ 	l_gc.dst_pitch = gc->dst_pitch;
++	l_gc.data_out = gc->data_out;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.width * l_gc.height)))
+ 		return;
+@@ -156,6 +157,7 @@ fbportrait_down_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+ 	l_gc.dst_pitch = gc->dst_pitch;
++	l_gc.data_out = gc->data_out;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+@@ -243,7 +245,6 @@ fbportrait_down_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ }
+ 
+ SUBDRIVER fbportrait_down = {
+-	NULL,
+ 	fbportrait_down_drawpixel,
+ 	fbportrait_down_readpixel,
+ 	fbportrait_down_drawhorzline,
+diff --git a/src/drivers/fbportrait_left.c b/src/drivers/fbportrait_left.c
+index 770a94b..fadbf8e 100644
+--- a/src/drivers/fbportrait_left.c
++++ b/src/drivers/fbportrait_left.c
+@@ -101,6 +101,7 @@ fbportrait_left_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc)
+ 	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+ 	l_gc.dst_pitch = gc->dst_pitch;
++	l_gc.data_out = gc->data_out;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.width * l_gc.height)))
+ 		return;
+@@ -155,6 +156,7 @@ fbportrait_left_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+ 	l_gc.dst_pitch = gc->dst_pitch;
++	l_gc.data_out = gc->data_out;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+@@ -242,7 +244,6 @@ fbportrait_left_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ }
+ 
+ SUBDRIVER fbportrait_left = {
+-	NULL,
+ 	fbportrait_left_drawpixel,
+ 	fbportrait_left_readpixel,
+ 	fbportrait_left_drawhorzline,
+diff --git a/src/drivers/fbportrait_right.c b/src/drivers/fbportrait_right.c
+index 0470ebd..c3ac3dc 100644
+--- a/src/drivers/fbportrait_right.c
++++ b/src/drivers/fbportrait_right.c
+@@ -98,6 +98,7 @@ fbportrait_right_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc)
+ 	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+ 	l_gc.dst_pitch = gc->dst_pitch;
++	l_gc.data_out = gc->data_out;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.width * l_gc.height)))
+ 		return;
+@@ -151,6 +152,7 @@ fbportrait_right_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	l_gc.bg_pixelval = gc->bg_pixelval;
+ 	l_gc.usebg = gc->usebg;
+ 	l_gc.dst_pitch = gc->dst_pitch;
++	l_gc.data_out = gc->data_out;
+ 
+ 	if (!(l_gc.data = ALLOCA(l_gc.height * l_gc.src_pitch)))
+ 		return;
+@@ -238,7 +240,6 @@ fbportrait_right_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
+ }
+ 
+ SUBDRIVER fbportrait_right = {
+-	NULL,
+ 	fbportrait_right_drawpixel,
+ 	fbportrait_right_readpixel,
+ 	fbportrait_right_drawhorzline,
+diff --git a/src/drivers/genmem.c b/src/drivers/genmem.c
+index 9ca7264..be99c43 100644
+--- a/src/drivers/genmem.c
++++ b/src/drivers/genmem.c
+@@ -19,7 +19,7 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ {
+ 	PSD		pmd;
+ 	int 	bpp, planes, data_format, pixtype;
+-	unsigned int size, linelen, pitch;
++	unsigned int size, pitch;
+    
+ 	if (width <= 0 || height <= 0)
+ 		return NULL;
+@@ -91,7 +91,7 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ 	if (!pmd)
+ 		return NULL;
+ 
+-	GdCalcMemGCAlloc(pmd, width, height, planes, bpp, &size, &linelen, &pitch);
++	GdCalcMemGCAlloc(pmd, width, height, planes, bpp, &size, &pitch);
+ 
+ 	/* FIXME remove later*/
+ 	switch (pmd->bpp) {
+@@ -127,7 +127,7 @@ err:
+ 		goto err;
+ 	pmd->palsize = palsize;
+  
+-	pmd->MapMemGC(pmd, width, height, planes, bpp, data_format, linelen, pitch, size, pixels);
++	pmd->MapMemGC(pmd, width, height, planes, bpp, data_format, pitch, size, pixels);
+ 	pmd->pixtype = pixtype;		/* save pixtype for proper colorval creation*/
+ 	pmd->ncolors = (pmd->bpp >= 24)? (1 << 24): (1 << pmd->bpp);
+ 
+@@ -179,7 +179,7 @@ gen_allocatememgc(PSD psd)
+  */
+ MWBOOL
+ gen_mapmemgc(PSD mempsd, MWCOORD w, MWCOORD h, int planes, int bpp, int data_format,
+-	int linelen, int pitch, int size, void *addr)
++	unsigned int pitch, int size, void *addr)
+ {
+ 	PSUBDRIVER subdriver;
+ 
+@@ -198,14 +198,13 @@ gen_mapmemgc(PSD mempsd, MWCOORD w, MWCOORD h, int planes, int bpp, int data_for
+ 	mempsd->planes = planes;
+ 	mempsd->bpp = bpp;
+ 	mempsd->data_format = data_format;
+-	mempsd->linelen = linelen;
+ 	mempsd->pitch = pitch;
+ 	mempsd->size = size;
+ 	mempsd->addr = addr;
+ 
+ 	/* select and init hw compatible framebuffer subdriver for pixmap drawing*/
+ 	subdriver = select_fb_subdriver(mempsd);
+-	if(!subdriver || !subdriver->Init(mempsd))
++	if(!subdriver)
+ 		return 0;
+ 
+ 	/* assign portrait subdriver or regular fb driver for pixmap drawing*/
+@@ -231,16 +230,15 @@ gen_freememgc(PSD mempsd)
+ }
+ 
+ /*
+- * Calculate size and linelen of memory gc.
++ * Calculate size and pitch of memory gc.
+  * If bpp or planes is 0, use passed psd's bpp/planes.
+- * Note: linelen is calculated to be DWORD aligned for speed
+- * for bpp <= 8.  Linelen is converted to bytelen for bpp > 8.
++ * Pitch is calculated to be DWORD right aligned for speed.
+  */
+ int
+-GdCalcMemGCAlloc(PSD psd, int width, int height, int planes,
+-	int bpp, unsigned int *psize, unsigned *plinelen, unsigned *ppitch)
++GdCalcMemGCAlloc(PSD psd, int width, int height, int planes, int bpp,
++	unsigned int *psize, unsigned *ppitch)
+ {
+-	unsigned int pitch, linelen;
++	unsigned int pitch;
+ 
+ 	if(!planes)
+ 		planes = psd->planes;
+@@ -260,57 +258,39 @@ GdCalcMemGCAlloc(PSD psd, int width, int height, int planes,
+ 	if(planes == 4)
+ 		bpp = 4;
+ 
+-	/* compute linelen: bytes per line for bpp 1, 2, 4 and pixels otherwise*/
++	/* compute pitch: bytes per line*/
+ 	switch(bpp) {
+ 	case 1:
+-		linelen = (width+7)/8;
++		pitch = (width+7)/8;
+ 		break;
+ 	case 2:
+-		linelen = (width+3)/4;
++		pitch = (width+3)/4;
+ 		break;
+ 	case 4:
+-		linelen = (width+1)/2;
++		pitch = (width+1)/2;
+ 		break;
+ 	case 8:
+-	case 16:
+-	case 18:
+-	case 24:
+-	case 32:
+-		linelen = width;
+-		break;
+-	default:
+-		*ppitch = *psize = *plinelen = 0;
+-		return 0;
+-	}
+-
+-	/* right align image width to DWORD boundary*/
+-	linelen = (linelen + 3) & ~3;
+-
+-	/* compute pitch: bytes per line*/
+-	switch (bpp) {
+-	case 1:
+-	case 2:
+-	case 4:
+-	case 8:
+-	default:
+-		pitch = linelen;
++		pitch = width;
+ 		break;
+ 	case 16:
+-		pitch = linelen * 2;
++		pitch = width * 2;
+ 		break;
+ 	case 18:
+ 	case 24:
+-		pitch = linelen * 3;
++		pitch = width * 3;
+ 		break;
+ 	case 32:
+-		pitch = linelen * 4;
++		pitch = width * 4;
+ 		break;
++	default:
++		*ppitch = *psize = 0;
++		return 0;
+ 	}
+-	// can't do this with linelen calc'd above... must remove linelen
+-	//pitch = (pitch + 3) & ~3;
++
++	/* right align pitch to DWORD boundary*/
++	pitch = (pitch + 3) & ~3;
+ 
+ 	*psize = pitch * height;
+-	*plinelen = linelen;
+ 	*ppitch = pitch;
+ 	return 1;
+ }
+@@ -359,7 +339,7 @@ set_portrait_subdriver(PSD psd)
+ 		subdriver = psd->down_subdriver;
+ 		break;
+ 	}
+-	set_subdriver(psd, subdriver, FALSE);
++	set_subdriver(psd, subdriver);
+ }
+ 
+ void
+@@ -387,11 +367,9 @@ gen_fillrect(PSD psd,MWCOORD x1, MWCOORD y1, MWCOORD x2, MWCOORD y2, MWPIXELVAL
+ 
+ /*
+  * Set subdriver entry points in screen device
+- * Initialize subdriver if init flag is TRUE
+- * Return 0 on fail
+  */
+-MWBOOL
+-set_subdriver(PSD psd, PSUBDRIVER subdriver, MWBOOL init)
++void
++set_subdriver(PSD psd, PSUBDRIVER subdriver)
+ {
+ 	/* set subdriver entry points in screen driver*/
+ 	psd->DrawPixel 		= subdriver->DrawPixel;
+@@ -410,11 +388,6 @@ set_subdriver(PSD psd, PSUBDRIVER subdriver, MWBOOL init)
+ 	psd->BlitSrcOverRGBA8888     = subdriver->BlitSrcOverRGBA8888;
+ 	psd->BlitCopyRGB888          = subdriver->BlitCopyRGB888;
+ 	psd->BlitStretchRGBA8888     = subdriver->BlitStretchRGBA8888;
+-
+-	/* call driver init procedure to calc map size and linelen*/
+-	if (init && !subdriver->Init(psd))
+-		return 0;
+-	return 1;
+ }
+ 
+ /* fill in a subdriver struct from passed screen device*/
+diff --git a/src/drivers/genmem.h b/src/drivers/genmem.h
+index 2e0502a..3d2083e 100644
+--- a/src/drivers/genmem.h
++++ b/src/drivers/genmem.h
+@@ -15,16 +15,16 @@ void	GdFreePixmap(PSD pmd);
+ 
+ PSD 	gen_allocatememgc(PSD psd);
+ MWBOOL	gen_mapmemgc(PSD mempsd, MWCOORD w, MWCOORD h, int planes, int bpp, int data_format,
+-			int linelen, int pitch, int size, void *addr);
++			unsigned int pitch, int size, void *addr);
+ void	gen_freememgc(PSD mempsd);
+ 
+ int		GdCalcMemGCAlloc(PSD psd, int width, int height, int planes, int bpp,
+-			unsigned int *size, unsigned int *linelen, unsigned int *pitch);
++			unsigned int *size, unsigned int *pitch);
+ 
+ void	gen_fillrect(PSD psd,MWCOORD x1, MWCOORD y1, MWCOORD x2, MWCOORD y2, MWPIXELVAL c);
+ 
+ void	gen_setportrait(PSD psd, int portraitmode);
+ void	set_portrait_subdriver(PSD psd);
+ 
+-MWBOOL	set_subdriver(PSD psd, PSUBDRIVER subdriver, MWBOOL init);
++void	set_subdriver(PSD psd, PSUBDRIVER subdriver);
+ void	get_subdriver(PSD psd, PSUBDRIVER subdriver);
+diff --git a/src/drivers/scr_ecos.c b/src/drivers/scr_ecos.c
+index a7cb8b1..21b510c 100644
+--- a/src/drivers/scr_ecos.c
++++ b/src/drivers/scr_ecos.c
+@@ -35,7 +35,7 @@ static void fb_close(PSD psd);
+ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+@@ -77,12 +77,8 @@ fb_open(PSD psd)
+     psd->planes = 1;
+     psd->bpp = li.bpp;
+     psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
+-
+-    /* set linelen to byte length, possibly converted later*/
+-    psd->linelen = li.rlen;
+ 	psd->pitch = li.rlen;
+-    psd->size = 0;		/* force subdriver init of size*/
+-
++	psd->size = psd->yres * psd->pitch;
+     psd->flags = PSF_SCREEN;
+ 
+     /* set pixel format*/
+@@ -116,8 +112,8 @@ fb_open(PSD psd)
+     } else psd->pixtype = MWPF_PALETTE;
+ #endif
+ 
+-    diag_printf("%dx%dx%d linelen %d type %d bpp %d\n", psd->xres,
+-      psd->yres, psd->ncolors, psd->linelen, li.type, psd->bpp);
++    diag_printf("%dx%dx%d pitch %d type %d bpp %d\n", psd->xres,
++      psd->yres, psd->ncolors, psd->pitch, li.type, psd->bpp);
+ 
+ 	/* set standard data format from bpp and pixtype*/
+ 	psd->data_format = set_data_format(psd);
+@@ -129,11 +125,8 @@ fb_open(PSD psd)
+         goto fail;
+     }
+ 
+-	/* set and initialize subdriver into screen driver */
+-	if(!set_subdriver(psd, subdriver, TRUE)) {
+-		EPRINTF("Driver initialize failed bpp %d\n", psd->bpp);
+-		return NULL;
+-	}
++	/* set subdriver into screen driver */
++	set_subdriver(psd, subdriver);
+ 
+     /* mmap framebuffer into this address space*/
+     psd->addr = li.fb;
+diff --git a/src/drivers/scr_fb.c b/src/drivers/scr_fb.c
+index 04d20b3..a002dfe 100644
+--- a/src/drivers/scr_fb.c
++++ b/src/drivers/scr_fb.c
+@@ -49,7 +49,7 @@ static void fb_close(PSD psd);
+ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+@@ -175,11 +175,8 @@ fb_open(PSD psd)
+ 	if (psd->bpp == 15)		/* allow 15bpp for static fb emulator init only*/
+ 		psd->bpp = 16;
+ 
+-	/* set linelen to byte length, possibly converted later*/
+-	psd->linelen = fb_fix.line_length;
+-	psd->pitch = psd->linelen;
+-	psd->size = 0;		/* force subdriver init of size*/
+-
++	psd->pitch = fb_fix.line_length;
++	psd->size = psd->yres * psd->pitch;
+     psd->flags = PSF_SCREEN;
+ 
+ 	/* set pixel format*/
+@@ -215,8 +212,8 @@ fb_open(PSD psd)
+ 	/* set standard data format from bpp and pixtype*/
+ 	psd->data_format = set_data_format(psd);
+ 
+-	EPRINTF("%dx%dx%dbpp linelen %d type %d visual %d colors %d pixtype %d\n", psd->xres, psd->yres,
+-		(psd->pixtype == MWPF_TRUECOLOR555)? 15: psd->bpp, psd->linelen, type, visual,
++	EPRINTF("%dx%dx%dbpp pitch %d type %d visual %d colors %d pixtype %d\n", psd->xres, psd->yres,
++		(psd->pixtype == MWPF_TRUECOLOR555)? 15: psd->bpp, psd->pitch, type, visual,
+ 		psd->ncolors, psd->pixtype);
+ 
+ 	/* select a framebuffer subdriver based on planes and bpp*/
+@@ -226,14 +223,8 @@ fb_open(PSD psd)
+ 		goto fail;
+ 	}
+ 
+-	/*
+-	 * set and initialize subdriver into screen driver
+-	 * psd->size is calculated by subdriver init
+-	 */
+-	if(!set_subdriver(psd, subdriver, TRUE)) {
+-		EPRINTF("Screen driver init failed\n");
+-		goto fail;
+-	}
++	/* set subdriver into screen driver*/
++	set_subdriver(psd, subdriver);
+ 
+ #if HAVE_TEXTMODE
+ 	{
+diff --git a/src/drivers/scr_mem.c b/src/drivers/scr_mem.c
+index a922f56..3132716 100644
+--- a/src/drivers/scr_mem.c
++++ b/src/drivers/scr_mem.c
+@@ -27,7 +27,7 @@ static void fb_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD heig
+ void fb_graphicsflush(PSD psd);
+ 
+ SCREENDEVICE scrdev = {
+-	0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0, NULL, 0, NULL, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0,0,
++	0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0, NULL, 0, NULL, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+@@ -85,9 +85,9 @@ fb_open(PSD psd)
+ 	/* set standard data format from bpp and pixtype*/
+ 	psd->data_format = set_data_format(psd);
+ 
+-	/* Calculate the correct size, linelen and pitch from x/yres and bpp*/
+-	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes,
+-			 psd->bpp, &psd->size, &psd->linelen, &psd->pitch);
++	/* Calculate the correct size and pitch from xres, yres and bpp*/
++	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes, psd->bpp,
++		&psd->size, &psd->pitch);
+ 
+ 	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
+     psd->flags = PSF_SCREEN;
+@@ -98,8 +98,8 @@ fb_open(PSD psd)
+ 	if (!subdriver)
+ 		return NULL;
+ 
+-	/* set and initialize subdriver into screen driver*/
+-	set_subdriver(psd, subdriver, TRUE);
++	/* set subdriver into screen driver*/
++	set_subdriver(psd, subdriver);
+ 
+ #ifdef PATH_FRAMEBUFFER
+ 	/* try opening framebuffer file for mmap*/
+diff --git a/src/drivers/scr_mosync.c b/src/drivers/scr_mosync.c
+index 117a0b3..58ee166 100644
+--- a/src/drivers/scr_mosync.c
++++ b/src/drivers/scr_mosync.c
+@@ -19,7 +19,7 @@ static PSD  fb_open(PSD psd);
+ static void fb_close(PSD psd);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+@@ -55,7 +55,6 @@ fb_open(PSD psd)
+ 	psd->planes = 1;
+ 	psd->bpp = fbinfo.bitsPerPixel;
+ 	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
+-	psd->linelen = fbinfo.width;
+ 	psd->pitch = fbinfo.pitch;
+ 	psd->size = fbinfo.sizeInBytes;
+     psd->flags = PSF_SCREEN | PSF_ADDRMALLOC;
+@@ -92,11 +91,8 @@ fb_open(PSD psd)
+ 		return NULL;
+ 	}
+ 
+-	/* set and initialize subdriver into screen driver */
+-	if(!set_subdriver(psd, subdriver, TRUE)) {
+-		EPRINTF("Driver initialize failed bpp %d\n", psd->bpp);
+-		return NULL;
+-	}
++	/* set subdriver into screen driver */
++	set_subdriver(psd, subdriver);
+ 
+ 	/* allocate framebuffer (uses lots of memory!) */
+ 	if (!(psd->addr = calloc (1, psd->size))) {
+diff --git a/src/drivers/scr_psp.c b/src/drivers/scr_psp.c
+index ff99e76..76c2b14 100644
+--- a/src/drivers/scr_psp.c
++++ b/src/drivers/scr_psp.c
+@@ -31,7 +31,7 @@ fb_setpalette(PSD psd,int first,int count,MWPALENTRY *pal)
+ }
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+@@ -58,8 +58,8 @@ fb_open(PSD psd)
+     psd->planes = 1;
+     psd->bpp = 32;
+     psd->ncolors = 1 << psd->bpp;
+-    psd->size = 0;
+-    psd->linelen = 512 * 4;
++    psd->pitch = 512 * 4;
++	psd->size = psd->yres * psd->pitch;
+     psd->flags = PSF_SCREEN;
+     psd->pixtype = MWPF_TRUECOLORABGR;
+ 	psd->data_format = MWIF_RGBA8888;
+@@ -69,11 +69,7 @@ fb_open(PSD psd)
+         EPRINTF("No driver for screen\n");
+ 		return NULL;
+     }
+-
+-    if(!set_subdriver(psd, subdriver, TRUE)) {
+-        EPRINTF("Driver initialize failed\n");
+-		return NULL;
+-    }
++    set_subdriver(psd, subdriver);
+ 
+     psd->addr = (void *)(0x40000000 | (unsigned int)sceGeEdramGetAddr());
+     return psd;	/* success*/
+diff --git a/src/drivers/scr_rtems.c b/src/drivers/scr_rtems.c
+index 0da9faa..807c106 100644
+--- a/src/drivers/scr_rtems.c
++++ b/src/drivers/scr_rtems.c
+@@ -27,7 +27,7 @@ static void fb_close(PSD psd);
+ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+@@ -94,12 +94,8 @@ fb_open(PSD psd)
+ 
+ 	psd->bpp = fb_var.bits_per_pixel;
+ 	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
+-
+-	/* set linelen to byte length, possibly converted later in driver init routine*/
+-	psd->linelen = fb_fix.line_length;
+ 	psd->pitch = fb_fix.line_length;
+-	psd->size = 0;		/* force subdriver init of size*/
+-
++	psd->size = psd->yres * psd->pitch;
+ 	psd->flags = PSF_SCREEN;
+ 
+ 	/* set pixel format*/
+@@ -152,14 +148,8 @@ fb_open(PSD psd)
+ 		return NULL;
+ 	}*/
+ 
+-	/*
+-	 * set and initialize subdriver into screen driver
+-	 * psd->size is calculated by subdriver init
+-	 */
+-	if(!set_subdriver(psd, subdriver, TRUE)) {
+-		EPRINTF("Driver initialize failed type %d visual %d bpp %d\n", type, visual, psd->bpp);
+-		goto fail;
+-	}
++	/* set subdriver into screen driver*/
++	set_subdriver(psd, subdriver);
+ 
+ 	/* save original palette*/
+ 	ioctl_getpalette(0, 16, saved_red, saved_green, saved_blue);
+diff --git a/src/drivers/scr_win32.c b/src/drivers/scr_win32.c
+index ae5c5d9..0874f35 100644
+--- a/src/drivers/scr_win32.c
++++ b/src/drivers/scr_win32.c
+@@ -43,7 +43,7 @@ static void win32_getscreeninfo(PSD psd, PMWSCREENINFO psi);
+ static void win32_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height);
+ 
+ SCREENDEVICE scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	win32_open,
+ 	win32_close,
+@@ -124,7 +124,6 @@ win32_open(PSD psd)
+ 	HANDLE hInstance = GetModuleHandle(NULL);
+ 	HDC rootDC = CreateDC("DISPLAY", NULL, NULL, NULL);
+ 	int depth = GetDeviceCaps(rootDC, BITSPIXEL);
+-	int size;
+ 	RECT rect;
+ 	PSUBDRIVER subdriver;
+ 	WNDCLASS wc;
+@@ -153,13 +152,13 @@ win32_open(PSD psd)
+ 	/* set standard data format from bpp and pixtype*/
+ 	psd->data_format = set_data_format(psd);
+ 
+-	/* Calculate the correct linelen here */
+-	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes,
+-			 psd->bpp, &size, &psd->linelen, &psd->pitch);
++	/* Calculate size and pitch*/
++	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes, psd->bpp,
++		&psd->size, &psd->pitch);
+ 	if ((psd->addr = malloc(psd->size)) == NULL)
+ 		return NULL;
+ 	psd->ncolors = psd->bpp >= 24 ? (1 << 24) : (1 << psd->bpp);
+-	psd->flags = PSF_SCREEN;
++	psd->flags = PSF_SCREEN | PSF_ADDRMALLOC;
+ 	psd->portrait = MWPORTRAIT_NONE;
+ DPRINTF("win32 emulated bpp %d\n", psd->bpp);
+ 
+@@ -168,8 +167,8 @@ DPRINTF("win32 emulated bpp %d\n", psd->bpp);
+ 	if (!subdriver)
+ 		return NULL;
+ 
+-	/* set and initialize subdriver into screen driver*/
+-	set_subdriver(psd, subdriver, TRUE);
++	/* set subdriver into screen driver*/
++	set_subdriver(psd, subdriver);
+ 
+ 		wc.style           = CS_HREDRAW | CS_VREDRAW; // | CS_OWNDC;
+ 		wc.lpfnWndProc     = (WNDPROC)myWindowProc;
+@@ -398,7 +397,7 @@ update_from_savebits(PSD psd, int destx, int desty, int w, int h)
+ {
+ #if 0
+ 	XImage *img;
+-	int x, y;
++	unsigned int x, y;
+ 	char *data;
+ 
+ 	/* allocate buffer */
+@@ -410,75 +409,70 @@ update_from_savebits(PSD psd, int destx, int desty, int w, int h)
+ 		data = malloc((w * x11_depth + 7) / 8 * h);
+ 
+ 	/* copy from offscreen to screen */
+-	img = XCreateImage(x11_dpy, x11_vis, x11_depth, ZPixmap,
+-			   0, data, w, h, 8, 0);
++	img = XCreateImage(x11_dpy, x11_vis, x11_depth, ZPixmap, 0, data, w, h, 8, 0);
+ 
+ 	/* Use optimized loops for most common framebuffer modes */
+ 
+ #if MWPIXEL_FORMAT == MWPF_TRUECOLOR332
+ 	{
+-		ADDR8 dbuf = ((ADDR8) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + destx;
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = addr[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #elif (MWPIXEL_FORMAT == MWPF_TRUECOLOR565) || (MWPIXEL_FORMAT == MWPF_TRUECOLOR555)
+ 	{
+-		ADDR16 dbuf = ((ADDR16) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + (destx << 1);
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = ((ADDR16)addr)[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #elif MWPIXEL_FORMAT == MWPF_TRUECOLOR888
+ 	{
+-		ADDR8 dbuf = ((ADDR8) psd->addr) + 3 * (destx + desty * psd->linelen);
+-		int linedelta = 3 * (psd->linelen - w);
++		unsigned char *addr = psd->addr + desty * psd->pitch + destx * 3;
++		unsigned int extra = psd->pitch - w * 3;
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = RGB2PIXEL888(dbuf[2], dbuf[1], dbuf[0]);
++				MWPIXELVAL c = RGB2PIXEL888(addr[2], addr[1], addr[0]);
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+-				dbuf += 3;
++				addr += 3;
+ 			}
+-			dbuf += linedelta;
++			addr += extra;
+ 		}
+ 	}
+ #elif (MWPIXEL_FORMAT == MWPF_TRUECOLOR8888) || (MWPIXEL_FORMAT == MWPF_TRUECOLORABGR)
+ 	{
+-		ADDR32 dbuf = ((ADDR32) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + (destx << 2);
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = ((ADDR32)addr)[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #else /* MWPF_PALETTE*/
+ 	{
+-		ADDR8 dbuf = ((ADDR8) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + destx;
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = addr[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #endif
+diff --git a/src/drivers/scr_x11.c b/src/drivers/scr_x11.c
+index a3d58bc..7f580d8 100644
+--- a/src/drivers/scr_x11.c
++++ b/src/drivers/scr_x11.c
+@@ -52,7 +52,7 @@ static void X11_preselect(PSD psd);
+ static void X11_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height);
+ 
+ SCREENDEVICE scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	X11_open,
+ 	X11_close,
+@@ -589,10 +589,10 @@ X11_open(PSD psd)
+ 	/* set standard data format from bpp and pixtype*/
+ 	psd->data_format = set_data_format(psd);
+ 
+-	/* Calculate the correct linelen here */
+-	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes,
+-			 psd->bpp, &psd->size, &psd->linelen, &psd->pitch);
+-printf("width %d pitch %d\n", psd->xres, psd->pitch);
++	/* Calculate size and pitch*/
++	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes, psd->bpp,
++		&psd->size, &psd->pitch);
++
+ 	if ((psd->addr = malloc(psd->size)) == NULL)
+ 		return NULL;
+ 	psd->ncolors = psd->bpp >= 24? (1 << 24): (1 << psd->bpp);
+@@ -605,8 +605,8 @@ DPRINTF("x11 emulated bpp %d\n", psd->bpp);
+ 	if (!subdriver)
+ 		return NULL;
+ 
+-	/* set and initialize subdriver into screen driver*/
+-	set_subdriver(psd, subdriver, TRUE);
++	/* set subdriver into screen driver*/
++	set_subdriver(psd, subdriver);
+ 
+ 	return psd;
+ }
+@@ -666,10 +666,10 @@ X11_preselect(PSD psd)
+ }
+ 
+ static void
+-update_from_savebits(PSD psd, int destx, int desty, int w, int h)
++update_from_savebits(PSD psd, unsigned int destx, unsigned int desty, int w, int h)
+ {
+ 	XImage *img;
+-	int x, y;
++	unsigned int x, y;
+ 	char *data;
+ 
+ 	/* allocate buffer */
+@@ -687,68 +687,64 @@ update_from_savebits(PSD psd, int destx, int desty, int w, int h)
+ 
+ #if MWPIXEL_FORMAT == MWPF_TRUECOLOR332
+ 	{
+-		ADDR8 dbuf = ((ADDR8) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + destx;
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = addr[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #elif (MWPIXEL_FORMAT == MWPF_TRUECOLOR565) || (MWPIXEL_FORMAT == MWPF_TRUECOLOR555)
+ 	{
+-		ADDR16 dbuf = ((ADDR16) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + (destx << 1);
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = ((ADDR16)addr)[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #elif MWPIXEL_FORMAT == MWPF_TRUECOLOR888
+ 	{
+-		ADDR8 dbuf = ((ADDR8) psd->addr) + 3 * (destx + desty * psd->linelen);
+-		int linedelta = 3 * (psd->linelen - w);
++		unsigned char *addr = psd->addr + desty * psd->pitch + destx * 3;
++		unsigned int extra = psd->pitch - w * 3;
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = RGB2PIXEL888(dbuf[2], dbuf[1], dbuf[0]);
++				MWPIXELVAL c = RGB2PIXEL888(addr[2], addr[1], addr[0]);
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+-				dbuf += 3;
++				addr += 3;
+ 			}
+-			dbuf += linedelta;
++			addr += extra;
+ 		}
+ 	}
+ #elif (MWPIXEL_FORMAT == MWPF_TRUECOLOR8888) || (MWPIXEL_FORMAT == MWPF_TRUECOLORABGR)
+ 	{
+-		ADDR32 dbuf = ((ADDR32) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + (destx << 2);
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = ((ADDR32)addr)[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #else /* MWPF_PALETTE*/
+ 	{
+-		ADDR8 dbuf = ((ADDR8) psd->addr) + destx + desty * psd->linelen;
+-		int linedelta = psd->linelen - w;
++		unsigned char *addr = psd->addr + desty * psd->pitch + destx;
+ 		for (y = 0; y < h; y++) {
+ 			for (x = 0; x < w; x++) {
+-				MWPIXELVAL c = *dbuf++;
++				MWPIXELVAL c = addr[x];
+ 				unsigned long pixel = PIXELVAL_to_pixel(c);
+ 				XPutPixel(img, x, y, pixel);
+ 			}
+-			dbuf += linedelta;
++			addr += psd->pitch;
+ 		}
+ 	}
+ #endif
+diff --git a/src/drivers/vncserver.c b/src/drivers/vncserver.c
+index 27c8f59..5677c5e 100644
+--- a/src/drivers/vncserver.c
++++ b/src/drivers/vncserver.c
+@@ -558,7 +558,7 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
+    _DrawHorzLine = psd->DrawHorzLine;
+    _DrawVertLine = psd->DrawVertLine;
+    _FillRect = psd->FillRect;
+-   _Blit = psd->Blit;
++//   _Blit = psd->Blit;
+ //   _DrawArea = psd->DrawArea;
+ //   _StretchBlitEx = psd->StretchBlitEx;
+    
+@@ -569,7 +569,7 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
+    psd->DrawHorzLine = stubDrawHorzLine;
+    psd->DrawVertLine = stubDrawVertLine;
+    psd->FillRect = stubFillRect;
+-   psd->Blit = stubBlit;
++//   psd->Blit = stubBlit;
+ //   psd->DrawArea = stubDrawArea;
+ //   psd->StretchBlit = stubStretchBlit;
+                         
+@@ -666,7 +666,8 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
+    rfbScreen->httpDir = "/var/lib/httpd/";
+    rfbScreen->authPasswdData = "/etc/vncpasswd";
+ 
+-   rfbScreen->paddedWidthInBytes = psd->linelen * (psd->bpp >> 3) ; 
++   //rfbScreen->paddedWidthInBytes = psd->linelen * (psd->bpp >> 3) ; 
++   rfbScreen->paddedWidthInBytes = psd->pitch;
+         
+    /* initialize the server */
+    rfbInitServer(rfbScreen);
+diff --git a/src/drivers/vtswitch.c b/src/drivers/vtswitch.c
+index 09a02fb..333377a 100644
+--- a/src/drivers/vtswitch.c
++++ b/src/drivers/vtswitch.c
+@@ -34,8 +34,8 @@ int  	MwCheckVtChange(void);
+ void 	MwRedrawVt(int t);
+ 
+ /* local routines*/
+-static void  	draw_enable(void);
+-static void 	draw_disable(void);
++static void draw_enable(void);
++static void draw_disable(void);
+ static void	vt_switch(int sig);
+ 
+ /* null subdriver for drawing when switched out*/
+@@ -53,7 +53,6 @@ static void	null_blit(PSD dstpsd,MWCOORD destx,MWCOORD desty,MWCOORD w,
+ static void null_convblit(PSD psd, PMWBLITPARMS parms) {}
+ 
+ static SUBDRIVER nulldriver = {
+-	NULL,
+ 	null_drawpixel,
+ 	null_readpixel,
+ 	null_drawhorzline,
+@@ -80,7 +79,7 @@ draw_enable(void)
+ 	visible = 1;
+ 
+ 	/* restore screen drawing functions*/
+-	set_subdriver(&scrdev, &save, FALSE);
++	set_subdriver(&scrdev, &save);
+ }
+       
+ static void
+diff --git a/src/fontdemo2.sh b/src/fontdemo2.sh
+index b041473..0b34755 100755
+--- a/src/fontdemo2.sh
++++ b/src/fontdemo2.sh
+@@ -1,5 +1,5 @@
+ 
+ # Nano-X applications, press <BREAK> key to exit
+ #T1LIB_CONFIG=./fonts/type1/t1lib.config bin/nano-X -L & bin/nanowm & bin/ftdemo
+-bin/nano-X -N & bin/nanowm & bin/ftdemo & bin/tux
++bin/nano-X -A & bin/nanowm & bin/ftdemo & bin/tux
+ 
+diff --git a/src/include/device.h b/src/include/device.h
+index 041856e..fc6c7a2 100644
+--- a/src/include/device.h
++++ b/src/include/device.h
+@@ -107,7 +107,6 @@ typedef void (*MWBLITFUNC)(PSD, PMWBLITPARMS);		/* proto for blitter functions*/
+ 
+ /* screen subdriver entry points: one required for each draw function*/
+ typedef struct {
+-	int	 	 (*Init)(PSD psd);
+ 	void 	 (*DrawPixel)(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c);
+ 	MWPIXELVAL (*ReadPixel)(PSD psd, MWCOORD x, MWCOORD y);
+ 	void 	 (*DrawHorzLine)(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y, MWPIXELVAL c);
+@@ -143,7 +142,7 @@ typedef struct _mwscreendevice {
+ 	int		bpp;		/* # bpp*/
+ 	int 	data_format;/* MWIF_ image data format*/
+ 	unsigned int pitch;	/* row length in bytes*/
+-	void *	addr;		/* address of memory allocated (memdc or fb)*/
++	unsigned char *addr;/* address of memory allocated (memdc or fb)*/
+ 	int		palsize;	/* palette size*/
+ 	MWPALENTRY *palette;/* palette*/
+ 	int32_t	transcolor;	/* not used*/
+@@ -155,8 +154,6 @@ typedef struct _mwscreendevice {
+ 	unsigned int size;	/* size of memory allocated*/
+ 	int32_t	ncolors;	/* # screen colors*/
+ 	int	pixtype;		/* format of pixel value*/
+-	unsigned int linelen;/* line length in bytes for bpp 1,2,4,8*/
+-						/* line length in pixels for bpp 16, 18, 24, 32*/
+ 
+ 	/* driver entry points*/
+ 	PMWCOREFONT builtin_fonts;
+@@ -166,7 +163,7 @@ typedef struct _mwscreendevice {
+ 	void	(*GetScreenInfo)(PSD psd,PMWSCREENINFO psi);
+ 	PSD		(*AllocateMemGC)(PSD psd);
+ 	MWBOOL	(*MapMemGC)(PSD mempsd,MWCOORD w,MWCOORD h,int planes,int bpp,
+-			int data_format,int linelen,int pitch,int size,void *addr);
++			int data_format,unsigned int pitch,int size,void *addr);
+ 	void	(*FreeMemGC)(PSD mempsd);
+ 	void	(*SetPortrait)(PSD psd,int portraitmode);
+ 	void	(*Update)(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height);
+diff --git a/src/include/windows.h b/src/include/windows.h
+index 2807915..df9481e 100644
+--- a/src/include/windows.h
++++ b/src/include/windows.h
+@@ -71,10 +71,9 @@ typedef struct {
+ 	int		planes;		/* # planes*/
+ 	int		bpp;		/* bits per pixel*/
+ 	int		data_format;/* MWIF_ image data format*/
+-	int		linelen;	/* bytes per line (to be deprecated)*/
+-	int		pitch;		/* bytes per line*/
++	unsigned int pitch;	/* bytes per line*/
+ 	int		size;		/* allocated size in bytes*/
+-	char 		bits[1];	/* beginning of bitmap*/
++	char 	bits[1];	/* beginning of bitmap*/
+ } MWBITMAPOBJ;
+ 
+ typedef struct {
+diff --git a/src/mwin/wingdi.c b/src/mwin/wingdi.c
+index 1cfd605..782e995 100644
+--- a/src/mwin/wingdi.c
++++ b/src/mwin/wingdi.c
+@@ -1556,11 +1556,11 @@ SelectObject(HDC hdc, HGDIOBJ hObject)
+ 
+ 		/* init memory context*/
+ 		if (!hdc->psd->MapMemGC(hdc->psd, pb->width, pb->height,
+-			pb->planes, pb->bpp, pb->data_format, pb->linelen, pb->pitch, pb->size, &pb->bits[0]))
++			pb->planes, pb->bpp, pb->data_format, pb->pitch, pb->size, &pb->bits[0]))
+ 				return NULL;
+ 
+ 		hdc->bitmap = (MWBITMAPOBJ *)hObject;
+-	    	break;
++	    break;
+ #if UPDATEREGIONS
+ 	case OBJ_REGION:
+ 		/*objOrg = (HGDIOBJ)hdc->region;*/
+@@ -1719,7 +1719,7 @@ CreateCompatibleBitmap(HDC hdc, int nWidth, int nHeight)
+ {
+ 	MWBITMAPOBJ *	hbitmap;
+ 	int		size;
+-	int		linelen, pitch;
++	unsigned int pitch;
+ 
+ 	if(!hdc)
+ 		return NULL;
+@@ -1727,8 +1727,8 @@ CreateCompatibleBitmap(HDC hdc, int nWidth, int nHeight)
+ 	nWidth = MWMAX(nWidth, 1);
+ 	nHeight = MWMAX(nHeight, 1);
+ 
+-	/* calc memory allocation size and linelen from width and height*/
+-	if(!GdCalcMemGCAlloc(hdc->psd, nWidth, nHeight, 0, 0, &size, &linelen, &pitch))
++	/* calc memory allocation size and pitch from width and height*/
++	if(!GdCalcMemGCAlloc(hdc->psd, nWidth, nHeight, 0, 0, &size, &pitch))
+ 		return NULL;
+ 
+ 	/* allocate gdi object*/
+@@ -1744,7 +1744,6 @@ CreateCompatibleBitmap(HDC hdc, int nWidth, int nHeight)
+ 	hbitmap->planes = hdc->psd->planes;
+ 	hbitmap->bpp = hdc->psd->bpp;
+ 	hbitmap->data_format = hdc->psd->data_format;
+-	hbitmap->linelen = linelen;
+ 	hbitmap->pitch = pitch;
+ 	hbitmap->size = size;
+ 
+@@ -1757,14 +1756,13 @@ HBITMAP CreateDIBSection(
+ {
+ 	MWBITMAPOBJ *	hbitmap;
+ 	int		size;
+-	int		linelen, pitch;
++	unsigned int pitch;
+ 	PSD psd = hdc? hdc->psd: &scrdev;
+ 
+-	/* calc memory allocation size and linelen from width and height*/
+-	if(!GdCalcMemGCAlloc(psd, pbmi->bmiHeader.biWidth,
+-			pbmi->bmiHeader.biHeight, pbmi->bmiHeader.biPlanes,
+-			pbmi->bmiHeader.biBitCount, &size, &linelen, &pitch))
+-		return NULL;
++	/* calc memory allocation size and pitch from width and height*/
++	if(!GdCalcMemGCAlloc(psd, pbmi->bmiHeader.biWidth, pbmi->bmiHeader.biHeight,
++		pbmi->bmiHeader.biPlanes, pbmi->bmiHeader.biBitCount, &size, &pitch))
++			return NULL;
+ 
+ 	/* allocate gdi object*/
+ 	hbitmap = (MWBITMAPOBJ *)GdItemAlloc(sizeof(MWBITMAPOBJ)-1+size);
+@@ -1776,7 +1774,7 @@ HBITMAP CreateDIBSection(
+ 	hbitmap->height = pbmi->bmiHeader.biHeight;
+ 	hbitmap->planes = pbmi->bmiHeader.biPlanes;
+ 	hbitmap->bpp = pbmi->bmiHeader.biBitCount;
+-	hbitmap->linelen = linelen;
++	hbitmap->pitch = pitch;
+ 	hbitmap->size = size;
+ 
+ 	if (ppvBits) *ppvBits = &hbitmap->bits[0];

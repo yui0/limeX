@@ -295,7 +295,7 @@ do_buttonup(GR_EVENT_BUTTON	*bp)
 			GrLine(w4, gc3, bp->x, bp->y, linexpos, lineypos);
 		}
 		lineok = GR_FALSE;
-	        GrCopyArea(w1, gc4, 200,200, 200,200, p1,0,0,MWROP_SRCCOPY);
+	        GrCopyArea(w1, gc4, 200,200, 200,200, p1,0,0,MWROP_COPY);
 		return;
 	}
 
@@ -397,7 +397,7 @@ do_focusin(GR_EVENT_GENERAL	*gp)
 {
 	if (gp->wid != w1)
 		return;
-	GrSetBorderColor(w1, WHITE);
+	GrSetWindowBorderColor(w1, WHITE);
 }
 
 /*
@@ -408,7 +408,7 @@ do_focusout(GR_EVENT_GENERAL	*gp)
 {
 	if (gp->wid != w1)
 		return;
-	GrSetBorderColor(w1, GRAY);
+	GrSetWindowBorderColor(w1, GRAY);
 }
 
 
@@ -420,7 +420,7 @@ do_enter(GR_EVENT_GENERAL	*gp)
 {
 	if (gp->wid != w5)
 		return;
-	GrSetBorderColor(w5, WHITE);
+	GrSetWindowBorderColor(w5, WHITE);
 	GrRaiseWindow(w5);
 }
 
@@ -433,7 +433,7 @@ do_exit(GR_EVENT_GENERAL	*gp)
 {
 	if (gp->wid != w5)
 		return;
-	GrSetBorderColor(w5, GREEN);
+	GrSetWindowBorderColor(w5, GREEN);
 	GrLowerWindow(w5);
 }
 

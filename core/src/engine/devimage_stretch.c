@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2001, 2003, 2006 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2001, 2003, 2006, 2010 Greg Haerr <greg@censoft.com>
  *
  * StretchImage - Resize an image
  *
@@ -17,7 +17,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "device.h"
-#include "swap.h"
 
 #if MW_FEATURE_IMAGES /* whole file */
 
@@ -42,7 +41,7 @@ static void name(type *src, int src_w, type *dst, int dst_w)		\
 
 DEFINE_COPY_ROW(copy_row1, unsigned char)
 DEFINE_COPY_ROW(copy_row2, unsigned short)
-DEFINE_COPY_ROW(copy_row4, unsigned long)
+DEFINE_COPY_ROW(copy_row4, uint32_t)
 
 static void copy_row3(unsigned char *src, int src_w, unsigned char *dst,
 	int dst_w)
@@ -78,19 +77,19 @@ static void copy_row3(unsigned char *src, int src_w, unsigned char *dst,
  * @param dstrect Destination rectangle.
  */
 void
-GdStretchImage(PMWIMAGEHDR src, MWCLIPRECT *srcrect, PMWIMAGEHDR dst,
-	MWCLIPRECT *dstrect)
+GdStretchImage(PMWIMAGEHDR src, MWCLIPRECT *srcrect, PMWIMAGEHDR dst, MWCLIPRECT *dstrect)
 {
 	int pos, inc;
-	int bytesperpixel;
 	int dst_maxrow;
 	int src_row, dst_row;
 	MWUCHAR *srcp = 0;
 	MWUCHAR *dstp;
 	MWCLIPRECT full_src;
 	MWCLIPRECT full_dst;
+	int srcbytesperpixel = (src->bpp + 7) / 8;
+	int bytesperpixel = (dst->bpp + 7) / 8;
 
-	if ( src->bytesperpixel != dst->bytesperpixel ) {
+	if ( bytesperpixel != srcbytesperpixel ) {
 		EPRINTF("GdStretchImage: bytesperpixel mismatch\n");
 		return;
 	}
@@ -133,16 +132,12 @@ GdStretchImage(PMWIMAGEHDR src, MWCLIPRECT *srcrect, PMWIMAGEHDR dst,
 	inc = (srcrect->height << 16) / dstrect->height;
 	src_row = srcrect->y;
 	dst_row = dstrect->y;
-	bytesperpixel = dst->bytesperpixel;
 
 	/* Perform the stretch blit */
-	for ( dst_maxrow = dst_row+dstrect->height; dst_row<dst_maxrow;
-								++dst_row ) {
-		dstp = (MWUCHAR *)dst->imagebits + (dst_row*dst->pitch)
-				    + (dstrect->x*bytesperpixel);
+	for ( dst_maxrow = dst_row+dstrect->height; dst_row<dst_maxrow; ++dst_row ) {
+		dstp = (MWUCHAR *)dst->imagebits + (dst_row*dst->pitch) + (dstrect->x*bytesperpixel);
 		while ( pos >= 0x10000L ) {
-			srcp = (MWUCHAR *)src->imagebits + (src_row*src->pitch)
-				    + (srcrect->x*bytesperpixel);
+			srcp = (MWUCHAR *)src->imagebits + (src_row*src->pitch) + (srcrect->x*bytesperpixel);
 			++src_row;
 			pos -= 0x10000L;
 		}
@@ -152,15 +147,13 @@ GdStretchImage(PMWIMAGEHDR src, MWCLIPRECT *srcrect, PMWIMAGEHDR dst,
 			copy_row1(srcp, srcrect->width, dstp, dstrect->width);
 			break;
 		case 2:
-			copy_row2((unsigned short *)srcp, srcrect->width,
-				(unsigned short *)dstp, dstrect->width);
+			copy_row2((unsigned short *)srcp, srcrect->width, (unsigned short *)dstp, dstrect->width);
 			break;
 		case 3:
 			copy_row3(srcp, srcrect->width, dstp, dstrect->width);
 			break;
 		case 4:
-			copy_row4((unsigned long *)srcp, srcrect->width,
-				(unsigned long *)dstp, dstrect->width);
+			copy_row4((uint32_t *)srcp, srcrect->width, (uint32_t *)dstp, dstrect->width);
 			break;
 		}
 

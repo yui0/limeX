@@ -41,20 +41,15 @@ else
 TARGETS = \
 	$(MW_DIR_BIN)/demo \
 	$(MW_DIR_BIN)/move \
-	$(MW_DIR_BIN)/landmine \
-	$(MW_DIR_BIN)/world \
-	$(MW_DIR_BIN)/nxclock \
 	$(MW_DIR_BIN)/nxlsclients \
 	$(MW_DIR_BIN)/nxev \
-	$(MW_DIR_BIN)/npanel \
-	$(MW_DIR_BIN)/nterm \
-	$(MW_DIR_BIN)/demo2 \
 	$(MW_DIR_BIN)/demo5 \
-	$(MW_DIR_BIN)/demo6 \
 	$(MW_DIR_BIN)/t1demo \
 	$(MW_DIR_BIN)/ftdemo \
+	$(MW_DIR_BIN)/blitdemo \
+	$(MW_DIR_BIN)/composite \
+	$(MW_DIR_BIN)/monobitmap \
 	$(MW_DIR_BIN)/logfont \
-	$(MW_DIR_BIN)/ntetris \
 	$(MW_DIR_BIN)/getselection \
 	$(MW_DIR_BIN)/setselection \
 	$(MW_DIR_BIN)/dashdemo \
@@ -63,17 +58,34 @@ TARGETS = \
 	$(MW_DIR_BIN)/setportrait \
 	$(MW_DIR_BIN)/arcdemo \
 	$(MW_DIR_BIN)/polydemo \
-	$(MW_DIR_BIN)/snap_ppm \
 	$(MW_DIR_BIN)/bmpdemo \
-	$(MW_DIR_BIN)/rgndemo \
-	$(MW_DIR_BIN)/convpbm \
+	$(MW_DIR_BIN)/rgndemo 
+
+ifneq ($(ARCH), PSP)
+TARGETS += \
+	$(MW_DIR_BIN)/landmine \
+	$(MW_DIR_BIN)/world \
+	$(MW_DIR_BIN)/nxclock \
+	$(MW_DIR_BIN)/npanel \
+	$(MW_DIR_BIN)/demo2 \
+	$(MW_DIR_BIN)/demo6 \
+	$(MW_DIR_BIN)/ntetris \
+	$(MW_DIR_BIN)/snap_ppm \
 	$(MW_DIR_BIN)/nsaver \
 	$(MW_DIR_BIN)/nxcal \
 	$(MW_DIR_BIN)/grabdemo
-
-ifneq ($(ARCH),CYGWIN)
+endif
+ifneq ($(ARCH),RTEMS)
 TARGETS += \
+	$(MW_DIR_BIN)/nterm \
+#	$(MW_DIR_BIN)/threadtest \
+	$(MW_DIR_BIN)/convpbm
+endif
+ifneq ($(ARCH),CYGWIN) 
+  ifneq ($(ARCH),RTEMS)
+    TARGETS += \
 	$(MW_DIR_BIN)/nxterm
+  endif
 endif
 
 # Require MW_FEATURE_IMAGES support:
@@ -137,13 +149,14 @@ endif
 NANOX_DEMOS_WITH_LIBM_LINK := \
 	$(MW_DIR_BIN)/nxeyes \
 	$(MW_DIR_BIN)/grabdemo \
-	$(MW_DIR_BIN)/nsaver
+	$(MW_DIR_BIN)/nsaver \
+	$(MW_DIR_BIN)/t1demo
 
 # These demos use a hardcoded link line.
 NANOX_DEMOS_WITH_NONSTANDARD_LINK := \
 	$(NANOX_DEMOS_WITH_LIBM_LINK) \
-	$(MW_DIR_BIN)/snap_jpg \
-	$(MW_DIR_BIN)/convpbm
+	$(MW_DIR_BIN)/convpbm \
+	$(MW_DIR_BIN)/snap_jpg
 
 # All other demos use a standard link line, that just
 # links against the Nano-X client libraries.
@@ -153,16 +166,20 @@ NANOX_DEMOS_WITH_STANDARD_LINK := \
 # Standard link rule used for most demos.
 $(NANOX_DEMOS_WITH_STANDARD_LINK): $(MW_DIR_BIN)/%: $(MW_DIR_OBJ)/demos/nanox/%.o $(NANOXCLIENTLIBS) $(CONFIG)
 	@echo "Linking $(patsubst $(MW_DIR_BIN)/%,%,$@) ..."
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LD_NANOXCLIENTLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LD_NANOXCLIENTLIBS) $(CCNXLIBS)
 
 # Link rule used for demos with libm.
 $(NANOX_DEMOS_WITH_LIBM_LINK): $(MW_DIR_BIN)/%: $(MW_DIR_OBJ)/demos/nanox/%.o $(NANOXCLIENTLIBS) $(CONFIG)
 	@echo "Linking $(patsubst $(MW_DIR_BIN)/%,%,$@) ..."
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LD_NANOXCLIENTLIBS) $(LIBM)
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LIBM) $(LD_NANOXCLIENTLIBS) $(CCNXLIBS)
 
 $(MW_DIR_BIN)/snap_jpg: $(MW_DIR_OBJ)/demos/nanox/snap_jpg.o $(NANOXCLIENTLIBS) $(CONFIG)
 	@echo "Linking $(patsubst $(MW_DIR_BIN)/%,%,$@) ..."
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LD_NANOXCLIENTLIBS) $(LIBJPEG)
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LIBJPEG) $(LD_NANOXCLIENTLIBS) $(CCNXLIBS)
+
+$(MW_DIR_BIN)/threadtest: $(MW_DIR_OBJ)/demos/nanox/threadtest.o $(NANOXCLIENTLIBS) $(CONFIG)
+	@echo "Linking $(patsubst $(MW_DIR_BIN)/%,%,$@) ..."
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(LD_NANOXCLIENTLIBS) $(CCNXLIBS) -lpthread
 
 $(MW_DIR_BIN)/convpbm: $(MW_DIR_OBJ)/demos/nanox/convpbm.o
 	@echo "Linking $(patsubst $(MW_DIR_BIN)/%,%,$@) ..."

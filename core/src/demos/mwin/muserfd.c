@@ -3,9 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-
-#if DOS_DJGPP | defined(__FreeBSD__)
+#if DOS_DJGPP || defined(__FreeBSD__)
 #include <sys/types.h>
+#endif
+
+#if RTEMS || __ECOS
+#define  srandom  srand
+#define  random   rand
 #endif
 
 #define MAX_TEST_FD (500)

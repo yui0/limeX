@@ -75,8 +75,8 @@ int main(int argc, char ** argv)
 
 	GrSetGCForeground(gc1, GRAY);
 	GrSetGCBackground(gc1, LTBLUE);
-	GrSetGCFont(gc1, GrCreateFont(GR_FONT_SYSTEM_FIXED, 0, NULL));
-	/*GrSetGCFont(gc1, GrCreateFont(GR_FONT_OEM_FIXED, 0, NULL));*/
+	GrSetGCFont(gc1, GrCreateFontEx(GR_FONT_SYSTEM_FIXED, 0, 0, NULL));
+	/*GrSetGCFont(gc1, GrCreateFontEx(GR_FONT_OEM_FIXED, 0, 0, NULL));*/
 	GrSetGCForeground(gc3, WHITE);
 	GrSetGCBackground(gc3, BLACK);
 
@@ -301,7 +301,7 @@ do_focusin(GR_EVENT_GENERAL *gp)
 {
 	if (gp->wid != w1)
 		return;
-	GrSetBorderColor(w1, LTBLUE);
+	GrSetWindowBorderColor(w1, LTBLUE);
 }
 
 /*
@@ -312,7 +312,7 @@ do_focusout(GR_EVENT_GENERAL *gp)
 {
 	if (gp->wid != w1)
 		return;
-	GrSetBorderColor(w1, GRAY);
+	GrSetWindowBorderColor(w1, GRAY);
 }
 
 /*

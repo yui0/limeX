@@ -7,7 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#if RTEMS
+#include <time.h>
+#else
 #include <sys/timeb.h>
+#endif
 #include "defs.h"
 #include "data.h"
 #include "protos.h"
@@ -126,18 +130,27 @@ int start_square = 1;
 char st_sq[3];
 int from = 999;
 int to = 999;
+BOOL ftime_ok = FALSE;  /* does ftime return milliseconds? */
 
 /* ***********************************************************/
 /* get_ms() returns the milliseconds elapsed since midnight,
-   January 1, 1970. */
-BOOL ftime_ok = FALSE;  /* does ftime return milliseconds? */
-int get_ms()
+   January 1, 1970.
+*/
+int get_ms(void)
 {
+#if RTEMS
+	struct timespec tp;
+
+	clock_gettime( CLOCK_REALTIME, &tp );
+	ftime_ok = TRUE;
+	return (tp.tv_sec * 1000) + (tp.tv_nsec / 1000000);
+#else
 	struct timeb timebuffer;
 	ftime(&timebuffer);
 	if (timebuffer.millitm != 0)
 		ftime_ok = TRUE;
 	return (timebuffer.time * 1000) + timebuffer.millitm;
+#endif
 }
 
  
@@ -242,7 +255,7 @@ int main(int argc, char* argv[])
 
         master = GrNewWindow(GR_ROOT_WINDOW_ID, 0, 0, BM_WIDTH, BM_HEIGHT, 0, WHITE, WHITE);
         board = GrNewWindow((GR_WINDOW_ID) master, 0, 0, 394, 394, 0, WHITE, WHITE);
-        text = GrNewWindow((GR_WINDOW_ID) master, 0, 393, 394, 20, 0, WHITE, BLACK); 
+        text = GrNewWindow((GR_WINDOW_ID) master, 0, 393, 394, 20, 0, BLACK, BLACK); 
 
         GrSelectEvents(master, GR_EVENT_MASK_CLOSE_REQ | GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN);
 
@@ -250,6 +263,11 @@ int main(int argc, char* argv[])
 	props.props = GR_WM_PROPS_BORDER | GR_WM_PROPS_CAPTION | GR_WM_PROPS_CLOSEBOX;
 	props.title = TITLE;
 	GrSetWMProperties(master, &props);
+
+	/* eliminate white background*/
+	props.flags = GR_WM_FLAGS_PROPS;
+	props.props = GR_WM_PROPS_NOBACKGROUND;
+	GrSetWMProperties(board, &props);
 
         GrMapWindow(master);
         GrMapWindow(board);
@@ -401,6 +419,13 @@ char *move_str(move_bytes m)
 void print_board(void)
 {
 	int row,column,i,x,y;
+
+	/* draw background border only*/
+	GrSetGCForeground(gc, WHITE);
+	GrLine(board, gc, 0,   0, board_w, 0);					/* top*/
+	GrLine(board, gc, 0, board_h-1, board_w, board_h-1);	/* bottom*/
+	GrLine(board, gc, 0,   0, 0, board_h-1);				/* left*/
+	GrLine(board, gc, board_w, 0, board_w, board_h-1);		/* right*/
 
 	GrDrawImageToFit(board, gc, 1, 0, board_w, board_h, board_image_id); 
 

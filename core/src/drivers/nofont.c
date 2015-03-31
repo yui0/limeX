@@ -16,8 +16,11 @@ static MWCFONT nullfont = {
 };
 
 /* handling routines for MWCOREFONT*/
-static MWFONTPROCS fontprocs = {
+MWFONTPROCS mwfontprocs = {
+	0,				/* capabilities*/
 	MWTF_ASCII,		/* routines expect ascii*/
+	NULL,			/* init*/
+	NULL,			/* createfont*/
 	NULL,			/* getfontinfo*/
 	NULL,			/* gettextsize*/
 	NULL,			/* gettextbits*/
@@ -26,12 +29,13 @@ static MWFONTPROCS fontprocs = {
 	NULL,			/* setfontsize*/
 	NULL,			/* setfontrotation*/
 	NULL,			/* setfontattr*/
+	NULL			/* duplicate*/
 };
 
 /* first font is default font if no match*/
 MWCOREFONT gen_fonts[NUMBER_FONTS] = {
-	{&fontprocs, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
-	{&fontprocs, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
-	{&fontprocs, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
-	{&fontprocs, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
+	{&mwfontprocs, 0, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
+	{&mwfontprocs, 0, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
+	{&mwfontprocs, 0, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
+	{&mwfontprocs, 0, 0, 0, 0, MWFONT_SYSTEM_VAR, &nullfont},
 };

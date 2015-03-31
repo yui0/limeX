@@ -25,9 +25,10 @@
 
 #include <sys/types.h>
 #include <stdlib.h>
+#include <stddef.h>
 /*#include <libintl.h>*/
 
-#ifdef ELX
+#if defined(ELX)||defined(BLACKFIN)
 typedef unsigned int wchar_t;
 #endif
 

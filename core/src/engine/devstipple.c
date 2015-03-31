@@ -10,8 +10,6 @@
 #include <string.h>
 #include "device.h"
 
-extern MWPIXELVAL gr_foreground;	/* current foreground color */
-extern MWPIXELVAL gr_background;	/* current background color */
 extern int gr_fillmode;			/* current fill mode        */
 extern MWSTIPPLE gr_stipple;		/* The current stipple as set by the GC */
 extern MWTILE gr_tile;			/* The current tile as set by the GC */
@@ -34,7 +32,6 @@ static int ts_origin_y = 0;
 void
 GdSetStippleBitmap(MWIMAGEBITS *stipple, MWCOORD width, MWCOORD height)
 {
-	int x, y;
 	int size;
 
 	if (gr_stipple.bitmap)
@@ -56,8 +53,8 @@ GdSetStippleBitmap(MWIMAGEBITS *stipple, MWCOORD width, MWCOORD height)
 	gr_stipple.height = height;
 	memcpy(gr_stipple.bitmap, stipple, size);
 
-	/* debug output*/
-	for (y = 0; y < height; y++) {
+#if 0
+	for (y = 0; y < height; y++) { /* debug output*/
 		for (x = 0; x < width; x++) {
 			if (BIT_SET(gr_stipple.bitmap, x, y))
 				DPRINTF("X");
@@ -66,7 +63,7 @@ GdSetStippleBitmap(MWIMAGEBITS *stipple, MWCOORD width, MWCOORD height)
 		}
 		DPRINTF("\n");
 	}
-
+#endif
 }
 
 void
@@ -130,7 +127,7 @@ tile_drawrect(PSD psd, MWCOORD x, MWCOORD y, MWCOORD w, MWCOORD h)
 	}
 
 	while (dh) {
-		int ch = (gr_tile.height - ((tiley + py) % gr_tile.height));
+		int ch = gr_tile.height - ((tiley + py) % gr_tile.height);
 		if (ch > dh)
 			ch = dh;
 
@@ -138,14 +135,12 @@ tile_drawrect(PSD psd, MWCOORD x, MWCOORD y, MWCOORD w, MWCOORD h)
 		px = 0;
 
 		while (dw) {
-			int cw = (gr_tile.width -
-				 ((tilex + px) % gr_tile.width));
+			int cw = gr_tile.width - ((tilex + px) % gr_tile.width);
 			if (cw > dw)
 				cw = dw;
 
 			GdBlit(psd, sx + px, sy + py, cw, ch, gr_tile.psd,
-			       ((tilex + px) % gr_tile.width),
-			       ((tiley + py) % gr_tile.height), MWROP_SRCCOPY);
+			       (tilex + px) % gr_tile.width, (tiley + py) % gr_tile.height, MWROP_COPY);
 			dw -= cw;
 			px += cw;
 		}
@@ -172,10 +167,8 @@ ts_drawpoint(PSD psd, MWCOORD x, MWCOORD y)
 
 	/* Sanity check - If no stipple / tile is set, then just ignore the request */
 	/* FIXME:  X returns an error - Should we too?                              */
-	if (gr_fillmode == MWFILL_STIPPLE
-	    || gr_fillmode == MWFILL_OPAQUE_STIPPLE) {
-		if (!gr_stipple.bitmap || !gr_stipple.width
-		    || !gr_stipple.height)
+	if (gr_fillmode == MWFILL_STIPPLE || gr_fillmode == MWFILL_OPAQUE_STIPPLE) {
+		if (!gr_stipple.bitmap || !gr_stipple.width || !gr_stipple.height)
 		    	return;
 	} else {
 		if (!gr_tile.psd || !gr_tile.width || !gr_tile.height)
@@ -198,11 +191,12 @@ ts_drawpoint(PSD psd, MWCOORD x, MWCOORD y)
 
 	switch (gr_fillmode) {
 	case MWFILL_OPAQUE_STIPPLE:
-		/* FIXME: precompute bitset, don't do it twice */
 		if (!BIT_SET(gr_stipple.bitmap, (bx % gr_stipple.width), (by % gr_stipple.height)))
-		     	psd->DrawPixel(psd, x, y, gr_background);
+			psd->DrawPixel(psd, x, y, gr_background);
+		else
+			psd->DrawPixel(psd, x, y, gr_foreground);
+		break;
 
-		/* Fall through */
 	case MWFILL_STIPPLE:
 		if (BIT_SET(gr_stipple.bitmap, (bx % gr_stipple.width), (by % gr_stipple.height)))
 			psd->DrawPixel(psd, x, y, gr_foreground);
@@ -212,8 +206,7 @@ ts_drawpoint(PSD psd, MWCOORD x, MWCOORD y)
 		/* Read the bit from the PSD and write it to the current PSD */
 		/* FIXME:  This does no checks for depth correctness         */
 		psd->DrawPixel(psd, x, y,
-			gr_tile.psd->ReadPixel(gr_tile.psd,
-				(bx % gr_tile.width), (by % gr_tile.height)));
+			gr_tile.psd->ReadPixel(gr_tile.psd, (bx % gr_tile.width), (by % gr_tile.height)));
 		break;
 	}
 }
@@ -231,6 +224,7 @@ ts_drawrow(PSD psd, MWCOORD x1, MWCOORD x2, MWCOORD y)
 		for (x = x1; x <= x2; x++)
 			ts_drawpoint(psd, x, y);
 		break;
+
 	case MWFILL_TILE:
 		tile_drawrect(psd, x1, y, dstwidth, 1);
 	}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2000, 2001, 2003, 2004 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2001, 2003, 2004, 2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002 by Koninklijke Philips Electronics N.V.
  * Copyright (c) 1991 David I. Bell
  *
@@ -9,6 +9,11 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+
+#if PSP
+#include <pspkernel.h>
+#include <pspdebug.h>
+#endif
 
 #ifdef __PACIFIC__
 #include <unixio.h>
@@ -62,9 +67,6 @@ GR_WINDOW	*rootwp;		/* root window pointer */
 GR_GC		*listgcp;		/* list of all gc */
 GR_REGION	*listregionp;		/* list of all regions */
 GR_FONT		*listfontp;		/* list of all fonts */
-#if MW_FEATURE_IMAGES
-GR_IMAGE	*listimagep;		/* list of all images */
-#endif
 GR_CURSOR	*listcursorp;		/* list of all cursors */
 GR_CURSOR	*stdcursor;		/* root window cursor */
 GR_GC		*curgcp;		/* currently enabled gc */
@@ -90,7 +92,7 @@ GR_CLIENT	*current_client;	/* the client we are currently talking*/
 char		*current_shm_cmds;
 int		current_shm_cmds_size;
 static int	keyb_fd;		/* the keyboard file descriptor */
-#ifdef MW_FEATURE_TWO_KEYBOARDS
+#if MW_FEATURE_TWO_KEYBOARDS
 static int	keyb2_fd;		/* the keyboard file descriptor */
 #endif
 static int	mouse_fd;		/* the mouse file descriptor */
@@ -123,7 +125,11 @@ int		un_sock;		/* the server socket descriptor */
 static void
 usage(void)
 {
-	printf("Usage: %s [-e] [-p] [-A] [-NLRD] [-x#] [-y#] [-c <fontconfig-file> ...]\n",
+	EPRINTF("Usage: %s [-e] [-p] [-A] [-NLRD] [-x #] [-y #]"
+#if FONTMAPPER
+		" [-c <fontconfig-file>"
+#endif
+		" ...]\n",
 		progname);
 	exit(1);
 }
@@ -222,7 +228,9 @@ GsAcceptClientFd(int i)
 	GR_CLIENT *client, *cl;
 
 	if(!(client = malloc(sizeof(GR_CLIENT)))) {
+#if !NONETWORK
 		close(i);
+#endif
 		return;
 	}
 
@@ -246,6 +254,23 @@ GsAcceptClientFd(int i)
 	}
 }
 
+#if PSP
+int exit_callback(void)
+{
+	sceKernelExitGame();
+	return 0;
+}
+
+void CallbackThread(void *arg)
+{
+	int cbid;
+
+	cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
+	sceKernelRegisterExitCallback(cbid);
+	sceKernelSleepThreadCB();
+}
+#endif
+
 /*
  * Open a connection from a new client to the server.
  * Returns -1 on failure.
@@ -254,6 +279,18 @@ int
 GrOpen(void)
 {
 #if NONETWORK
+
+#if PSP
+	int thid;
+	thid = sceKernelCreateThread("update_thread", CallbackThread, 0x11, 0xFA0, 0, 0);
+	if(thid >= 0)
+		sceKernelStartThread(thid, 0, 0);
+#endif
+
+#if NDS
+	consoleDemoInit();  //setup the sub screen for printing
+#endif
+
 	SERVER_LOCK();
 	escape_quits = 1;
 
@@ -269,8 +306,12 @@ GrOpen(void)
 		curclient = root_client;
 	}
 	SERVER_UNLOCK();
+
+#if NANOWM
+	wm_init();	/* init built-in window manager*/
 #endif
-        return 1;
+#endif /* NONETWORK*/
+    return 1;
 }
 
 /*
@@ -305,7 +346,7 @@ GsDropClient(int fd)
 #endif
 
 #if UNIX | DOS_DJGPP
-#if NONETWORK && defined(HAVESELECT)
+#if NONETWORK && HAVE_SELECT
 /*
  * Register the specified file descriptor to return an event
  * when input is ready.
@@ -347,7 +388,7 @@ GrUnregisterInput(int fd)
 	SERVER_UNLOCK();
 }
 
-#endif /* NONETWORK && HAVESELECT */
+#endif /* NONETWORK && HAVE_SELECT */
 #endif /* UNIX | DOS_DJGPP*/
 
 /*
@@ -357,7 +398,11 @@ GrUnregisterInput(int fd)
 void
 GrDelay(GR_TIMEOUT msecs)
 {
-#if UNIX && defined(HAVESELECT)
+#if PSP
+	sceKernelDelayThread(1000 * msecs);
+#endif
+
+#if UNIX && HAVE_SELECT
 	struct timeval timeval;
 
 	timeval.tv_sec = msecs / 1000;
@@ -569,6 +614,90 @@ GsSelect(GR_TIMEOUT timeout)
 
 }
 
+#elif PSP
+
+#define POLLTIME	1     /* polling sleep interval (in msec) */
+#define MAX_MOUSEEVENTS	10    /* max number of mouse event to get in 1 select */
+#define MAX_KEYBDEVENTS	10    /* max number of mouse event to get in 1 select */
+
+void 
+GsSelect(GR_TIMEOUT timeout)
+{
+	int mouseevents = 0;
+	int keybdevents = 0;
+	GR_TIMEOUT waittime = 0;
+	GR_EVENT_GENERAL *gp;
+
+	/* input gathering loop */
+	while (1)
+	{
+
+		/* perform pre-select duties, if any */
+		if(scrdev.PreSelect)
+		{
+			scrdev.PreSelect(&scrdev);
+		}
+
+
+		/* If mouse data present, service it */
+		while (mousedev.Poll() > 0)
+		{
+			GsCheckMouseEvent();
+			if (mouseevents++ > MAX_MOUSEEVENTS)
+			{
+				/* don't handle too many events at one shot */
+				break;
+			}
+		}
+
+
+		/* If keyboard data present, service it */
+		while (kbddev.Poll() > 0)
+		{
+			GsCheckKeyboardEvent();
+			if (keybdevents++ > MAX_KEYBDEVENTS)
+			{
+				/* don't handle too many events at one shot */
+				break;
+			}
+		}
+
+		
+		/* did we process any input yet? */
+		if ((mouseevents > 0) || (keybdevents > 0))
+		{
+			/* yep -- return without sleeping */
+			return;
+		}
+
+
+		/* give up time-slice & sleep for a bit */
+		GrDelay(POLLTIME);
+		waittime += POLLTIME; 
+
+
+		/* have we timed out? */
+		if (waittime >= timeout)
+		{
+			/* special case: polling when timeout == 0 -- don't send timeout event */
+			if (timeout != 0)
+			{
+				/* Timeout has occured.  
+				** Currently return a timeout event regardless of whether client 
+				**   has selected for it.
+				*/
+				if ((gp = (GR_EVENT_GENERAL *)GsAllocEvent(curclient)) != NULL)
+				{
+					gp->type = GR_EVENT_TYPE_TIMEOUT;
+				}
+			}
+			return;
+		}
+	}
+
+}
+
+
 #elif MSDOS | _MINIX
 
 void
@@ -586,7 +715,7 @@ GsSelect(GR_TIMEOUT timeout)
 
 }
 
-#elif UNIX && defined(HAVESELECT)
+#elif UNIX && HAVE_SELECT
 
 void
 GsSelect(GR_TIMEOUT timeout)
@@ -624,7 +753,7 @@ GsSelect(GR_TIMEOUT timeout)
 		if (keyb_fd > setsize)
 			setsize = keyb_fd;
 	}
-#ifdef MW_FEATURE_TWO_KEYBOARDS
+#if MW_FEATURE_TWO_KEYBOARDS
 	if(keyb2_fd >= 0) {
 		FD_SET(keyb2_fd, &rfds);
 		if (keyb2_fd > setsize)
@@ -668,9 +797,9 @@ GsSelect(GR_TIMEOUT timeout)
 
 #else
         /* Add all VNC open sockets to nano-X select set */
-        FD_SET( rfbScreen->rfbListenSock, &(rfds) );
-        if ( rfbScreen->rfbListenSock > setsize )
-                setsize = rfbScreen->rfbListenSock;
+        FD_SET( rfbScreen->listenSock, &(rfds) );
+        if ( rfbScreen->listenSock > setsize )
+                setsize = rfbScreen->listenSock;
 
         FD_SET( rfbScreen->httpListenSock, &(rfds) );
         if ( rfbScreen->httpListenSock > setsize )
@@ -708,7 +837,14 @@ GsSelect(GR_TIMEOUT timeout)
 	}
 
 	/* Wait for some input on any of the fds in the set or a timeout: */
-	if((e = select(setsize+1, &rfds, NULL, NULL, to)) > 0) {
+#if NONETWORK
+	SERVER_UNLOCK();	/* allow other threads to run*/
+#endif
+	e = select(setsize+1, &rfds, NULL, NULL, to);
+#if NONETWORK
+	SERVER_LOCK();
+#endif
+	if(e > 0) {
 		/* If data is present on the mouse fd, service it: */
 		if(mouse_fd >= 0 && FD_ISSET(mouse_fd, &rfds))
 			while(GsCheckMouseEvent())
@@ -716,7 +852,7 @@ GsSelect(GR_TIMEOUT timeout)
 
 		/* If data is present on the keyboard fd, service it: */
 		if( (keyb_fd >= 0 && FD_ISSET(keyb_fd, &rfds))
-#ifdef MW_FEATURE_TWO_KEYBOARDS
+#if MW_FEATURE_TWO_KEYBOARDS
 		 || (keyb2_fd >= 0 && FD_ISSET(keyb2_fd, &rfds))
 #endif
 		  )
@@ -841,7 +977,7 @@ GrPrepareSelect(int *maxfd, void *rfdset)
 		if (keyb_fd > *maxfd)
 			*maxfd = keyb_fd;
 	}
-#ifdef MW_FEATURE_TWO_KEYBOARDS
+#if MW_FEATURE_TWO_KEYBOARDS
 	if(keyb2_fd >= 0) {
 		FD_SET(keyb2_fd, rfds);
 		if (keyb2_fd > *maxfd)
@@ -891,7 +1027,7 @@ GrServiceSelect(void *rfdset, GR_FNCALLBACKEVENT fncb)
 
 	/* If data is present on the keyboard fd, service it: */
 	if( (keyb_fd >= 0 && FD_ISSET(keyb_fd, rfds))
-#ifdef MW_FEATURE_TWO_KEYBOARDS
+#if MW_FEATURE_TWO_KEYBOARDS
 	 || (keyb2_fd >= 0 && FD_ISSET(keyb2_fd, rfds))
 #endif
 	  )
@@ -929,7 +1065,26 @@ GrServiceSelect(void *rfdset, GR_FNCALLBACKEVENT fncb)
 
 #endif /* NONETWORK */
 
-#endif /* UNIX && defined(HAVESELECT)*/
+
+#elif NDS /* UNIX && defined(HAVESELECT)*/
+
+void
+GsSelect(GR_TIMEOUT timeout)
+{
+	/* If mouse data present, service it*/
+	if(mousedev.Poll())
+		while(GsCheckMouseEvent())
+			continue;
+
+	/* If keyboard data present, service it*/
+	if(kbddev.Poll())
+		while(GsCheckKeyboardEvent())
+			continue;
+
+}
+
+
+#endif /* UNIX && HAVE_SELECT*/
 
 #if RTEMS
 extern struct MW_UID_MESSAGE m_kbd;
@@ -938,7 +1093,12 @@ extern struct MW_UID_MESSAGE m_mou;
 void
 GsSelect (GR_TIMEOUT timeout)
 {
-        struct MW_UID_MESSAGE m;
+	struct MW_UID_MESSAGE m;
+	long uid_timeout;
+#if MW_FEATURE_TIMERS
+	struct timeval tout;
+#endif
+	GR_EVENT_GENERAL *gp;
 	int rc;
 
 	/* perform pre-select duties, if any*/
@@ -949,14 +1109,42 @@ GsSelect (GR_TIMEOUT timeout)
 	m.type = MV_UID_INVALID;
 
 	/* wait up for events */
-	rc = uid_read_message (&m, timeout);
+	if (timeout == (GR_TIMEOUT) -1)
+		uid_timeout = 0;
+	else {
+#if MW_FEATURE_TIMERS
+		if (GdGetNextTimeout(&tout, timeout))
+			uid_timeout = tout.tv_sec * 1000 + (tout.tv_usec + 500) / 1000;
+		else
+#endif
+		{
+			if (timeout == 0)
+				uid_timeout = (unsigned long) -1;
+			else
+				uid_timeout = timeout;
+		}
+	}
+	rc = uid_read_message (&m, uid_timeout);
 
 	/* return if timed-out or something went wrong */
 	if (rc < 0) {
 	        if (errno != ETIMEDOUT)
-		        EPRINTF (" rc= %d, errno=%d\n", rc, errno);
+		        EPRINTF(" rc= %d, errno=%d\n", rc, errno);
 		else {
 		        /* timeout handling */
+#if MW_FEATURE_TIMERS
+			if (GdTimeout())
+#else
+			if (timeout != 0)
+#endif
+			{
+				/* Timeout has occured.
+				** Currently return a timeout event regardless of whether client
+				**   has selected for it.
+				*/
+				if ((gp = (GR_EVENT_GENERAL *)GsAllocEvent(curclient)) != NULL)
+					gp->type = GR_EVENT_TYPE_TIMEOUT;
+			}
 		}
 		return;
 	}
@@ -965,11 +1153,12 @@ GsSelect (GR_TIMEOUT timeout)
 	switch (m.type) {
 	case MV_UID_REL_POS:	/* Mouse or Touch Screen event */
 	case MV_UID_ABS_POS:
-	        m_mou = m;
-		while (GsCheckMouseEvent ()) continue;
+		m_mou = m;
+		while (GsCheckMouseEvent())
+			continue;
 		break;
 	case MV_UID_KBD:	/* KBD event */
-	        m_kbd = m;
+		m_kbd = m;
 		GsCheckKeyboardEvent ();
 		break;
 	case MV_UID_TIMER:	/* Microwindows does nothing with these.. */
@@ -1027,7 +1216,7 @@ GsInitialize(void)
 
 	startTicks = GsGetTickCount();
 
-#ifndef MW_NOSIGNALS
+#if HAVE_SIGNAL
 	/* catch terminate signal to restore tty state*/
 	signal(SIGTERM, (void *)GsTerminate);
 #endif
@@ -1041,7 +1230,7 @@ GsInitialize(void)
 	selection_owner.typelist = NULL;
 
 #if !NONETWORK
-#ifndef MW_NOSIGNALS
+#if HAVE_SIGNAL
 	/* ignore pipe signal, sent when clients exit*/
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGHUP, SIG_IGN);
@@ -1061,7 +1250,7 @@ GsInitialize(void)
 		return -1;
 	}
 
-#ifdef MW_FEATURE_TWO_KEYBOARDS
+#if MW_FEATURE_TWO_KEYBOARDS
 	if ((keyb2_fd = GdOpenKeyboard2()) == -1) {
 		EPRINTF("Cannot initialise second keyboard\n");
 		/*GsCloseSocket();*/
@@ -1103,9 +1292,9 @@ GsInitialize(void)
 	 */
 #if (HAVE_BIG5_SUPPORT | HAVE_GB2312_SUPPORT | HAVE_JISX0213_SUPPORT | HAVE_KSC5601_SUPPORT)
 	/* system fixed font looks better when mixed with builtin fixed fonts*/
-	stdfont = GdCreateFont(psd, MWFONT_SYSTEM_FIXED, 0, NULL);
+	stdfont = GdCreateFont(psd, MWFONT_SYSTEM_FIXED, 0, 0, NULL);
 #else
-	stdfont = GdCreateFont(psd, MWFONT_SYSTEM_VAR, 0, NULL);
+	stdfont = GdCreateFont(psd, MWFONT_SYSTEM_VAR, 0, 0, NULL);
 #endif
 
 	/*
@@ -1137,7 +1326,7 @@ GsInitialize(void)
 	wp->title = NULL;
 	wp->clipregion = NULL;
 
-        listpp = NULL;
+    listpp = NULL;
 	listwp = wp;
 	rootwp = wp;
 	focuswp = wp;
@@ -1199,8 +1388,8 @@ GsTerminate(void)
 	GsCloseSocket();
 #endif
 
-#ifdef HAVE_VNCSERVER
-        GdCloseVNC();
+#if HAVE_VNCSERVER
+	GdCloseVNC();
 #endif
 
 	GdCloseScreen(rootwp->psd);
@@ -1221,12 +1410,12 @@ GsGetTickCount(void)
 {
 #if MSDOS
 #include <time.h>
-	return (unsigned long)(clock() * 1000 / CLOCKS_PER_SEC);
+	return (uint32_t)(clock() * 1000 / CLOCKS_PER_SEC);
 #else
 #if _MINIX
 	struct tms	t;
 	
-	return (unsigned long)times(&t) * 16;
+	return (uint32_t)times(&t) * 16;
 #else
 #if UNIX
 	struct timeval t;
@@ -1244,6 +1433,8 @@ void
 GrBell(void)
 {
 	SERVER_LOCK();
+#if !PSP
 	write(2, "\7", 1);
+#endif
 	SERVER_UNLOCK();
 }

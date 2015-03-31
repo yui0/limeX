@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2005 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2005, 2010 Greg Haerr <greg@censoft.com>
  *
  * DefWindowProc implementation for Micro-Windows
  *	This file should ideally only include windows.h, and be built
@@ -39,7 +39,7 @@ DrawXORFrame(HWND hwnd,int x, int y, BOOL bDrawCurrent)
 	hdc = GetDCEx(NULL, NULL, DCX_WINDOW|DCX_EXCLUDEUPDATE);
 	SelectObject(hdc, GetStockObject(NULL_BRUSH));
 	SelectObject(hdc, GetStockObject(WHITE_PEN));
-	GdSetMode(MWMODE_XOR);
+	GdSetMode(MWROP_XOR);
 	if(!IsRectEmpty(&lastrc))
 		Rectangle(hdc, lastrc.left, lastrc.top, lastrc.right,
 			lastrc.bottom);
@@ -49,7 +49,7 @@ DrawXORFrame(HWND hwnd,int x, int y, BOOL bDrawCurrent)
 		Rectangle(hdc, lastrc.left, lastrc.top, lastrc.right,
 			lastrc.bottom);
 	ReleaseDC(NULL, hdc);
-	GdSetMode(MWMODE_COPY);
+	GdSetMode(MWROP_COPY);
 }
 
 /*
@@ -109,8 +109,7 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 					GetSysColor(COLOR_BTNFACE));
 				holdpen = SelectObject(hdc, hpen);
 				SelectObject(hdc, GetStockObject(NULL_BRUSH));
-				Rectangle(hdc, rc.left, rc.top, rc.right,
-					rc.bottom);
+				Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
 				InflateRect(&rc, -1, -1);
 
 				/* fill caption*/
@@ -128,8 +127,7 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				DeleteObject(SelectObject(hdc, holdpen));
 
 				/* draw caption text*/
-				if(GetWindowText(hwnd, szTitle,
-				   sizeof(szTitle))) {
+				if(GetWindowText(hwnd, szTitle, sizeof(szTitle))) {
 					SetBkMode(hdc, TRANSPARENT);
 					/* set background color even though
 					 * transparent in case GdArea is used
@@ -142,11 +140,9 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 						GetActiveWindow()==hwnd?
 						GetSysColor(COLOR_CAPTIONTEXT):
 						GetSysColor(COLOR_INACTIVECAPTIONTEXT));
-					SelectObject(hdc,
-					    GetStockObject(DEFAULT_GUI_FONT));
+					SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT));
 					GetWindowRect(hwnd, &rc);
-					TextOut(hdc, rc.left+4, rc.top+2,
-						szTitle, strlen(szTitle));
+					TextOut(hdc, rc.left+4, rc.top+2, szTitle, strlen(szTitle));
 				}
 
 				/* draw close box*/
@@ -170,8 +166,7 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				LineTo(hdc, rc.right-1, rc.top);
 			} else {
 				SelectObject(hdc, GetStockObject(NULL_BRUSH));
-				Rectangle(hdc, rc.left, rc.top, rc.right,
-					rc.bottom);
+				Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
 			}
 			ReleaseDC(hwnd, hdc);
 		}
@@ -222,7 +217,7 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			
 		/* Handle default actions for mouse down on window*/
 		if(wParam == HTCLOSE) {
-			SendMessage(hwnd, WM_CLOSE, 0, 0L);
+			SendMessage(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0L);
 			break;
 		}
 
@@ -270,9 +265,7 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 			if(mwERASEMOVE) {
 				GetWindowRect(hwnd, &rc);
-				MoveWindow(hwnd, rc.left+x, rc.top+y,
-					rc.right-rc.left, rc.bottom-rc.top,
-					TRUE);
+				MoveWindow(hwnd, rc.left+x, rc.top+y, rc.right-rc.left, rc.bottom-rc.top, TRUE);
 				startpt = curpt;
 			} else
 				DrawXORFrame(hwnd, x, y, TRUE);
@@ -319,22 +312,9 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		if(wParam != HTCAPTION)
 			break;
 
-		if((hwnd->style & WS_CAPTION) == WS_CAPTION) {
-			if(hwnd->style & WS_MAXIMIZE) {
-				rc = hwnd->restorerc;
-				MoveWindow(hwnd, rc.left, rc.top,
-					rc.right-rc.left, rc.bottom-rc.top,
-					TRUE);
-				hwnd->style &= ~WS_MAXIMIZE;
-			} else {
-				hwnd->restorerc = hwnd->winrect;
-				GetWindowRect(rootwp, &rc);
-				MoveWindow(hwnd, -mwSYSMETRICS_CXFRAME,
-					-mwSYSMETRICS_CYFRAME,
-					rc.right+2*mwSYSMETRICS_CXFRAME,
-					rc.bottom+2*mwSYSMETRICS_CYFRAME, TRUE);
-				hwnd->style |= WS_MAXIMIZE;
-			}
+		if((hwnd->style & WS_CAPTION) && (hwnd->style & WS_MAXIMIZEBOX)) {
+			SendMessage (hwnd, WM_SYSCOMMAND,
+				((hwnd->style & (WS_MINIMIZE | WS_MAXIMIZE))? SC_RESTORE: SC_MAXIMIZE), 0);
 		}
 		break;
 
@@ -357,8 +337,9 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		 * Note that setting text doesn't invalidate the window.
 		 */
 		LPTSTR newTit = (LPTSTR) malloc ( 1+strlen((LPCSTR)lParam) );
-		if( newTit == NULL ) return FALSE;
-		free ( hwnd->szTitle );
+		if (newTit == NULL)
+			return FALSE;
+		free (hwnd->szTitle);
 		hwnd->szTitle = newTit;
 		strcpy(hwnd->szTitle, (LPSTR)lParam);
 		return TRUE;
@@ -397,6 +378,26 @@ DefWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		EndPaint(hwnd, &ps);
 		break;
 
+	case WM_SYSCOMMAND:
+		switch (wParam & 0xfff0) {
+		case SC_MINIMIZE:
+			ShowWindow (hwnd, SW_MINIMIZE);
+	        break;
+		case SC_MAXIMIZE:
+			ShowWindow (hwnd, SW_MAXIMIZE);
+	        break;
+		case SC_RESTORE:
+			ShowWindow (hwnd, SW_RESTORE);
+	        break;
+		case SC_CLOSE:
+			SendMessage(hwnd, WM_CLOSE, 0, 0);
+			break;
+		}
+		break;
+
+	case WM_VKEYTOITEM:
+	case WM_CHARTOITEM:
+		return -1;
 	case WM_CTLCOLORMSGBOX:
 	case WM_CTLCOLOREDIT:
 	case WM_CTLCOLORLISTBOX:

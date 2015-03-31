@@ -1,0 +1,4 @@
+<widget class="GtkWindow" id="MainWindow">
+  <property name="visible">yes</property>
+  <!-- <signal name="destroy" handler="some_signal_handler_func" /> -->
+</widget>

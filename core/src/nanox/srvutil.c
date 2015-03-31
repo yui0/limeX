@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2002 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2002, 2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002 by Koninklijke Philips Electronics N.V.
  * Copyright (c) 1991 David I. Bell
  *
@@ -7,11 +7,9 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
-
 #ifndef __PACIFIC__
 #include <fcntl.h>
 #endif
-
 #include "serv.h"
 
 /*
@@ -77,7 +75,7 @@ GsTimerCB (void *arg)
  * as window will be mapped again momentarily (window move, resize, etc)
  */
 void
-GsWpUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap)
+GsUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap)
 {
 	GR_WINDOW	*pwp;		/* parent window */
 	GR_WINDOW	*sibwp;		/* sibling window */
@@ -100,7 +98,7 @@ GsWpUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap)
 	wp->realized = GR_FALSE;
 
 	for (childwp = wp->children; childwp; childwp = childwp->siblings)
-		GsWpUnrealizeWindow(childwp, temp_unmap);
+		GsUnrealizeWindow(childwp, temp_unmap);
 
 	if (!temp_unmap && wp == mousewp) {
 		GsCheckMouseWindow();
@@ -118,8 +116,7 @@ GsWpUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap)
 	}
 
 	/* Send unmap update event*/
-	GsDeliverUpdateEvent(wp, 
-		(temp_unmap? GR_UPDATE_UNMAPTEMP: GR_UPDATE_UNMAP), 0, 0, 0, 0);
+	GsDeliverUpdateEvent(wp, (temp_unmap? GR_UPDATE_UNMAPTEMP: GR_UPDATE_UNMAP), 0, 0, 0, 0);
 
 	/*
 	 * If this is an input-only window or the parent window is
@@ -134,8 +131,8 @@ GsWpUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap)
 	 */
 	bs = wp->bordersize;
 	pwp = wp->parent;
-	GsWpClearWindow(pwp, wp->x - pwp->x - bs, wp->y - pwp->y - bs,
-		wp->width + bs * 2, wp->height + bs * 2, GR_TRUE);
+	GsClearWindow(pwp, wp->x - pwp->x - bs, wp->y - pwp->y - bs,
+		wp->width + bs * 2, wp->height + bs * 2, 1);
 
 	/*
 	 * Finally clear and redraw all parts of our lower sibling
@@ -157,7 +154,7 @@ GsWpUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap)
  * unmap, so don't reset focus or generate mouse/focus events.
  */
 void
-GsWpRealizeWindow(GR_WINDOW *wp, GR_BOOL temp)
+GsRealizeWindow(GR_WINDOW *wp, GR_BOOL temp)
 {
 	if (wp == rootwp) {
 		GsError(GR_ERROR_ILLEGAL_ON_ROOT_WINDOW, wp->id);
@@ -220,14 +217,14 @@ wp->id, wp->mapped, wp->realized, wp->parent->realized);*/
 	 */
 	if (wp->output) {
 		GsDrawBorder(wp);
-		GsWpClearWindow(wp, 0, 0, wp->width, wp->height, GR_TRUE);
+		GsClearWindow(wp, 0, 0, wp->width, wp->height, 1);
 	}
 
 	/*
 	 * Do the same thing for the children.
 	 */
 	for (wp = wp->children; wp; wp = wp->siblings)
-		GsWpRealizeWindow(wp, temp);
+		GsRealizeWindow(wp, temp);
 }
 
 /*
@@ -235,7 +232,7 @@ wp->id, wp->mapped, wp->realized, wp->parent->realized);*/
  * This is a recursive routine.
  */
 void
-GsWpDestroyWindow(GR_WINDOW *wp)
+GsDestroyWindow(GR_WINDOW *wp)
 {
 	GR_WINDOW	*prevwp;	/* previous window pointer */
 	GR_EVENT_CLIENT	*ecp;		/* selections for window */
@@ -254,6 +251,7 @@ GsWpDestroyWindow(GR_WINDOW *wp)
 		selection_owner.wid = 0;
 		if(selection_owner.typelist)
 			free(selection_owner.typelist);
+		selection_owner.typelist = NULL;
 		GsDeliverSelectionChangedEvent(oldwid, 0);
 	}
 
@@ -261,7 +259,7 @@ GsWpDestroyWindow(GR_WINDOW *wp)
 	 * Unmap the window first.
 	 */
 	if (wp->realized)
-		GsWpUnrealizeWindow(wp, GR_FALSE);
+		GsUnrealizeWindow(wp, GR_FALSE);
 
 	/* send destroy update event*/
 	GsDeliverUpdateEvent(wp, GR_UPDATE_DESTROY, wp->x, wp->y,
@@ -271,7 +269,7 @@ GsWpDestroyWindow(GR_WINDOW *wp)
 	 * Destroy all children.
 	 */
 	while (wp->children)
-		GsWpDestroyWindow(wp->children);
+		GsDestroyWindow(wp->children);
 
 	/*
 	 * Free all client selection structures.
@@ -328,8 +326,15 @@ GsWpDestroyWindow(GR_WINDOW *wp)
 
 	GsCheckMouseWindow();
 
-	if(wp->title)
+	/*
+	 * Free title, pixmaps and clipregions associated with window.
+	 */
+	if (wp->title)
 		free(wp->title);
+	if (wp->bgpixmap)
+		GsDestroyPixmap(wp->bgpixmap);
+	if (wp->buffer)
+		GsDestroyPixmap(wp->buffer);
 	if (wp->clipregion)
 		GdDestroyRegion(wp->clipregion);
 
@@ -351,6 +356,39 @@ GsWpDestroyWindow(GR_WINDOW *wp)
 	free(wp);
 }
 
+/* Destroy a pixmap*/
+void
+GsDestroyPixmap(GR_PIXMAP *pp)
+{
+	GR_PIXMAP	*prevpp;
+	PSD			psd = pp->psd;
+
+	/* deallocate mem gc*/
+	psd->FreeMemGC(psd);
+
+	/*
+	 * Remove this pixmap from the complete list of pixmaps.
+	 */
+	prevpp = listpp;
+	if (prevpp == pp)
+		listpp = pp->next;
+	else {
+		while (prevpp->next != pp)
+			prevpp = prevpp->next;
+		prevpp->next = pp->next;
+	}
+
+	/*
+	 * Forget various information if they related to this
+	 * pixmap.  Then finally free the structure.
+	 */
+	if (pp == cachepp) {
+		cachepixmapid = 0;
+		cachepp = NULL;
+	}
+	free(pp);
+}
+
 /*
  * Draw a window's background pixmap.
  *
@@ -364,30 +402,32 @@ GsWpDestroyWindow(GR_WINDOW *wp)
  *     to not fill in the spaces with the background colour.
  */
 void
-GsWpDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x,
+GsDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x,
 	GR_COORD y, GR_SIZE width, GR_SIZE height)
 {
 	GR_SIZE destwidth, destheight, fillwidth, fillheight, pmwidth, pmheight;
 	GR_COORD fromx, fromy, destx, desty, pixmapx = 0, pixmapy = 0;
 
-	if(wp->bgpixmapflags & (GR_BACKGROUND_TOPLEFT|GR_BACKGROUND_STRETCH)) {
-		pixmapx = 0;
-		pixmapy = 0;
-	} else if(wp->bgpixmapflags & GR_BACKGROUND_CENTER) {
-		if(pm->width >= wp->width) pixmapx = 0;
-		else pixmapx = (wp->width - pm->width) / 2;
-		if(pm->height >= wp->height) pixmapy = 0;
-		else pixmapy = (wp->height - pm->height) / 2;
-	} else { 
-		/* GR_BACKGROUND_TILE (default)*/
-		GsWpTileBackgroundPixmap(wp, pm, x, y, width, height);
+	if(wp->bgpixmapflags & GR_BACKGROUND_STRETCH) {
+		/* must use whole window coords or stretch will have incorrect ratios*/
+		GdStretchBlit(wp->psd, wp->x, wp->y, wp->x + wp->width, wp->y + wp->height,
+			pm->psd, 0, 0, pm->width - 1, pm->height - 1, MWROP_SRC_OVER);
 		return;
 	}
 
-	if(pm->width > wp->width) pmwidth = wp->width;
-	else pmwidth = pm->width;
-	if(pm->height > wp->height) pmheight = wp->height;
-	else pmheight = pm->height;
+	if(wp->bgpixmapflags == GR_BACKGROUND_TILE) {
+		GsTileBackgroundPixmap(wp, pm, x, y, width, height);
+		return;
+	}
+
+	if(wp->bgpixmapflags & GR_BACKGROUND_CENTER) {
+		if (pm->width < wp->width) pixmapx = (wp->width - pm->width) / 2;
+		if (pm->height < wp->height) pixmapy = (wp->height - pm->height) / 2;
+	}
+
+	/* topleft & center calcs*/
+	pmwidth = MWMIN(pm->width, wp->width);
+	pmheight = MWMIN(pm->height, wp->height);
 
 	if(x > pixmapx) {
 		destx = x;
@@ -410,15 +450,14 @@ GsWpDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x,
 	}
 
 	if(destwidth > 0 && destheight > 0) {
-		if (wp->bgpixmapflags & GR_BACKGROUND_STRETCH) {
-			GdStretchBlit(wp->psd, destx + wp->x, desty + wp->y,
-				destwidth, destheight, pm->psd, fromx, fromy,
-				pm->width, pm->height, MWROP_COPY);
-		} else GdBlit(wp->psd, destx + wp->x, desty + wp->y, (width < destwidth)?width:destwidth,
-			(height < destheight)?height:destheight, pm->psd, fromx, fromy, MWROP_COPY);
+		destwidth = MWMIN(width, destwidth);
+		destheight = MWMIN(height, destheight);
+
+		GdBlit(wp->psd, wp->x + destx, wp->y + desty, destwidth, destheight,
+			pm->psd, fromx, fromy, MWROP_SRC_OVER);
 	}
 
-	if(wp->bgpixmapflags & (GR_BACKGROUND_TRANS|GR_BACKGROUND_STRETCH))
+	if(wp->bgpixmapflags & GR_BACKGROUND_TRANS)
 		return;
 
 	/* Fill in the gaps around the pixmap */
@@ -426,43 +465,50 @@ GsWpDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x,
 		fillwidth = pixmapx - x;
 		if(fillwidth > width) fillwidth = width;
 		fillheight = height;
-		GdFillRect(wp->psd, wp->x + x, wp->y + y, fillwidth,fillheight);
+
+		GdFillRect(wp->psd, wp->x + x, wp->y + y, fillwidth, fillheight);
 	}
-	if((x + width) > (pixmapx + pmwidth)) {
+	if(x + width > pixmapx + pmwidth) {
 		fillwidth = (x + width) - (pixmapx + pmwidth);
 		if(fillwidth > width) fillwidth = width;
 		fillheight = height;
-		if(x < (pixmapx + pmwidth)) destx = pixmapx + pmwidth + wp->x;
+
+		if(x < pixmapx + pmwidth)
+			destx = pixmapx + pmwidth + wp->x;
 		else destx = x + wp->x;
+
 		GdFillRect(wp->psd, destx, wp->y + y, fillwidth, fillheight);
 	}
 	if(y < pixmapy) {
 		fillheight = pixmapy - y;
 		if(fillheight > height) fillheight = height;
-		if(x < pixmapx) destx = pixmapx + wp->x;
+
+		if(x < pixmapx)
+			destx = pixmapx + wp->x;
 		else destx = x + wp->x;
-		if((x + width) > (pixmapx + pmwidth))
+		if(x + width > pixmapx + pmwidth)
 			fillwidth = pixmapx + pmwidth - destx;
 		else fillwidth = x + width - destx;
-		if((fillwidth > 0) && (fillheight > 0)) {
-			GdFillRect(wp->psd, destx, wp->y + y, fillwidth,
-							fillheight);
-		}
+
+		if(fillwidth > 0 && fillheight > 0)
+			GdFillRect(wp->psd, destx, wp->y + y, fillwidth, fillheight);
 	}
-	if((y + height) > (pixmapy + pmheight)) {
+	if(y + height > pixmapy + pmheight) {
 		fillheight = (y + height) - (pixmapy + pmheight);
 		if(fillheight > height) fillheight = height;
-		if(x < pixmapx) destx = pixmapx + wp->x;
+
+		if(x < pixmapx)
+			destx = pixmapx + wp->x;
 		else destx = x + wp->x;
-		if(y < (pixmapy + pmheight)) desty = pixmapy + pmheight + wp->y;
+		if(y < pixmapy + pmheight)
+			desty = pixmapy + pmheight + wp->y;
 		else desty = y + wp->y;
 	
-		if((x + width) > (pixmapx + pmwidth))
+		if(x + width > pixmapx + pmwidth)
 			fillwidth = pixmapx + pmwidth - destx;
 		else fillwidth = x + width - destx;
-		if((fillwidth > 0) && (fillheight > 0)) {
-			GdFillRect(wp->psd, destx, desty, fillwidth,fillheight);
-		}
+		if(fillwidth > 0 && fillheight > 0)
+			GdFillRect(wp->psd, destx, desty, fillwidth, fillheight);
 	}
 }
 
@@ -470,31 +516,40 @@ GsWpDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x,
  * Draw a tiled pixmap window background.
  */
 void 
-GsWpTileBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x, GR_COORD y,
+GsTileBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x, GR_COORD y,
 	GR_SIZE width, GR_SIZE height)
 {
 	GR_COORD tilex = 0, tiley = 0, fromx, fromy, cx, cy;
 	GR_SIZE destwidth, destheight, pmwidth, pmheight, cwidth, cheight;
 
-	if(pm->width > wp->width) pmwidth = wp->width;
+	if(pm->width > wp->width)
+		pmwidth = wp->width;
 	else pmwidth = pm->width;
-	if(pm->height > wp->height) pmheight = wp->height;
+	if(pm->height > wp->height)
+		pmheight = wp->height;
 	else pmheight = pm->height;
 
-	for(;tiley < wp->height; tiley += pmheight, tilex = 0) {
-		if(tiley > (y + height)) continue;
-		if(y > (tiley + pmheight)) continue;
-		if((tiley + pmheight) > wp->height)
+	for(; tiley < wp->height; tiley += pmheight, tilex = 0) {
+		if(tiley > y + height)
+			continue;
+		if(y > tiley + pmheight)
+			continue;
+
+		if(tiley + pmheight > wp->height)
 			destheight = wp->height - tiley;
 		else destheight = pmheight;
-		for(;tilex < wp->width; tilex += pmwidth) {
-			if(tilex > (x + width)) continue;
-			if(x > (tilex + pmwidth)) continue;
-			if((tilex + pmwidth) > wp->width)
+
+		for(; tilex < wp->width; tilex += pmwidth) {
+			if(tilex > x + width)
+				continue;
+			if(x > tilex + pmwidth)
+				continue;
+
+			if(tilex + pmwidth > wp->width)
 				destwidth = wp->width - tilex;
 			else destwidth = pmwidth;
 
-			if((tilex >= x) && ((tilex + destwidth)<=(x + width))) {
+			if(tilex >= x && (tilex + destwidth <= x + width)) {
 				fromx = 0;
 				cx = tilex + wp->x;
 				cwidth = destwidth;
@@ -511,7 +566,7 @@ GsWpTileBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x, GR_COORD y,
 				cx = wp->x + tilex + fromx;
 			}
 
-			if((tiley >= y)&&((tiley + destheight)<=(y + height))) {
+			if(tiley >= y && (tiley + destheight <= y + height)) {
 				fromy = 0;
 				cy = tiley + wp->y;
 				cheight = destheight;
@@ -528,26 +583,74 @@ GsWpTileBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm, GR_COORD x, GR_COORD y,
 				cy = wp->y + tiley + fromy;
 			}
 
-			if((cwidth > 0) && (cheight > 0)) {
-				GdBlit(wp->psd, cx, cy, cwidth, cheight,
-					pm->psd, fromx, fromy, MWROP_COPY);
-			}
+			if(cwidth > 0 && cheight > 0)
+				GdBlit(wp->psd, cx, cy, cwidth, cheight, pm->psd, fromx, fromy, MWROP_SRC_OVER);
 		}
+	}
+}
+
+/* init buffered windows by allocating pixmap buffer and clearing background*/
+void
+GsInitWindowBuffer(GR_WINDOW *wp, GR_SIZE width, GR_SIZE height)
+{
+	/* create same size RGBA pixmap for buffer*/
+	GR_WINDOW_ID id;
+	
+	/* check if buffer size changed*/
+	if (wp->buffer) {
+		if (wp->width == width && wp->height == height)
+			return;
+		GsDestroyPixmap(wp->buffer);
+	}
+
+	id = GsNewPixmap(width, height, MWIF_RGBA8888, NULL);
+	wp->buffer = GsFindPixmap(id);
+	if (!wp->buffer) {
+		wp->props &= ~(GR_WM_PROPS_BUFFERED | GR_WM_PROPS_DRAWING_DONE);
+		return;
+	}
+
+	/* mark buffer as not ready for display*/
+	wp->props &= ~GR_WM_PROPS_DRAWING_DONE;
+
+	/* clear buffer to background color*/
+	if (!(wp->props & GR_WM_PROPS_NOBACKGROUND)) {
+		GR_PIXMAP *pp = wp->buffer;
+
+		/* clip to pixmap boundaries*/
+#if DYNAMICREGIONS
+		GdSetClipRegion(pp->psd, GdAllocRectRegion(0, 0, pp->psd->xvirtres, pp->psd->yvirtres));
+#else
+		MWCLIPRECT	cliprect;
+		cliprect.x = 0;
+		cliprect.y = 0;
+		cliprect.width = pp->psd->xvirtres;
+		cliprect.height = pp->psd->yvirtres;
+		GdSetClipRects(pp->psd, 1, &cliprect);
+#endif
+		clipwp = NULL;			/* reset clip cache for next window draw*/
+		curgcp = NULL;			/* invalidate gc cache since we're changing color and mode*/
+		GdSetFillMode(GR_FILL_SOLID);
+		GdSetMode(GR_MODE_COPY);
+		GdSetForegroundColor(pp->psd, wp->background);
+
+		GdFillRect(pp->psd, 0, 0, pp->width, pp->height);
 	}
 }
 
 /*
  * Clear the specified area of a window and possibly make an exposure event.
  * This sets the area window to its background color or pixmap.  If the
- * exposeflag is nonzero, then this also creates an exposure event for the
- * window.
+ * exposeflag is 1, then this also creates an exposure event for the window.
+ * For buffered windows, mark drawing finalized and draw if
+ * exposeflag = 2.
  */
 void
-GsWpClearWindow(GR_WINDOW *wp, GR_COORD x, GR_COORD y, GR_SIZE width,
-	GR_SIZE  height, GR_BOOL exposeflag)
+GsClearWindow(GR_WINDOW *wp, GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE  height, int exposeflag)
 {
 	if (!wp->realized || !wp->output)
 		return;
+
 	/*
 	 * Reduce the arguments so that they actually lie within the window.
 	 */
@@ -568,33 +671,84 @@ GsWpClearWindow(GR_WINDOW *wp, GR_COORD x, GR_COORD y, GR_SIZE width,
 	 * Now see if the region is really in the window.  If not, then
 	 * do nothing.
 	 */
-	if ((x >= wp->width) || (y >= wp->height) || (width <= 0) ||
-		(height <= 0))
-			return;
+	if (x >= wp->width || y >= wp->height || width <= 0 || height <= 0)
+		return;
 
 	/*
-	 * Draw the background of the window.
-	 * Invalidate the current graphics context since
-	 * we are changing the foreground color and mode.
+	 * Buffered window drawing. First check if drawing finalized and
+	 * set flag.  Physical window background erase is never performed
+	 * with buffered windows, all drawing is postponed until the application
+	 * is finished by calling GrClearWindow(..., 2), ie. GrFlushWindow()
 	 */
-	GsSetClipWindow(wp, NULL, 0);
-	curgcp = NULL;
+	if (exposeflag == 2)
+		wp->props |= GR_WM_PROPS_DRAWING_DONE;
 
-	GdSetFillMode(GR_FILL_SOLID);
+	if (wp->props & GR_WM_PROPS_BUFFERED) {
 
-	if (!(wp->props & GR_WM_PROPS_NOBACKGROUND)) {
-		GdSetMode(GR_MODE_COPY);
-		GdSetForegroundColor(wp->psd, wp->background);
-		if (wp->bgpixmap) {
-			GsWpDrawBackgroundPixmap(wp, wp->bgpixmap, x, y,
-				width, height);
-		} else {
-			GdFillRect(wp->psd, wp->x + x, wp->y + y, width,height);
-		}
+		/* nothing to do until drawing finalized*/
+		if (!(wp->props & GR_WM_PROPS_DRAWING_DONE))
+			return;
+
+		/* prepare clipping to window boundaries*/
+		GsSetClipWindow(wp, NULL, 0);
+		clipwp = NULL;		/* reset clip cache since no user regions used*/
+
+#if DEBUG_EXPOSE
+curgcp = NULL;
+GdSetFillMode(GR_FILL_SOLID);
+GdSetMode(GR_MODE_COPY);
+GdSetForegroundColor(wp->psd, MWRGB(255,255,0)); /* yellow*/
+GdFillRect(wp->psd, wp->x+x, wp->y+y, width, height);
+usleep(500000);
+#endif
+
+		/* copy window pixmap buffer to window*/
+		GdBlit(wp->psd, wp->x + x, wp->y + y, width, height, wp->buffer->psd, x, y, MWROP_COPY);
+		return;				/* don't deliver exposure events*/
 	}
 
 	/*
-	 * Now do the exposure if required.
+	 * Unbuffered window: erase background unless nobackground flag set
+	 */
+	if (!(wp->props & GR_WM_PROPS_NOBACKGROUND)) {
+		/* perhaps find a better way of determining whether pixmap needs src_over*/
+		int hasalpha = wp->bgpixmap && (wp->bgpixmap->psd->data_format & MWIF_HASALPHA);
+
+		/*
+	 	 * Draw the background of the window.
+	 	 * Invalidate the current graphics context since
+	 	 * we are changing the foreground color and mode.
+	 	 */
+		GsSetClipWindow(wp, NULL, 0);
+		clipwp = NULL;		/* reset clip cache since no user regions used*/
+
+#if DEBUG_EXPOSE
+GdSetFillMode(GR_FILL_SOLID);
+GdSetMode(GR_MODE_COPY);
+GdSetForegroundColor(wp->psd, MWRGB(255,255,0)); /* yellow*/
+GdFillRect(wp->psd, wp->x+x, wp->y+y, width, height);
+usleep(500000);
+#endif
+
+		curgcp = NULL;
+		GdSetFillMode(GR_FILL_SOLID);
+		GdSetMode(GR_MODE_COPY);
+		GdSetForegroundColor(wp->psd, wp->background);
+
+		/* if background pixmap w/alpha channel and stretchblit, fill entire (clipped) window*/
+		if (hasalpha && wp->bgpixmapflags == GR_BACKGROUND_STRETCH)
+				GdFillRect(wp->psd, wp->x, wp->y, wp->width, wp->height);
+		else /* if no pixmap background clear exposed area*/
+			if (!wp->bgpixmap || hasalpha)	/* FIXME will flash with pixmap, should check src_over*/
+				if (!(wp->bgpixmapflags & GR_BACKGROUND_TRANS))
+					GdFillRect(wp->psd, wp->x + x, wp->y + y, width, height);
+
+		if (wp->bgpixmap)
+			GsDrawBackgroundPixmap(wp, wp->bgpixmap, x, y, width, height);
+	}
+
+	/*
+	 * Do the exposure if required for unbuffered windows.
 	 */
 	if (exposeflag)
 		GsDeliverExposureEvent(wp, x, y, width, height);
@@ -627,7 +781,7 @@ GsExposeArea(GR_WINDOW *wp, GR_COORD rootx, GR_COORD rooty, GR_SIZE width,
 	 * The area does overlap the window.  See if the area overlaps
 	 * the border, and if so, then redraw it.
 	 */
-	if ((rootx < wp->x) || (rooty < wp->y) ||
+	if (rootx < wp->x || rooty < wp->y ||
 		(rootx + width > wp->x + wp->width) ||
 		(rooty + height > wp->y + wp->height))
 			GsDrawBorder(wp);
@@ -636,8 +790,7 @@ GsExposeArea(GR_WINDOW *wp, GR_COORD rootx, GR_COORD rooty, GR_SIZE width,
 	 * Now clear the window itself in the specified area,
 	 * which might cause an exposure event.
 	 */
-	GsWpClearWindow(wp, rootx - wp->x, rooty - wp->y,
-		width, height, GR_TRUE);
+	GsClearWindow(wp, rootx - wp->x, rooty - wp->y, width, height, 1);
 
 	/*
 	 * Now do the same for all the children.
@@ -747,8 +900,7 @@ GsCheckOverlap(GR_WINDOW *topwp, GR_WINDOW *botwp)
 	maxx2 = botwp->x + botwp->width + bs - 1;
 	maxy2 = botwp->y + botwp->height + bs - 1;
 
-	if ((minx1 > maxx2) || (minx2 > maxx1) || (miny1 > maxy2)
-		|| (miny2 > maxy1))
+	if (minx1 > maxx2 || minx2 > maxx1 || miny1 > maxy2 || miny2 > maxy1)
 			return GR_FALSE;
 
 	return GR_TRUE;
@@ -927,12 +1079,10 @@ GR_DRAW_TYPE
 GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid, GR_DRAWABLE **retdp)
 {
 	GR_WINDOW	*wp;		/* found window */
-        GR_PIXMAP       *pp;            /* found pixmap */
+	GR_PIXMAP	*pp;		/* found pixmap */
 	GR_GC		*gcp;		/* found graphics context */
-	GR_FONT		*fontp;
 	GR_REGION	*regionp;	/* user clipping region */
-	MWCLIPREGION	*reg;
-	PMWFONT		pf;
+	MWCLIPREGION*reg;
 
 	*retdp = NULL;
 
@@ -952,27 +1102,36 @@ GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid, GR_DRAWABLE **retdp)
 	/*
 	 * Look for window or pixmap id
 	 */
-        pp = NULL;
+	pp = NULL;
 	wp = GsFindWindow(id);
 	if (wp == NULL) {
-	        pp = GsFindPixmap(id);
-	        if (pp == NULL)
-		          return GR_DRAW_TYPE_NONE;
-	   
+		pp = GsFindPixmap(id);
+		if (pp == NULL)
+				return GR_DRAW_TYPE_NONE;
+havepixmap:
 #if DYNAMICREGIONS
-		reg = GdAllocRectRegion(0, 0, pp->psd->xvirtres,
-			pp->psd->yvirtres);
+		reg = GdAllocRectRegion(0, 0, pp->psd->xvirtres, pp->psd->yvirtres);
 		/* intersect with user region if any*/
 		if (gcp->regionid) {
 			regionp = GsFindRegion(gcp->regionid);
-			if (regionp)
-				GdIntersectRegion(reg, reg, regionp->rgn);
+			if (regionp) {
+				/* handle pixmap offsets*/
+				if (gcp->xoff || gcp->yoff) {
+					MWCLIPREGION *local = GdAllocRegion();
+
+					GdCopyRegion(local, regionp->rgn);
+					GdOffsetRegion(local, gcp->xoff, gcp->yoff);
+					GdIntersectRegion(reg, reg, local);
+					GdDestroyRegion(local);
+				} else
+					GdIntersectRegion(reg, reg, regionp->rgn);
+			}
 		}
 		GdSetClipRegion(pp->psd, reg);
 #else
 		{
-		MWCLIPRECT	cliprect;
-		/* FIXME: setup pixmap clipping, different from windows*/
+			MWCLIPRECT	cliprect;
+			/* FIXME: setup pixmap clipping, different from windows*/
 	        cliprect.x = 0;
 	        cliprect.y = 0;
 	        cliprect.width = pp->psd->xvirtres;
@@ -983,42 +1142,40 @@ GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid, GR_DRAWABLE **retdp)
 		/* reset clip cache for next window draw*/
 		clipwp = NULL;
 	} else {
-   
-	        if (!wp->output) {
-		          GsError(GR_ERROR_INPUT_ONLY_WINDOW, id);
-		          return GR_DRAW_TYPE_NONE;
+		if (!wp->output) {
+				GsError(GR_ERROR_INPUT_ONLY_WINDOW, id);
+				return GR_DRAW_TYPE_NONE;
 		}
 
-	        if (!wp->realized)
-		          return GR_DRAW_TYPE_NONE;
-	   
-	        /*
+		/* check if buffered window*/
+		if (wp->props & GR_WM_PROPS_BUFFERED) {
+			pp = wp->buffer;
+			wp = NULL;
+			goto havepixmap;		/* draw into pixmap buffer*/
+		}
+
+		if (!wp->realized)
+				return GR_DRAW_TYPE_NONE;
+
+		/*
 		 * If the window is not the currently clipped one,
 		 * then make it the current one and define its clip rectangles.
 		 */
-	        if (wp != clipwp || gcp->changed) {
+		if (wp != clipwp || gcp->changed) {
 			/* find user region for intersect*/
-			if (gcp->regionid)
-				regionp = GsFindRegion(gcp->regionid);
-			else regionp = NULL;
+			regionp = gcp->regionid? GsFindRegion(gcp->regionid): NULL;
 
-			/*
-			 * Special handling if user region is not at offset 0,0
-			 */
+		 	/* Special handling if user region is not at offset 0,0*/
 			if (regionp && (gcp->xoff || gcp->yoff)) {
 				MWCLIPREGION *local = GdAllocRegion();
 
 				GdCopyRegion(local, regionp->rgn);
 				GdOffsetRegion(local, gcp->xoff, gcp->yoff);
 
-				GsSetClipWindow(wp, local,  
-					gcp->mode & ~GR_MODE_DRAWMASK);
-
+				GsSetClipWindow(wp, local, gcp->mode & ~GR_MODE_DRAWMASK);
 				GdDestroyRegion(local);
-			  } else {
-				GsSetClipWindow(wp, regionp? regionp->rgn: NULL,
-					gcp->mode & ~GR_MODE_DRAWMASK);
-			  }
+			} else
+				GsSetClipWindow(wp, regionp? regionp->rgn: NULL, gcp->mode & ~GR_MODE_DRAWMASK);
 		}
 	}
 
@@ -1027,9 +1184,9 @@ GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid, GR_DRAWABLE **retdp)
 	 * device driver about it.
 	 */
 	if (gcp->changed) {
-		PSD		psd = (wp ? wp->psd : pp->psd);
-		unsigned long	mask;
-		int		count;
+		PSD			psd = (wp ? wp->psd : pp->psd);
+		uint32_t	mask;
+		int			count;
 
 		if (gcp->linestyle == GR_LINE_SOLID) {
 			mask = 0;
@@ -1059,19 +1216,13 @@ GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid, GR_DRAWABLE **retdp)
 		switch(gcp->fillmode) {
 		case GR_FILL_STIPPLE:
 		case GR_FILL_OPAQUE_STIPPLE:
-			GdSetStippleBitmap(gcp->stipple.bitmap,
-				gcp->stipple.width, gcp->stipple.height);
+			GdSetStippleBitmap(gcp->stipple.bitmap, gcp->stipple.width, gcp->stipple.height);
 			break;
-
 		case GR_FILL_TILE:
-			GdSetTilePixmap(gcp->tile.psd,
-				gcp->tile.width, gcp->tile.height);
+			GdSetTilePixmap(gcp->tile.psd, gcp->tile.width, gcp->tile.height);
 			break;
 		}
 
-		fontp = GsFindFont(gcp->fontid);
-		pf = fontp? fontp->pfont: stdfont;
-		GdSetFont(pf);
 		gcp->changed = GR_FALSE;
 	}
 
@@ -1126,9 +1277,9 @@ GsFindVisibleWindow(GR_COORD x, GR_COORD y)
 	retwp = wp;
 	while (wp) {
 		if (wp->realized &&
-		   ((!wp->clipregion && (wp->x <= x) && (wp->y <= y) &&
-		       (wp->x + wp->width > x) && (wp->y + wp->height > y)) ||
-		   (wp->clipregion && GdPtInRegion(wp->clipregion, x - wp->x, y - wp->y)))) {
+			((!wp->clipregion && (wp->x <= x) && (wp->y <= y) &&
+		     (wp->x + wp->width > x) && (wp->y + wp->height > y)) ||
+			 (wp->clipregion && GdPtInRegion(wp->clipregion, x - wp->x, y - wp->y)))) {
 				retwp = wp;
 				wp = wp->children;
 				continue;
@@ -1146,7 +1297,7 @@ void
 GsCheckCursor(void)
 {
 	GR_WINDOW	*wp;		/* window cursor is in */
-	GR_CURSOR	*cp;		/* cursor definition */
+	GR_CURSOR	*cp = NULL;	/* cursor definition */
 
 	/*
 	 * Get the cursor at its current position, and if it is not the
@@ -1157,7 +1308,16 @@ GsCheckCursor(void)
 	if (wp == NULL)
 		wp = mousewp;
 
-	cp = GsFindCursor(wp->cursorid);
+	/* Inherit cursur from parent window(s) if possible*/
+	while (wp) {
+		if (wp->cursorid) {
+			cp = GsFindCursor(wp->cursorid);
+			if (cp)
+				break;
+		}
+		wp = wp->parent;
+	}
+
 	if (!cp)
 		cp = stdcursor;
 	if (cp == curcursor)
@@ -1180,6 +1340,22 @@ GsCheckCursor(void)
 void
 GsCheckMouseWindow(void)
 {
+#if 1
+	GR_WINDOW *oldwp, *newwp;
+
+	oldwp = grabbuttonwp;
+	if (!oldwp)
+		oldwp = mousewp;
+
+	newwp = GsFindVisibleWindow(cursorx, cursory);
+	if (oldwp != newwp) {
+		GsDeliverGeneralEvent(oldwp, GR_EVENT_TYPE_MOUSE_EXIT, NULL);
+		GsDeliverGeneralEvent(newwp, GR_EVENT_TYPE_MOUSE_ENTER, NULL);
+	}
+
+	mousewp = newwp;
+#endif
+#if 0
 	GR_WINDOW	*wp;		/* newest window for mouse */
 
 	wp = grabbuttonwp;
@@ -1193,6 +1369,7 @@ GsCheckMouseWindow(void)
 	mousewp = wp;
 
 	GsDeliverGeneralEvent(wp, GR_EVENT_TYPE_MOUSE_ENTER, NULL);
+#endif
 }
 
 /*
@@ -1220,12 +1397,12 @@ GsCheckFocusWindow(void)
 			continue;
 		for (ecp = wp->eventclients; ecp; ecp = ecp->next) {
 			if (ecp->eventmask & GR_EVENT_MASK_KEY_DOWN) {
-				GsWpSetFocus(wp);
+				GsSetFocus(wp);
 				return;
 			}
 		}
 		if ((wp == rootwp) || (wp->nopropmask & GR_EVENT_MASK_KEY_DOWN)) {
-			GsWpSetFocus(rootwp);
+			GsSetFocus(rootwp);
 			return;
 		}
 	}
@@ -1233,7 +1410,7 @@ GsCheckFocusWindow(void)
 
 /* Send an update activate event to top level window of passed window*/
 void
-GsWpNotifyActivate(GR_WINDOW *wp)
+GsNotifyActivate(GR_WINDOW *wp)
 {
 	GR_WINDOW	*pwp;
 
@@ -1249,7 +1426,7 @@ GsWpNotifyActivate(GR_WINDOW *wp)
  * This generates focus out and focus in events as necessary.
  */
 void
-GsWpSetFocus(GR_WINDOW *wp)
+GsSetFocus(GR_WINDOW *wp)
 {
 	GR_WINDOW	*oldfocus;
 
@@ -1257,13 +1434,13 @@ GsWpSetFocus(GR_WINDOW *wp)
 		return;
 
 	GsDeliverGeneralEvent(focuswp, GR_EVENT_TYPE_FOCUS_OUT, wp);
-	GsWpNotifyActivate(focuswp);
+	GsNotifyActivate(focuswp);
 
 	oldfocus = focuswp;
 	focuswp = wp;
 
 	GsDeliverGeneralEvent(wp, GR_EVENT_TYPE_FOCUS_IN, oldfocus);
-	GsWpNotifyActivate(focuswp);
+	GsNotifyActivate(focuswp);
 }
 
 /*

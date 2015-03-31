@@ -42,6 +42,7 @@ typedef struct tagWNDCLASSA {
 } WNDCLASS, *PWNDCLASS, NEAR *NPWNDCLASS, FAR *LPWNDCLASS;
 
 ATOM WINAPI	RegisterClass(CONST WNDCLASS *lpWndClass);
+BOOL WINAPI UnregisterClass(LPCSTR lpClassName, HINSTANCE hInstance);
 
 /*
  * Message structure
@@ -76,6 +77,7 @@ typedef struct tagMSG {
 #define WM_SETFOCUS                     0x0007
 #define WM_KILLFOCUS                    0x0008
 #define WM_ENABLE                       0x000A
+#define WM_SETREDRAW					0x000B
 #define WM_SETTEXT                      0x000C
 #define WM_GETTEXT                      0x000D
 #define WM_GETTEXTLENGTH                0x000E
@@ -88,9 +90,14 @@ typedef struct tagMSG {
 #define WM_NEXTDLGCTL                   0x0028
 #define WM_DRAWITEM                     0x002B
 #define WM_MEASUREITEM                  0x002C
+#define WM_DELETEITEM 					0x002D
+#define WM_VKEYTOITEM					0x002E
+#define WM_CHARTOITEM					0x002F
 #define WM_SETFONT          		0x0030
 #define WM_GETFONT      		0x0031
+#define WM_COMPAREITEM					0x0039
 #define WM_WINDOWPOSCHANGED             0x0047
+#define WM_NOTIFY                       0x004E
 #define WM_NCCALCSIZE                   0x0083
 #define WM_NCHITTEST                    0x0084
 #define WM_NCPAINT                      0x0085
@@ -114,6 +121,7 @@ typedef struct tagMSG {
 #define WM_KEYLAST                      0x0108
 #define WM_INITDIALOG	                0x0110
 #define WM_COMMAND                      0x0111
+#define WM_SYSCOMMAND                   0x0112
 #define WM_TIMER                        0x0113
 #define WM_HSCROLL                      0x0114
 #define WM_VSCROLL                      0x0115
@@ -141,6 +149,7 @@ typedef struct tagMSG {
 #define WM_MBUTTONDBLCLK                0x0209
 #define WM_MOUSEWHEEL                   0x020A
 #define WM_MOUSELAST                    0x020A
+#define WM_HOTKEY                       0x0312
 
 #define WM_CARET_CREATE    		0x03E0 /* Microwindows only*/
 #define WM_CARET_DESTROY   		0x03E1 /* Microwindows only*/
@@ -149,6 +158,26 @@ typedef struct tagMSG {
 #define WM_FDOUTPUT                     0x03F1 /* Microwindows only*/
 #define WM_FDEXCEPT                     0x03F2 /* Microwindows only*/
 #define WM_USER                         0x0400
+
+/*
+ * System Menu Command Values
+ */
+#define SC_SIZE         0xF000
+#define SC_MOVE         0xF010
+#define SC_MINIMIZE     0xF020
+#define SC_MAXIMIZE     0xF030
+#define SC_NEXTWINDOW   0xF040
+#define SC_PREVWINDOW   0xF050
+#define SC_CLOSE        0xF060
+#define SC_VSCROLL      0xF070
+#define SC_HSCROLL      0xF080
+#define SC_MOUSEMENU    0xF090
+#define SC_KEYMENU      0xF100
+#define SC_ARRANGE      0xF110
+#define SC_RESTORE      0xF120
+#define SC_TASKLIST     0xF130
+#define SC_SCREENSAVE   0xF140
+#define SC_HOTKEY       0xF150
 
 /* WM_ACTIVATE state values*/
 #define WA_INACTIVE     0
@@ -213,6 +242,11 @@ BOOL WINAPI 	GetMessage(LPMSG lpMsg,HWND hwnd,UINT wMsgFilterMin,
 BOOL WINAPI 	TranslateMessage(CONST MSG *lpMsg);
 LONG WINAPI	DispatchMessage(CONST MSG *lpMsg);
 
+/* Hotkey stuff */
+BOOL RegisterHotKey(HWND hWnd, int id, UINT fsModifiers, UINT vk);
+BOOL UnregisterHotKey(HWND hWnd, int id);
+BOOL MwDeliverHotkey (WPARAM VK_Code, BOOL pressed);
+
 /* note: the following struct is in reverse order from the
  * microsoft version since WINAPI is cdecl in this implementation
  */
@@ -230,6 +264,38 @@ typedef struct tagCREATESTRUCT {
     HINSTANCE   hInstance;
     LPVOID      lpCreateParams;
 } CREATESTRUCT, *LPCREATESTRUCT;
+
+typedef struct tagCOMPAREITEMSTRUCT {
+	UINT	CtlType;
+	UINT	CtlID;
+	HWND	hwndItem;
+	UINT	itemID1;
+	DWORD	itemData1;
+	UINT	itemID2;
+	DWORD	itemData2;
+	DWORD	dwLocaleId;
+} COMPAREITEMSTRUCT,*LPCOMPAREITEMSTRUCT;
+typedef struct tagDELETEITEMSTRUCT {
+	UINT CtlType;
+	UINT CtlID;
+	UINT itemID;
+	HWND hwndItem;
+	UINT itemData;
+} DELETEITEMSTRUCT,*PDELETEITEMSTRUCT,*LPDELETEITEMSTRUCT;
+typedef struct tagNMHDR
+{
+    HWND  hwndFrom;
+    UINT  idFrom;
+    UINT  code;         // NM_ code
+}   NMHDR;
+typedef NMHDR FAR * LPNMHDR;
+
+/* Button codes for MW_MOUSEMOVED:
+ * Please note that they differ from normal Windows codes
+ */
+#define MK_LBUTTON	MWBUTTON_L
+#define MK_RBUTTON	MWBUTTON_R
+#define MK_MBUTTON 	MWBUTTON_M
 
 /*
  * Window Styles
@@ -255,7 +321,6 @@ typedef struct tagCREATESTRUCT {
 
 #define WS_MINIMIZEBOX      0x00020000L
 #define WS_MAXIMIZEBOX      0x00010000L
-
 
 #define WS_TILED            WS_OVERLAPPED
 #define WS_ICONIC           WS_MINIMIZE
@@ -419,6 +484,10 @@ LONG WINAPI	GetWindowLong(HWND hwnd, int nIndex);
 LONG WINAPI	SetWindowLong(HWND hwnd, int nIndex, LONG lNewLong);
 WORD WINAPI	GetWindowWord(HWND hwnd, int nIndex);
 WORD WINAPI	SetWindowWord(HWND hwnd, int nIndex, WORD wNewWord);
+BOOL WINAPI SetProp(HWND hWnd, LPCSTR lpString, HANDLE hData);
+HANDLE WINAPI GetProp(HWND hWnd, LPCSTR lpString);
+HANDLE WINAPI RemoveProp(HWND hWnd, LPCSTR lpString);
+
 #define GetDlgCtrlID(hwnd)	((int)(hwnd)->id)
 DWORD WINAPI	GetClassLong(HWND hwnd, int nIndex);
 int WINAPI	GetWindowTextLength(HWND hwnd);
@@ -464,10 +533,34 @@ typedef struct tagWINDOWPOS {
 BOOL WINAPI	SetWindowPos(HWND hwnd, HWND hwndInsertAfter, int x, int y,
 			int cx, int cy, UINT fuFlags);
 
+typedef struct tagWINDOWPLACEMENT {
+    UINT  length;
+    UINT  flags;
+    UINT  showCmd;
+    POINT ptMinPosition;
+    POINT ptMaxPosition;
+    RECT  rcNormalPosition;
+} WINDOWPLACEMENT;
+typedef WINDOWPLACEMENT *PWINDOWPLACEMENT, *LPWINDOWPLACEMENT;
+BOOL SetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl);
+BOOL GetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl);
+
 BOOL WINAPI	GetCursorPos(LPPOINT lpPoint);
 HWND WINAPI	GetCapture(VOID);
 HWND WINAPI	SetCapture(HWND hwnd);
 BOOL WINAPI	ReleaseCapture(VOID);
+
+#define GW_HWNDNEXT 2
+#define GW_HWNDPREV 3
+#define GW_CHILD 5
+#define GW_HWNDFIRST 0
+#define GW_HWNDLAST 1
+#define GW_OWNER 4
+
+HWND GetWindow(HWND hWnd,  UINT uCmd);
+HWND GetMenu (HWND hWnd);
+HWND GetForegroundWindow(VOID);
+HWND WindowFromPoint(POINT pt);
 
 /*
  * WM_NCCALCSIZE parameter structure
@@ -507,6 +600,11 @@ void		MwHandleTimers(void);
 
 int WINAPI	GetSystemMetrics(int nIndex);
 
+#define SPI_SETWORKAREA            47
+#define SPI_GETWORKAREA            48
+
+BOOL WINAPI SystemParametersInfo (UINT uiAction,  UINT uiParam, PVOID pvParam, UINT fWinIni);
+
 HWND WINAPI	GetDlgItem(HWND hDlg, int nIDDlgItem);
 
 /* ************************** Caret support **********************************/
@@ -522,6 +620,104 @@ BOOL WINAPI SetCaretBlinkTime(UINT uMSeconds);
 
 int WINAPI GetClassName(HWND hWnd, LPTSTR lpClassName, int nMaxCount);
 HWND WINAPI GetNextDlgGroupItem(HWND hDlg, HWND hCtl, BOOL bPrevious);
+
+/*
+ * Dialog Box Command IDs
+ */
+#define IDOK                1
+#define IDCANCEL            2
+#define IDABORT             3
+#define IDRETRY             4
+#define IDIGNORE            5
+#define IDYES               6
+#define IDNO                7
+#define IDCLOSE         	8
+#define IDHELP          	9
+#define IDTRYAGAIN         10
+#define IDCONTINUE         11
+
+/*
+ * MessageBox() Flags
+ */
+#define MB_OK                       0x00000000L
+#define MB_OKCANCEL                 0x00000001L
+#define MB_ABORTRETRYIGNORE         0x00000002L
+#define MB_YESNOCANCEL              0x00000003L
+#define MB_YESNO                    0x00000004L
+#define MB_RETRYCANCEL              0x00000005L
+#define MB_CANCELTRYCONTINUE 		0x00000006L
+
+#define MB_ICONHAND                 0x00000010L
+#define MB_ICONQUESTION             0x00000020L
+#define MB_ICONEXCLAMATION          0x00000030L
+#define MB_ICONASTERISK             0x00000040L
+
+#define MB_USERICON                 0x00000080L
+#define MB_ICONWARNING              MB_ICONEXCLAMATION
+#define MB_ICONERROR                MB_ICONHAND
+
+#define MB_ICONINFORMATION          MB_ICONASTERISK
+#define MB_ICONSTOP                 MB_ICONHAND
+
+#define MB_DEFBUTTON1               0x00000000L
+#define MB_DEFBUTTON2               0x00000100L
+#define MB_DEFBUTTON3               0x00000200L
+#define MB_DEFBUTTON4               0x00000300L
+
+#define MB_APPLMODAL                0x00000000L
+#define MB_SYSTEMMODAL              0x00001000L
+#define MB_TASKMODAL                0x00002000L
+#define MB_HELP                     0x00004000L // Help Button
+
+#define MB_NOFOCUS                  0x00008000L
+#define MB_SETFOREGROUND            0x00010000L
+#define MB_DEFAULT_DESKTOP_ONLY     0x00020000L
+
+#define MB_TOPMOST                  0x00040000L
+#define MB_RIGHT                    0x00080000L
+#define MB_RTLREADING               0x00100000L
+
+#define MB_TYPEMASK                 0x0000000FL
+#define MB_ICONMASK                 0x000000F0L
+#define MB_DEFMASK                  0x00000F00L
+#define MB_MODEMASK                 0x00003000L
+#define MB_MISCMASK                 0x0000C000L
+
+/* help structure not implemented, only used in MSGBOXCALLBACK below*/
+#define HELPINFO_WINDOW    0x0001
+#define HELPINFO_MENUITEM  0x0002
+typedef struct tagHELPINFO {    /* Structure pointed to by lParam of WM_HELP */
+    UINT    cbSize;             /* Size in bytes of this struct  */
+    int     iContextType;       /* Either HELPINFO_WINDOW or HELPINFO_MENUITEM */
+    int     iCtrlId;            /* Control Id or a Menu item Id. */
+    HANDLE  hItemHandle;        /* hWnd of control or hMenu.     */
+    DWORD   dwContextId;        /* Context Id associated with this item */
+    POINT   MousePos;           /* Mouse Position in screen co-ordinates */
+}  HELPINFO, FAR *LPHELPINFO;
+
+typedef void (CALLBACK *MSGBOXCALLBACK)(LPHELPINFO lpHelpInfo);
+
+typedef struct tagMSGBOXPARAMSA {
+    UINT        cbSize;
+    HWND        hwndOwner;
+    HINSTANCE   hInstance;
+    LPCSTR      lpszText;
+    LPCSTR      lpszCaption;
+    DWORD       dwStyle;
+    LPCSTR      lpszIcon;
+    DWORD       dwContextHelpId;
+    MSGBOXCALLBACK      lpfnMsgBoxCallback;
+    DWORD   dwLanguageId;
+} MSGBOXPARAMSA, *PMSGBOXPARAMSA, *LPMSGBOXPARAMSA;
+
+typedef MSGBOXPARAMSA MSGBOXPARAMS;
+
+int WINAPI MessageBoxTimeout(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption,
+		UINT uType, WORD wLanguageId, DWORD dwTime);
+int MessageBoxEx(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType,
+  WORD wLanguageId);
+int MessageBox(HWND hWnd, LPCTSTR lpText, LPCTSTR lpCaption, UINT uType);
+int MessageBoxIndirect( const MSGBOXPARAMS *lpMsgBoxParams);
 
 /*
  *  Windows enumeration functions

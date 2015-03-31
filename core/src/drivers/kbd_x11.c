@@ -21,7 +21,7 @@ static void X11_Close(void);
 static void X11_GetModifierInfo(MWKEYMOD *modifiers, MWKEYMOD *curmodifiers);
 static int  X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode);
 
-static int init_modstate();
+static int init_modstate(void);
 
 static MWKEYMOD key_modstate;
 extern int escape_quits;
@@ -31,7 +31,7 @@ extern int          x11_scr;
 extern Visual*      x11_vis;
 extern Window       x11_win;
 extern GC           x11_gc;
-extern int          x11_setup_display();
+int          x11_setup_display(void);
 
 #define X_SCR_MASK 0x80
 #define X_CAP_MASK 0x2
@@ -55,15 +55,15 @@ static int
 X11_Open(KBDDEVICE *pkd)
 {
     if (x11_setup_display() < 0) {
-	fprintf(stderr, "nano-X: Can't connect to X11 server\n");
-	return -2;	/* don't display another errmsg*/
+		EPRINTF("nano-X: Can't connect to X11 server\n");
+		return -2;	/* don't display another errmsg*/
     }
 
     if(init_modstate() < 0)
     	return -1;
-
+    
     /* return the x11 file descriptor for select */
-    return ConnectionNumber(x11_dpy);
+    return ConnectionNumber(x11_dpy);  
 }
 
 /*
@@ -109,12 +109,14 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
     /* check if we have a KeyPressedEvent */
     if (XCheckMaskEvent(x11_dpy, KeyPressMask|KeyReleaseMask, &ev)) {
 	KeySym sym = XKeycodeToKeysym(x11_dpy, ev.xkey.keycode, 0);
-	if (sym == NoSymbol) return -1;
+
+	if (sym == NoSymbol)
+	    return -1;
 
 	/* calculate kbd modifiers*/
-	key_modstate &= (MWKMOD_NUM|MWKMOD_CAPS|MWKMOD_SCR);
+	key_modstate &= (MWKMOD_NUM|MWKMOD_CAPS|MWKMOD_SCR); 
 	if (ev.xkey.state & ControlMask)
-		key_modstate |= MWKMOD_CTRL;
+		key_modstate |= MWKMOD_CTRL; 
 	if (ev.xkey.state & ShiftMask)
 		key_modstate |= MWKMOD_SHIFT;
 	if (ev.xkey.state & Mod1Mask)
@@ -134,7 +136,7 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
 		if (grabbed) {
 		    XUngrabPointer(x11_dpy, CurrentTime);
 		    XUngrabKeyboard(x11_dpy, CurrentTime);
-		    XChangePointerControl(x11_dpy, True, False, x11_accel_num,
+		    XChangePointerControl(x11_dpy, True, False, x11_accel_num, 
 			  x11_accel_den, 0);
 		    grabbed = 0;
 		}
@@ -154,7 +156,7 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
 		}
 		return 0;
 	    } else if (grabbed)
-		XChangePointerControl(x11_dpy, True, False, x11_accel_num,
+		XChangePointerControl(x11_dpy, True, False, x11_accel_num, 
 		      x11_accel_den, 0);
 	    *kbuf = mwkey;
 	    *modifiers = key_modstate;
@@ -194,6 +196,7 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
 		    break;
 	    case XK_Pause:
 	    case XK_Break:
+		case XK_F15:
 		    mwkey = MWKEY_QUIT;
 		    break;
 	    case XK_Print:
@@ -351,14 +354,17 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
 		    case XK_Return:
 			break;
 		    default:
-			if (sym & 0xFF00)
+		    	if (sym & 0xFF00)
 			    fprintf(stderr, "Unhandled X11 keysym: %04x\n", (int)sym);
 		    }
+
 		    XLookupString(&ev.xkey, &ignored_char, 1, &sym, NULL );
+
 		    if (key_modstate & MWKMOD_CTRL)
-				mwkey = sym & 0x1f;	/* Control code */
+				mwkey = sym & 0x1f;	/* Control code */ 
 			else
 				mwkey = sym & 0xff;	/* ASCII*/
+
 		    break;
 
 	    }
@@ -403,7 +409,7 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
 	    *scancode = ev.xkey.keycode;
 	    *kbuf = mwkey;
 
-	    /*printf("mods: 0x%x  scan: 0x%x  key: 0x%x\n",*modifiers,*scancode,*kbuf);*/
+	    /*printf("mods: 0x%x  scan: 0x%x  key: 0x%x\n",*modifiers,*scancode, *kbuf);*/
 	    return (ev.xkey.type == KeyPress)? 1 : 2;
 	}
     }
@@ -414,8 +420,8 @@ X11_Read(MWKEY *kbuf, MWKEYMOD *modifiers, MWSCANCODE *scancode)
 #define CAPS_LOCK_MASK   0x00000001
 #define SCROLL_LOCK_MASK 0x00000004
 
-/* initialise key_modstate */
-static int init_modstate ()
+/* initialise key_modstate */ 
+static int init_modstate(void)
 {
 	unsigned int state;
 	int capsl, numl, scrolll;
@@ -423,7 +429,7 @@ static int init_modstate ()
 	if(XkbGetIndicatorState (x11_dpy, XkbUseCoreKbd, &state) != Success) {
 		fprintf(stderr, "nano-X: Error reading kbd indicator status\n");
 		return 0;	/* no error*/
-	}
+	} 
 	capsl = state & CAPS_LOCK_MASK;
 	numl = state & NUM_LOCK_MASK;
 	scrolll = state & SCROLL_LOCK_MASK;

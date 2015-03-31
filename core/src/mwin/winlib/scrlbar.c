@@ -206,8 +206,7 @@ MwPaintScrollbars(HWND hwnd, HDC hdc, DWORD style)
 
         	Draw3dUpFrame (hdc, rcVBar.left, start, rcVBar.right,
 	    		start + pData->barLen);
-		/*printf("barv:(l,t,r,b):(%d,%d,%d,%d)\n",
-        		rcVBar.left, start, rcVBar.right,
+		/*DPRINTF("barv:(l,t,r,b):(%d,%d,%d,%d)\n", rcVBar.left, start, rcVBar.right,
 	    		start + pData->barLen);*/
 
 	}
@@ -277,8 +276,7 @@ MwPaintScrollbars(HWND hwnd, HDC hdc, DWORD style)
 
         	Draw3dUpFrame (hdc, start, rcHBar.top, start + pData->barLen,
 	    		rcHBar.bottom);
-		/*printf("barh:(l,t,r,b):(%d,%d,%d,%d)\n",
-        		start, rcHBar.top, start + pData->barLen,
+		/*DPRINTF("barh:(l,t,r,b):(%d,%d,%d,%d)\n", start, rcHBar.top, start + pData->barLen,
 	    		rcHBar.bottom);*/
 	}
 
@@ -409,8 +407,7 @@ MwHandleMessageScrollbar(HWND hwnd, WPARAM hitcode, LPARAM lParam, UINT msg, DWO
 			itemMoveable = itemCount - itemVisible + 1;
 
 			newThumbPos = ((pt.y - moveTop) * itemMoveable) / moveRange;
-			printf("((%d-%d)*%d)/%d=%d\n",
-				pt.y,moveTop,itemMoveable,moveRange,newThumbPos);
+			//DPRINTF("((%d-%d)*%d)/%d=%d\n", pt.y,moveTop,itemMoveable,moveRange,newThumbPos);
 
                 	if ( newThumbPos >= pData->minPos &&
                     	     newThumbPos <= pData->maxPos)
@@ -440,8 +437,7 @@ MwHandleMessageScrollbar(HWND hwnd, WPARAM hitcode, LPARAM lParam, UINT msg, DWO
 			itemMoveable = itemCount - itemVisible + 1;
 
 			newThumbPos = ((pt.x - moveLeft) * itemMoveable) / moveRange;
-			printf("((%d-%d)*%d)/%d=%d\n",
-				pt.y,moveLeft,itemMoveable,moveRange,newThumbPos);
+			//DPRINTF("((%d-%d)*%d)/%d=%d\n", pt.y,moveLeft,itemMoveable,moveRange,newThumbPos);
 			    
 			if ( newThumbPos >= pData->minPos &&
 			     newThumbPos <= pData->maxPos)
@@ -477,8 +473,7 @@ MwHandleMessageScrollbar(HWND hwnd, WPARAM hitcode, LPARAM lParam, UINT msg, DWO
 			itemMoveable = itemCount - itemVisible + 1;
 
 			newThumbPos = ((pt.y - moveTop) * itemMoveable) / moveRange;
-			printf("((%d-%d)*%d)/%d=%d\n",
-				pt.y,moveTop,itemMoveable,moveRange,newThumbPos);
+			//DPRINTF("((%d-%d)*%d)/%d=%d\n", pt.y,moveTop,itemMoveable,moveRange,newThumbPos);
 
 			if ( newThumbPos >= pData->minPos &&
 			     newThumbPos <= pData->maxPos)
@@ -505,8 +500,7 @@ MwHandleMessageScrollbar(HWND hwnd, WPARAM hitcode, LPARAM lParam, UINT msg, DWO
 			itemMoveable = itemCount - itemVisible + 1;
 
 			newThumbPos = ((pt.x - moveLeft) * itemMoveable) / moveRange;
-			printf("((%d-%d)*%d)/%d=%d\n",
-				pt.y,moveLeft,itemMoveable,moveRange,newThumbPos);
+			//DPRINTF("((%d-%d)*%d)/%d=%d\n", pt.y,moveLeft,itemMoveable,moveRange,newThumbPos);
 				    
 			if ( newThumbPos >= pData->minPos &&
 			     newThumbPos <= pData->maxPos)
@@ -988,21 +982,17 @@ static void sbSetScrollInfo (HWND hwnd, PMWSCROLLBARINFO pData, BOOL fRedraw)	/*
 static LRESULT CALLBACK
 ScrollbarControlProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)	/* jmt:2k0820 */
 {
-    	DWORD dwStyle;
-    	MWSCROLLBARINFO* pData;
-
+    DWORD dwStyle;
+    MWSCROLLBARINFO* pData;
 	int moveRange;
 	RECT rcBar;
 
 	dwStyle = (GetWindowStyle (hwnd) & SBS_TYPEMASK);
-    	switch (message) 
+    switch (message) 
 	{
         case WM_CREATE:
-            	if (!(pData = malloc (sizeof (MWSCROLLBARINFO)))) 
-		{
-                	fprintf(stderr, "Create scroll bar control failure!\n");
-                	return -1;
-            	}
+		if (!(pData = malloc (sizeof (MWSCROLLBARINFO))))
+			return -1;
 
 		pData->minPos=0;           /* min value of scroll range.*/
 		/* max value of scroll range.*/
@@ -1021,7 +1011,7 @@ ScrollbarControlProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)	/* 
 			if( (moveRange % MWM_MINBARLEN) )
 				pData->maxPos++;
 		}     
-		printf("maxPos=%d\n",pData->maxPos);
+		//DPRINTF("maxPos=%d\n",pData->maxPos);
 
 		pData->curPos=0;             /* current scroll pos.*/
 
@@ -1029,7 +1019,7 @@ ScrollbarControlProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)	/* 
 		pData->pageStep=1;
 		if ( (pData->maxPos - 2) > 1)
 			pData->pageStep = pData->maxPos - 2;
-		printf("pageStep=%d\n",pData->pageStep);
+		//DPRINTF("pageStep=%d\n",pData->pageStep);
 
 		pData->barStart=0;           /* start pixel of bar.*/
 		pData->barLen=MWM_MINBARLEN; /* length of bar.*/

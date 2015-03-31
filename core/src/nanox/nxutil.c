@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2000, 2002, 2003 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2002, 2003, 2010 Greg Haerr <greg@censoft.com>
+ * Portions Copyright (c) 2006 by Andreas Foedrowitz
  *
  * Nano-X Client utility routines
  *
@@ -7,17 +8,41 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #define MWINCLUDECOLORS
 #include "nano-X.h"
 #include "device.h"
 
-/*
+/**
+ * Create a new buffered window.  Sets properties for
+ * no background erase and no redraw during resizing.
+ * Same parameters as GrNewWindowEx.
+ *
+ * Quick conversion for double buffered windows in any application:
+ * 	add GR_WM_PROPS_BUFFERED to GrNewWindowEx flags
+ * 	add GR_WM_PROPS_NOBACKGROUND if app paints background
+ * 	add GrFlushWindow(wid) call in paint routine
+ * 	add update mask and handling for GR_UPDATE_MAP & GR_UPDATE_SIZE and call paint routine
+ * 	remove Exposure mask and event handling
+ * Buffered windows allocate a 32bpp RGBA pixmap for automatic offscreen buffered drawing.
+ * Pixmap is erased to bg color on create and resize unless GR_WM_PROPS_NOBACKGROUND set
+ * On window expose, buffered contents are copied, app never gets expose events.
+ * App must process resize and map Update events, flush buffer with GrFlushWindow(wid)
+ */
+GR_WINDOW_ID
+GrNewBufferedWindow(GR_WM_PROPS props, const char *title, GR_WINDOW_ID parent,
+	GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height, GR_COLOR background)
+{
+	return GrNewWindowEx(props|GR_WM_PROPS_BUFFERED|GR_WM_PROPS_NOBACKGROUND,
+		title, parent, x, y, width, height, background);
+}
+
+/**
  * Create new window with passed style, title and location.
  */
 GR_WINDOW_ID
-GrNewWindowEx(GR_WM_PROPS props, GR_CHAR * title, GR_WINDOW_ID parent,
-	      GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height,
-	      GR_COLOR background)
+GrNewWindowEx(GR_WM_PROPS props, const char *title, GR_WINDOW_ID parent,
+	GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height, GR_COLOR background)
 {
 	GR_WINDOW_ID wid;
 	GR_WM_PROPERTIES wmprops;
@@ -28,7 +53,7 @@ GrNewWindowEx(GR_WM_PROPS props, GR_CHAR * title, GR_WINDOW_ID parent,
 		/* set properties and title */
 		wmprops.flags = GR_WM_FLAGS_PROPS | GR_WM_FLAGS_TITLE;
 		wmprops.props = props;
-		wmprops.title = title;
+		wmprops.title = (char *)title;
 		GrSetWMProperties(wid, &wmprops);
 	}
 	return wid;
@@ -56,7 +81,7 @@ GrDrawLines(GR_DRAW_ID w, GR_GC_ID gc, GR_POINT * points, GR_COUNT count)
 }
 
 /*
- * Retrofit routine.  Use GrNewCursor and GrSetWindowCursor for new code.
+ * DEPRECATED.  Use GrNewCursor and GrSetWindowCursor for new code.
  */
 GR_CURSOR_ID
 GrSetCursor(GR_WINDOW_ID wid, GR_SIZE width, GR_SIZE height, GR_COORD hotx,
@@ -108,7 +133,7 @@ static const unsigned char revbyte[256] = {
 	0x1f, 0x9f, 0x5f, 0xdf, 0x3f, 0xbf, 0x7f, 0xff
 };
 
-/*
+/**
  * Create a GdBitmap-compatible bitmap (16-bit short array) from data bits
  *     flags specify input format
  *     caller must free return buffer
@@ -189,7 +214,7 @@ GrNewBitmapFromData(GR_SIZE width, GR_SIZE height, GR_SIZE bits_width,
 	return buf;
 }
 
-/*
+/**
  * Create a new pixmap and initialize from bitmap data and fg/bg colors
  */
 GR_WINDOW_ID
@@ -200,14 +225,13 @@ GrNewPixmapFromData(GR_SIZE width, GR_SIZE height, GR_COLOR foreground,
 	GR_GC_ID gc;
 	GR_BITMAP *buf;
 
-	pid = GrNewPixmap(width, height, NULL);
+	pid = GrNewPixmapEx(width, height, 0, NULL);
 	if (pid) {
 		gc = GrNewGC();
 		GrSetGCForeground(gc, foreground);
 		GrSetGCBackground(gc, background);
 
-		buf = GrNewBitmapFromData(width, height, width, height,
-					    bits, flags);
+		buf = GrNewBitmapFromData(width, height, width, height, bits, flags);
 		if (buf) {
 			GrBitmap(pid, gc, 0, 0, width, height, buf);
 			free(buf);
@@ -217,13 +241,12 @@ GrNewPixmapFromData(GR_SIZE width, GR_SIZE height, GR_COLOR foreground,
 	return pid;
 }
 
-/*
+/**
  * Create a bitmap from a specified pixmap 
  * This function may not be needed if Microwindows implemented a depth-1 pixmap.
  */
 GR_BITMAP *
-GrNewBitmapFromPixmap(GR_WINDOW_ID pixmap, MWCOORD x, MWCOORD y,
-	GR_SIZE width, GR_SIZE height)
+GrNewBitmapFromPixmap(GR_WINDOW_ID pixmap, GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height)
 {
 	unsigned int w, h;
 	unsigned int bwidth, rowsize;
@@ -248,21 +271,19 @@ GrNewBitmapFromPixmap(GR_WINDOW_ID pixmap, MWCOORD x, MWCOORD y,
 	pixel = buffer;
 	for (h = 0; h < height; h++) {
 		for (w = 0; w < width; w++) {
-			if (*pixel++)
-				bitmap[(h * bwidth) + (w >> 4)] |=
-					(1 << (15 - (w % 16)));
+			if (*pixel++ & 0x00ffffffL)	// remove 32bpp alpha
+				bitmap[(h * bwidth) + (w >> 4)] |= (1 << (15 - (w % 16)));
 		}
 	}
 	free(buffer);
 	return bitmap;
 }
 
-/*
+/**
  * Create a region from a monochrome pixmap
  */
 GR_REGION_ID
-GrNewRegionFromPixmap(GR_WINDOW_ID src, MWCOORD x, MWCOORD y, GR_SIZE width,
-	GR_SIZE height)
+GrNewRegionFromPixmap(GR_WINDOW_ID src, GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height)
 {
 	int w, h;
 	int mx, my, mw, mh;
@@ -293,7 +314,7 @@ GrNewRegionFromPixmap(GR_WINDOW_ID src, MWCOORD x, MWCOORD y, GR_SIZE width,
 		GR_RECT local;
 
 		for (w = mx; w < mw; w++) {
-			if (*pixel++) {
+			if (*pixel++ & 0x00ffffffL) {	// remove 32bpp alpha
 				if (state != 0)
 					continue;
 
@@ -319,4 +340,49 @@ GrNewRegionFromPixmap(GR_WINDOW_ID src, MWCOORD x, MWCOORD y, GR_SIZE width,
 	FREEA(buffer);
 
 	return r;
+}
+
+/**
+ * Copy an event, must be used for CLIENT_DATA events
+ * when GrPeekEvent or GrPeekWaitEvent called, as event data later freed.
+ */
+void
+GrCopyEvent(GR_EVENT *dst, GR_EVENT *src)
+{
+	*dst = *src;
+
+	/* do a "deep" copy for client data events*/
+	if (dst->type == GR_EVENT_TYPE_CLIENT_DATA) {
+		GR_EVENT_CLIENT_DATA *csrc = (GR_EVENT_CLIENT_DATA *)src;
+		GR_EVENT_CLIENT_DATA *cdst = (GR_EVENT_CLIENT_DATA *)dst;
+
+		if (csrc->data && (csrc->datalen > 0)) {
+			cdst->data = malloc(csrc->datalen);
+			if (cdst->data) {
+				memcpy(cdst->data, csrc->data, csrc->datalen);
+			}
+		} else {
+			cdst->data = NULL;
+			csrc->datalen = 0;
+		}
+	}
+}
+
+/**
+ * Free an event after use with GrCopyEvent,
+ * used with CLIENT_DATA events.
+ */
+void
+GrFreeEvent(GR_EVENT *ev)
+{
+	/* free data in client data event*/
+	if (ev->type == GR_EVENT_TYPE_CLIENT_DATA) {
+		GR_EVENT_CLIENT_DATA *pev = (GR_EVENT_CLIENT_DATA *)ev;
+
+		if (pev->data) {
+			free(pev->data);
+			pev->data = NULL;
+		}
+		pev->datalen = 0;
+	}
 }

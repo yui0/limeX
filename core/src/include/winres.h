@@ -3,6 +3,7 @@
  *
  * Microwindows Resource declarations
  *
+ * Copyright (C) 2010 - Greg Haerr greg@censoft.com
  * Copyright (C) 2003 - Gabriele Brugnoni
  *
  * gabrielebrugnoni@dveprojects.com
@@ -11,14 +12,7 @@
 #ifndef __WINRES_H__
 #define __WINRES_H__
 #include <stdio.h>	/* for FILE...*/
-
-//  For some architecture, the data readed in structures
-//  must be declared as packed...
-#if defined(GCC_VERSION)
-#define RESPACKEDDATA	__attribute__ ((__packed__))
-#else
-#define RESPACKEDDATA
-#endif
+#include "device.h"
 
 /*
  *  Application instance data
@@ -52,10 +46,10 @@ typedef struct tagMWRESOURCEHEADER
     DWORD HeaderSize;
     // ordinal type and name are here in file.
     DWORD DataVersion; 
-    WORD RESPACKEDDATA MemoryFlags;		
-    WORD RESPACKEDDATA LanguageId;		
-    DWORD RESPACKEDDATA Version; 
-    DWORD RESPACKEDDATA Characteristics;
+    WORD PACKEDDATA MemoryFlags;		
+    WORD PACKEDDATA LanguageId;		
+    DWORD PACKEDDATA Version; 
+    DWORD PACKEDDATA Characteristics;
 } MWRESOURCEHEADER, *PMWRESOURCEHEADER;
 
 
@@ -114,11 +108,11 @@ typedef struct tagMWDLGTEMPLATE
 {
     DWORD style;
     DWORD dwExtendedStyle;
-    WORD  RESPACKEDDATA cdit;
-    short RESPACKEDDATA x;
-    short RESPACKEDDATA y;
-    short RESPACKEDDATA cx;
-    short RESPACKEDDATA cy;
+    WORD  PACKEDDATA cdit;
+    short PACKEDDATA x;
+    short PACKEDDATA y;
+    short PACKEDDATA cx;
+    short PACKEDDATA cy;
     /* other information that follows, var length */
 	char extraData[1];
 } MWDLGTEMPLATE, *PMWDLGTEMPLATE;
@@ -148,11 +142,11 @@ typedef struct tagMWDLGITEMTEMPLATE
 {
     DWORD style;
     DWORD dwExtendedStyle;
-    short RESPACKEDDATA x;
-    short RESPACKEDDATA y;
-    short RESPACKEDDATA cx;
-    short RESPACKEDDATA cy;
-    WORD  RESPACKEDDATA id;
+    short PACKEDDATA x;
+    short PACKEDDATA y;
+    short PACKEDDATA cx;
+    short PACKEDDATA cy;
+    WORD  PACKEDDATA id;
     /* other information that follows, var length
 	   will be allocated in MWDLGITEMTEMPLEXTRA */
 	char extraData[1];
@@ -201,20 +195,17 @@ typedef struct tagMWRSRC
 
 
 //  Resource access internal functions
-FILE *mwFindResource ( HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName,
-				       PMWRESOURCEHEADER pResHead );
+FILE *mwFindResource ( HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName, PMWRESOURCEHEADER pResHead );
 
 PMWDLGITEMTEMPLATE resNextDlgItem ( PMWDLGITEMTEMPLATE pItem );
 PMWDLGITEMTEMPLATE resFirstDlgItem ( PMWDLGTEMPLATE pDlg );
 void resDiscardDlgTemplExtra ( PMWDLGTEMPLEXTRA pDlgExtra );
-void resGetDlgTemplExtra ( PMWDLGTEMPLATE pDlg,
-						   PMWDLGTEMPLEXTRA pDlgExtra );
+void resGetDlgTemplExtra ( PMWDLGTEMPLATE pDlg, PMWDLGTEMPLEXTRA pDlgExtra );
 void resDiscardDlgItemTemplate ( PMWDLGITEMTEMPLEXTRA pItemExtra );
 PMWDLGITEMTEMPLATE resGetDlgItemTemplExtra ( PMWDLGITEMTEMPLATE pItem,
 							   				 PMWDLGITEMTEMPLEXTRA pItemExtra );
-
 PMWIMAGEHDR resLoadBitmap ( HINSTANCE hInst, LPCTSTR resName );
-void resFreeBitmap ( PMWIMAGEHDR pImageHdr );
+void resFreeBitmap ( PMWIMAGEHDR pimage );
 
 
 
@@ -228,9 +219,6 @@ BOOL WINAPI FreeResource ( HGLOBAL hObj );
 int WINAPI UnlockResource ( HGLOBAL hObj );
 LPVOID WINAPI LockResource ( HGLOBAL hObj );
 
-int WINAPI LoadString ( HINSTANCE hInstance, UINT uid,
-				        LPTSTR lpBuffer, int nMaxBuff );
-
-
+int WINAPI LoadString ( HINSTANCE hInstance, UINT uid, LPTSTR lpBuffer, int nMaxBuff );
 
 #endif /*__WINRES_H__*/

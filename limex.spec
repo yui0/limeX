@@ -1,13 +1,13 @@
 Summary: Lime-X
 Name: limeX
-Version: 0.01
+Version: 0.1
 Release: b1
 License: GPL/MPL
 Group: User Interface/Desktops
 Source0: %{name}-%{version}.tar.bz2
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
-BuildArchitectures: i586
+BuildArchitectures: i686
 
 %description
 Lime-X is the graphic user interface like X.

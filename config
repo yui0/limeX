@@ -145,7 +145,8 @@ HAVE_PNG_SUPPORT         = N
 INCPNG                   = .
 LIBPNG                   = /usr/lib/libpng.a
 INCZ                     = .
-LIBZ                     = /usr/lib/libz.a
+#LIBZ                     = /usr/lib/libz.a
+LIBZ                     = /usr/lib/libz.so
 
 ####################################################################
 # TIFF support through libtiff

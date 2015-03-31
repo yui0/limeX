@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 1999, 2003 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2003, 2010 Greg Haerr <greg@censoft.com>
  * Copyright (c) 2000 Alex Holden <alex@linuxhacker.org>
  * Portions Copyright (c) 2002, 2003 by Koninklijke Philips Electronics N.V.
  *
  * Nano-X Core Protocol Header
- *
+ * 
  * These structures define the Nano-X client/server protocol.
  * Much of this has been modeled after the X11 implementation.
  * Note that all NX Protocol requests should have all data quantities
@@ -24,7 +24,7 @@
  * request size that will be sent (not received) using this protocol.
  * The protocol allows for 2^24 byte maximum, but the
  * server currently allocates the MAXREQUESTSZ in a stack buffer.
- * Also, the client realloc's the request queue to
+ * Also, the client realloc's the request queue to 
  * the largest size asked for, and currently never reduces it.
  *
  * Routines like GrArea will split packets to be <= MAXREQUESTSZ
@@ -594,15 +594,16 @@ typedef struct {
 	INT16	pad;
 } nxLoadImageFromFileReq;
 
-#define GrNumNewPixmap          50
+#define GrNumNewPixmapEx          50
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
 	UINT16	length;
 	INT16	width;
 	INT16	height;
+	UINT32	format;
 /* FIXME: Add support for passing shared memory info */
-} nxNewPixmapReq;
+} nxNewPixmapExReq;
 
 #define GrNumCopyArea          51
 typedef struct {
@@ -621,23 +622,24 @@ typedef struct {
 	UINT32	op;
 } nxCopyAreaReq;
 
-#define GrNumSetFontSize        52
+#define GrNumSetFontSizeEx      52
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
 	UINT16	length;
 	IDTYPE	fontid;
-	INT16	fontsize;
-} nxSetFontSizeReq;
+	INT16	height;
+	INT16	width;
+} nxSetFontSizeExReq;
 
-#define GrNumCreateFont		53
+#define GrNumCreateFontEx		53
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
 	UINT16	length;
 	INT16	height;
-	INT16	padding;
-} nxCreateFontReq;
+	INT16	width;
+} nxCreateFontExReq;
 
 #define GrNumDestroyFont	54
 typedef struct {
@@ -965,14 +967,14 @@ typedef struct {
 	IDTYPE	gcid;
 	INT16	x;
 	INT16	y;
-	INT16	width;		/* MWIMAGEHDR start*/
+	INT16	flags;		/* MWIMAGEHDR start*/
+	INT16	width;
 	INT16	height;
 	INT16	planes;
 	INT16	bpp;
-	INT16	pitch;
-	INT16	bytesperpixel;
-	INT16	compression;
 	INT16	palsize;
+	UINT32	data_format;
+	UINT32	pitch;
 	UINT32	transcolor;
 	/*MWIMAGEBITS imagebits[];*/
 	/*MWPALENTRY palette[palsize];*/
@@ -1185,7 +1187,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
 } nxQueryPointerReq;
 
 #define GrNumSetGCLineAttributes 109
@@ -1193,7 +1195,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
   	IDTYPE	gcid;
         UINT16  linestyle;
 } nxSetGCLineAttributesReq;
@@ -1203,7 +1205,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
         IDTYPE	gcid;
         UINT16	count;
 } nxSetGCDashReq;
@@ -1213,7 +1215,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
         IDTYPE	gcid;
         UINT16	fillmode;
 } nxSetGCFillModeReq;
@@ -1223,7 +1225,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
         IDTYPE	gcid;
         INT16	width;
         INT16	height;
@@ -1234,7 +1236,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
         IDTYPE	gcid;
         INT16	xoffset;
         INT16	yoffset;
@@ -1245,7 +1247,7 @@ typedef struct {
 typedef struct {
 	BYTE8	reqType;
 	BYTE8	hilength;
-	UINT16	length;
+	UINT16	length;  
         IDTYPE  gcid;
         IDTYPE  pixmap;
         INT16	width;
@@ -1328,7 +1330,7 @@ typedef struct {
 	UINT16	length;
         IDTYPE	wid;
         INT16	type;
-        UINT16	key;
+        UINT16	key;  
 } nxGrabKeyReq;
 
 #define GrNumSetTransform       122
@@ -1345,7 +1347,7 @@ typedef struct {
 	UINT32	trans_f;
 	UINT32	trans_s;
 } nxSetTransformReq;
-
+  
 #define GrNumCreateFontFromBuffer	123
 typedef struct {
 	BYTE8 reqType;
@@ -1354,7 +1356,7 @@ typedef struct {
 	UINT32 buffer_id;
 	BYTE8 format[16];
 	INT16 height;
-	UINT16 padding;
+	INT16 width;
 } nxCreateFontFromBufferReq;
 
 #define GrNumCopyFont		124
@@ -1364,6 +1366,7 @@ typedef struct {
 	UINT16 length;
 	IDTYPE fontid;
 	INT16 height;
+	INT16 width;
 } nxCopyFontReq;
 
 #define GrNumDrawImagePartToFit     125
@@ -1384,14 +1387,4 @@ typedef struct {
 	IDTYPE	imageid;
 } nxDrawImagePartToFitReq;
 
-// 63
-#define GrNumSetRectRegionIndirect	126
-typedef struct {
-	BYTE8	reqType;
-	BYTE8	hilength;
-	UINT16	length;
-	IDTYPE	regionid;
-	GR_RECT	rect;
-} nxSetRectRegionIndirectReq;
-
-#define GrTotalNumCalls         127
+#define GrTotalNumCalls         126

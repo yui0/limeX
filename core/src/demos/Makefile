@@ -32,11 +32,19 @@ LIBNAME =
 # List of objects to compile
 OBJS =
 
+ifeq ($(FBEMULATOR), Y)
+all: default $(MW_DIR_BIN)/fbe
+endif
+
 #ifeq ($(ARCH), ECOS)
 #dirs = nanowm nanox nxkbd nxscribble
 #endif
 ifeq ($(ARCH), UCLINUX-ARM)
 dirs = nxkbd
+endif
+
+ifeq ($(ARCH), PSP)
+dirs = nanox mwin
 endif
 
 ######################### Makefile.rules section #############################
@@ -45,3 +53,9 @@ include $(MW_DIR_SRC)/Makefile.rules
 
 ######################## Tools targets section ###############################
 
+#
+# Compilation target for framebuffer emulator tool
+#
+$(MW_DIR_BIN)/fbe: $(MW_DIR_SRC)/demos/fbe.c
+	echo "Building $(patsubst $(MW_DIR_BIN)/%,%,$@) tool ..."
+	$(HOSTCC) $(HOSTCFLAGS) $< -o $@ $(X11LDFLAGS)

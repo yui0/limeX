@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2001, 2003 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999-2001, 2003, 2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002, 2003 by Koninklijke Philips Electronics N.V.
  * Copyright (c) 1999 Alex Holden <alex@linuxhacker.org>
  * Copyright (c) 2000 Vidar Hokstad
@@ -51,15 +51,11 @@ static int GsWriteType(int,short);
 /*
  * Wrapper functions called after full packet read
  */
-
-
-#if (!MW_FEATURE_TIMERS) || (!MW_FEATURE_IMAGES) || (!defined(HAVE_FILEIO))
 static void
 GrNotImplementedWrapper(void *r)
 {
     EPRINTF("nano-X: Function %s() not implemented\n", curfunc);
 }
-#endif
 
 static void 
 GrOpenWrapper(void *r)
@@ -114,17 +110,15 @@ GrNewWindowWrapper(void *r)
 
 
 static void
-GrNewPixmapWrapper(void *r)
+GrNewPixmapExWrapper(void *r)
 {
-	nxNewPixmapReq *req = r;
+	nxNewPixmapExReq *req = r;
 	GR_WINDOW_ID	wid;
 
-        /* FIXME: Add support for passing info about shared memory
-	 * segment
-	 */
-	wid = GrNewPixmap(req->width, req->height, 0);
+	/* FIXME: Add support for passing info about shared memory segment*/
+	wid = GrNewPixmapEx(req->width, req->height, req->format, NULL);
 
-	GsWriteType(current_fd,GrNumNewPixmap);
+	GsWriteType(current_fd,GrNumNewPixmapEx);
 	GsWrite(current_fd, &wid, sizeof(wid));
 }
 
@@ -459,8 +453,7 @@ GrClearAreaWrapper(void *r)
 {
 	nxClearAreaReq *req = r;
 
-	GrClearArea(req->windowid, req->x, req->y, req->width,
-		req->height, req->exposeflag);
+	GrClearArea(req->windowid, req->x, req->y, req->width, req->height, req->exposeflag);
 }
 
 static void
@@ -775,14 +768,14 @@ GrSetGCTSOffsetWrapper(void *r)
 }
 
 static void
-GrCreateFontWrapper(void *r)
+GrCreateFontExWrapper(void *r)
 {
-	nxCreateFontReq *req = r;
+	nxCreateFontExReq *req = r;
 	GR_FONT_ID 	fontid;
 
-	fontid = GrCreateFont(GetReqData(req), req->height, NULL);
+	fontid = GrCreateFontEx(GetReqData(req), req->height, req->width, NULL);
 
-	GsWriteType(current_fd,GrNumCreateFont);
+	GsWriteType(current_fd, GrNumCreateFontEx);
 	GsWrite(current_fd, &fontid, sizeof(fontid));
 }
 
@@ -792,18 +785,18 @@ GrCreateLogFontWrapper(void *r)
 	nxCreateLogFontReq *req = r;
 	GR_FONT_ID fontid;
 
-	fontid = GrCreateFont(NULL, 0, &req->lf);
+	fontid = GrCreateFontEx(NULL, 0, 0, &req->lf);
 
 	GsWriteType(current_fd, GrNumCreateLogFont);
 	GsWrite(current_fd, &fontid, sizeof(fontid));
 }
 
 static void
-GrSetFontSizeWrapper(void *r)
+GrSetFontSizeExWrapper(void *r)
 {
-	nxSetFontSizeReq *req = r;
+	nxSetFontSizeExReq *req = r;
 
- 	GrSetFontSize(req->fontid, req->fontsize);
+ 	GrSetFontSizeEx(req->fontid, req->height, req->width);
 }
 
 static void
@@ -903,13 +896,13 @@ GrDrawImageBitsWrapper(void *r)
 	int		    imagesize;
 	GR_IMAGE_HDR	    hdr;
 
+	hdr.flags = req->flags;
 	hdr.width = req->width;
 	hdr.height = req->height;
 	hdr.planes = req->planes;
 	hdr.bpp = req->bpp;
+	hdr.data_format = req->data_format;
 	hdr.pitch = req->pitch;
-	hdr.bytesperpixel = req->bytesperpixel;
-	hdr.compression = req->compression;
 	hdr.palsize = req->palsize;
 	hdr.transcolor = req->transcolor;
 	addr = GetReqData(req);
@@ -1026,7 +1019,7 @@ GrSetWMPropertiesWrapper(void *r)
 	GR_WM_PROPERTIES *props = GetReqData(req);
 
 	if(GetReqVarLen(req) - sizeof(GR_WM_PROPERTIES)) 
-		props->title = (GR_CHAR *)props + sizeof(GR_WM_PROPERTIES);
+		props->title = (char *)props + sizeof(GR_WM_PROPERTIES);
 	else
 		props->title = NULL;
 	GrSetWMProperties(req->windowid, props);
@@ -1050,6 +1043,8 @@ GrGetWMPropertiesWrapper(void *r)
 	GsWrite(current_fd, &textlen, sizeof(textlen));
 	if(textlen)
 		GsWrite(current_fd, props.title, textlen);
+	if(props.title)
+		free(props.title);
 }
 
 static void
@@ -1068,7 +1063,7 @@ GrKillWindowWrapper(void *r)
 	GrKillWindow(req->windowid);
 }
 
-#if MW_FEATURE_IMAGES && defined(HAVE_FILEIO)
+#if MW_FEATURE_IMAGES && HAVE_FILEIO
 static void
 GrDrawImageFromFileWrapper(void *r)
 {
@@ -1088,29 +1083,19 @@ GrLoadImageFromFileWrapper(void *r)
 	GsWriteType(current_fd, GrNumLoadImageFromFile);
 	GsWrite(current_fd, &id, sizeof(id));
 }
-#else /* if ! (MW_FEATURE_IMAGES && defined(HAVE_FILEIO)) */
+#else /* if ! (MW_FEATURE_IMAGES && HAVE_FILEIO) */
 #define GrDrawImageFromFileWrapper GrNotImplementedWrapper
 #define GrLoadImageFromFileWrapper GrNotImplementedWrapper
 #endif
 
 #if MW_FEATURE_IMAGES
 static void
-GrDrawImageToFitWrapper(void *r)
-{
-	nxDrawImageToFitReq *req = r;
-
-	GrDrawImageToFit(req->drawid, req->gcid, req->x, req->y, req->width,
-		req->height, req->imageid);
-}
-
-static void
 GrDrawImagePartToFitWrapper(void *r)
 {
 	nxDrawImagePartToFitReq *req = r;
 
-	GrDrawImagePartToFit(req->drawid, req->gcid, req->dx, req->dy, req->dwidth,
-		req->dheight,req->sx, req->sy, req->swidth,
-		req->sheight, req->imageid);
+	GrDrawImagePartToFit(req->drawid, req->gcid, req->dx, req->dy, req->dwidth, req->dheight,
+		req->sx, req->sy, req->swidth, req->sheight, req->imageid);
 }
 
 static void
@@ -1132,7 +1117,6 @@ GrGetImageInfoWrapper(void *r)
 	GsWrite(current_fd, &info, sizeof(info));
 }
 #else /* if ! MW_FEATURE_IMAGES */
-#define GrDrawImageToFitWrapper GrNotImplementedWrapper
 #define GrDrawImagePartToFitWrapper GrNotImplementedWrapper
 #define GrFreeImageWrapper GrNotImplementedWrapper
 #define GrGetImageInfoWrapper GrNotImplementedWrapper
@@ -1157,7 +1141,7 @@ GrSetSelectionOwnerWrapper(void *r)
 static void
 GrGetSelectionOwnerWrapper(void *r)
 {
-	GR_CHAR *typelist;
+	char *typelist;
 	GR_WINDOW_ID wid;
 	unsigned short len;
 
@@ -1166,7 +1150,7 @@ GrGetSelectionOwnerWrapper(void *r)
 	GsWrite(current_fd, &wid, sizeof(wid));
 
 	if(wid) {
-		len = strlen((const char *)typelist) + 1;
+		len = strlen(typelist) + 1;
 		GsWrite(current_fd, &len, sizeof(len));
 		GsWrite(current_fd, typelist, len);
 	}
@@ -1582,7 +1566,7 @@ GrCreateFontFromBufferWrapper(void *r)
 		result = 0;
 	} else {
 		result = GrCreateFontFromBuffer(buffer->data, buffer->size,
-			(const char *)req->format, req->height);
+			(const char *)req->format, req->height, req->width);
 		
 		freeImageBuffer(buffer);
 	}
@@ -1597,7 +1581,7 @@ GrCopyFontWrapper(void *r)
 {
 #if HAVE_FREETYPE_2_SUPPORT
 	nxCopyFontReq *req = r;
-	GR_FONT_ID result = GrCopyFont(req->fontid, req->height);
+	GR_FONT_ID result = GrCopyFont(req->fontid, req->height, req->width);
 
 	GsWriteType(current_fd, GrNumCopyFont);
 	GsWrite(current_fd, &result, sizeof(result));
@@ -1665,10 +1649,10 @@ static const struct GrFunction GrFunctions[] = {
 	/*  47 */ {GrReparentWindowWrapper, "GrReparentWindow"},
 	/*  48 */ {GrDrawImageFromFileWrapper, "GrDrawImageFromFile"},
 	/*  49 */ {GrLoadImageFromFileWrapper, "GrLoadImageFromFile"},
-	/*  50 */ {GrNewPixmapWrapper, "GrNewPixmap"},
+	/*  50 */ {GrNewPixmapExWrapper, "GrNewPixmapEx"},
 	/*  51 */ {GrCopyAreaWrapper, "GrCopyArea"},
-	/*  52 */ {GrSetFontSizeWrapper, "GrSetFontSize"},
-	/*  53 */ {GrCreateFontWrapper, "GrCreateFont"},
+	/*  52 */ {GrSetFontSizeExWrapper, "GrSetFontSizeEx"},
+	/*  53 */ {GrCreateFontExWrapper, "GrCreateFontEx"},
 	/*  54 */ {GrDestroyFontWrapper, "GrDestroyFont"},
 	/*  55 */ {GrReqShmCmdsWrapper, "GrReqShmCmds"},
 	/*  56 */ {GrShmCmdsFlushWrapper, "GrShmCmdsFlush"},
@@ -1697,7 +1681,7 @@ static const struct GrFunction GrFunctions[] = {
 	/*  79 */ {GrGetWMPropertiesWrapper, "GrGetWMProperties"},
 	/*  80 */ {GrCloseWindowWrapper, "GrCloseWindow"},
 	/*  81 */ {GrKillWindowWrapper, "GrKillWindow"},
-	/*  82 */ {GrDrawImageToFitWrapper, "GrDrawImageToFit"},
+	/*  82 */ {GrNotImplementedWrapper, "GrNotImplementedWrapper"},	// old GrDrawImageToFit
 	/*  83 */ {GrFreeImageWrapper, "GrFreeImage"},
 	/*  84 */ {GrGetImageInfoWrapper, "GrGetImageInfo"},
 	/*  85 */ {GrDrawImageBitsWrapper, "GrDrawImageBits"},
@@ -1927,9 +1911,6 @@ GsDestroyClientResources(GR_CLIENT * client)
 	GR_EVENT_CLIENT *pecp = NULL;
 	GR_EVENT_LIST	*evp;
 	GR_GRABBED_KEY	*kp, *nkp;
-#if MW_FEATURE_IMAGES
-	GR_IMAGE      * ip, *nip;
-#endif
 #if MW_FEATURE_TIMERS
 	GR_TIMER      * tp, *ntp;
 #endif
@@ -1997,17 +1978,6 @@ DPRINTF("  Destroy region %d\n", rp->id);
 		}
 	}
 
-#if MW_FEATURE_IMAGES
-	/* free images owned by client*/
-	for(ip=listimagep; ip; ip=nip) {
-		nip = ip->next;
-		if (ip->owner == client) {
-DPRINTF("  Destroy image %d\n", ip->id);
-			GrFreeImage(ip->id);
-		}
-	}
-#endif
-
 #if MW_FEATURE_TIMERS
 	/* free timers owned by client*/
 	for(tp=list_timer; tp; tp=ntp) {
@@ -2059,9 +2029,6 @@ GsPrintResources(void)
 	GR_GC *gp;
 	GR_REGION *rp;
 	GR_FONT *fp;
-#if MW_FEATURE_IMAGES
-	GR_IMAGE *ip;
-#endif
 #if MW_FEATURE_TIMERS
 	GR_TIMER *tp;
 #endif
@@ -2087,12 +2054,6 @@ GsPrintResources(void)
 	for(rp=listregionp; rp; rp=rp->next) {
 		DPRINTF("%d(%d),", rp->id, rp->owner->id);
 	}
-#if MW_FEATURE_IMAGES
-	DPRINTF("\nImage list:\n");
-	for(ip=listimagep; ip; ip=ip->next) {
-		DPRINTF("%d(%d),", ip->id, ip->owner->id);
-	}
-#endif
 #if MW_FEATURE_TIMERS
 	DPRINTF("\nTimer list:\n");
 	for(tp=list_timer; tp; tp=tp->next) {

@@ -1,7 +1,7 @@
 #ifndef	_SERV_H
 #define	_SERV_H
 /*
- * Copyright (c) 2000, 2003 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2003, 2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002 by Koninklijke Philips Electronics N.V.
  * Copyright (c) 2000 Alex Holden <alex@linuxhacker.org>
  * Copyright (c) 1991 David I. Bell
@@ -13,7 +13,7 @@
 #include "mwsystem.h"
 
 
-#if defined(__ECOS) && !defined(_NO_SVR_MAPPING)
+#if __ECOS && !defined(_NO_SVR_MAPPING)
 /*
  * Since eCos is a single task, multi-threaded environment, the
  * server and the client code share the same namespace.  This means
@@ -33,13 +33,13 @@
 #define GrCopyArea              SVR_GrCopyArea
 #define GrCopyGC                SVR_GrCopyGC
 #define GrCreateFont            SVR_GrCreateFont
-#define GrCreateTimer		SVR_GrCreateTimer
+#define GrCreateTimer		SVR_GrCreateTimer        
 #define GrDelay			SVR_GrDelay
-#define GrDestroyCursor		SVR_GrDestroyCursor
+#define GrDestroyCursor		SVR_GrDestroyCursor      
 #define GrDestroyFont           SVR_GrDestroyFont
 #define GrDestroyGC             SVR_GrDestroyGC
 #define GrDestroyRegion         SVR_GrDestroyRegion
-#define GrDestroyTimer		SVR_GrDestroyTimer
+#define GrDestroyTimer		SVR_GrDestroyTimer       
 #define GrDestroyWindow         SVR_GrDestroyWindow
 #define GrDrawImageBits         SVR_GrDrawImageBits
 #define GrDrawImageFromBuffer	SVR_GrDrawImageFromBuffer
@@ -52,11 +52,11 @@
 #define GrFillPoly              SVR_GrFillPoly
 #define GrFillRect              SVR_GrFillRect
 #define GrFindColor             SVR_GrFindColor
-#define GrFreeFontList		SVR_GrFreeFontList
+#define GrFreeFontList		SVR_GrFreeFontList       
 #define GrFreeImage             SVR_GrFreeImage
 #define GrGetFocus              SVR_GrGetFocus
 #define GrGetFontInfo           SVR_GrGetFontInfo
-#define GrGetFontList		SVR_GrGetFontList
+#define GrGetFontList		SVR_GrGetFontList        
 #define GrGetGCInfo             SVR_GrGetGCInfo
 #define GrGetGCTextSize         SVR_GrGetGCTextSize
 #define GrGetImageInfo          SVR_GrGetImageInfo
@@ -77,7 +77,7 @@
 #define GrMapWindow             SVR_GrMapWindow
 #define GrMoveCursor            SVR_GrMoveCursor
 #define GrMoveWindow            SVR_GrMoveWindow
-#define GrNewCursor		SVR_GrNewCursor
+#define GrNewCursor		SVR_GrNewCursor          
 #define GrNewGC                 SVR_GrNewGC
 #define GrNewInputWindow        SVR_GrNewInputWindow
 #define GrNewPixmap             SVR_GrNewPixmap
@@ -91,7 +91,7 @@
 #define GrPoints                SVR_GrPoints
 #define GrPoint                 SVR_GrPoint
 #define GrPoly                  SVR_GrPoly
-#define GrQueryTree		SVR_GrQueryTree
+#define GrQueryTree		SVR_GrQueryTree          
 #define GrRaiseWindow           SVR_GrRaiseWindow
 #define GrReadArea              SVR_GrReadArea
 #define GrRectInRegion          SVR_GrRectInRegion
@@ -119,7 +119,7 @@
 #define GrSetScreenSaverTimeout SVR_GrSetScreenSaverTimeout
 #define GrSetSelectionOwner     SVR_GrSetSelectionOwner
 #define GrSetSystemPalette      SVR_GrSetSystemPalette
-#define GrSetWindowCursor	SVR_GrSetWindowCursor
+#define GrSetWindowCursor	SVR_GrSetWindowCursor    
 #define GrSetWMProperties       SVR_GrSetWMProperties
 #define GrSubtractRegion        SVR_GrSubtractRegion
 #define GrText                  SVR_GrText
@@ -170,7 +170,7 @@ typedef	int	GR_DRAW_TYPE;
 #define	GR_DRAW_TYPE_WINDOW	1	/* windows */
 #define	GR_DRAW_TYPE_PIXMAP	2	/* pixmaps */
 
-#define	GR_MAX_MODE		MWMODE_MAX
+#define	GR_MAX_MODE		MWROP_MAX
 /*
  * List of elements for events.
  */
@@ -228,7 +228,7 @@ struct gr_gc {
         int             linestyle;	/* GR_LINE_SOLID, GR_LINE_ONOFF_DASH */
         unsigned long   dashmask;
         char            dashcount;
-
+   
         int             fillmode;	/* GR_FILL_SOLID, STIPPLE, OPAQUE_STIPPLE, TILE */
         GR_STIPPLE      stipple;	/* width,height,bitmap*/
         struct {
@@ -253,7 +253,7 @@ struct gr_region {
 	GR_CLIENT *	owner;		/* client that created it */
 	GR_REGION *	next;
 };
-
+ 
 /*
  * Structure to remember fonts.
  */
@@ -282,28 +282,15 @@ struct gr_cursor {
  */
 typedef struct {
 	GR_WINDOW_ID wid;
-	GR_CHAR *typelist;
+	char *typelist;
 } GR_SELECTIONOWNER;
-
-
-#if MW_FEATURE_IMAGES
-/*
- * Structure to remember images.
- */
-typedef struct gr_image	GR_IMAGE;
-struct gr_image {
-	GR_IMAGE_ID	id;
-	GR_CLIENT *	owner;		/* client that created it */
-	GR_IMAGE *	next;
-};
-#endif /* MW_FEATURE_IMAGES */
 
 #if MW_FEATURE_TIMERS
 /*
  * Structure to remember timers.
  */
 typedef struct gr_timer	GR_TIMER;
-struct gr_timer
+struct gr_timer 
 {
     GR_TIMER_ID    id;       /* This instances ID */
     GR_CLIENT     *owner;    /* client that created it */
@@ -321,12 +308,12 @@ struct gr_timer
  * might dereference, and must be included in windows or pixmaps.
  */
 typedef struct gr_drawable {
-	GR_COORD	x;		/* x position (0)*/
-	GR_COORD	y;		/* y position (0)*/
+	GR_COORD	x;			/* x position (0)*/
+	GR_COORD	y;			/* y position (0)*/
 	GR_SIZE		width;		/* width */
 	GR_SIZE		height;		/* height */
-        struct _mwscreendevice *psd;    /* associated screen device */
-	GR_WINDOW_ID	id;		/* window/pixmap id */
+	PSD			psd;    	/* associated screen device */
+	GR_WINDOW_ID id;		/* window/pixmap id */
 } GR_DRAWABLE;
 
 /*
@@ -336,12 +323,12 @@ typedef struct gr_drawable {
 typedef struct gr_pixmap GR_PIXMAP;
 typedef struct gr_window GR_WINDOW;
 struct gr_window {
-	GR_COORD	x;		/* absolute x position */
-	GR_COORD	y;		/* absolute y position */
+	GR_COORD	x;			/* absolute x position */
+	GR_COORD	y;			/* absolute y position */
 	GR_SIZE		width;		/* width */
 	GR_SIZE		height;		/* height */
-        struct _mwscreendevice *psd;    /* associated screen device */
-	GR_WINDOW_ID	id;		/* window id */
+	PSD			psd;		/* associated screen device */
+	GR_WINDOW_ID id;		/* window id */
 	/* end of GR_DRAWABLE common members*/
 
 	GR_WINDOW	*next;		/* next window in complete list */
@@ -350,11 +337,10 @@ struct gr_window {
 	GR_WINDOW	*children;	/* first child window */
 	GR_WINDOW	*siblings;	/* next sibling window */
 	GR_SIZE		bordersize;	/* size of border */
-	GR_COLOR	bordercolor;	/* color of border */
+	GR_COLOR	bordercolor;/* color of border */
 	GR_COLOR	background;	/* background color */
-	//GR_WINDOW_ID	bgpixid;	/* for XSetWindowBackgroundPixmap */
 	GR_PIXMAP	*bgpixmap;	/* background pixmap */
-	int		bgpixmapflags;	/* center, tile etc. */
+	int			bgpixmapflags;	/* center, tile etc. */
 	GR_EVENT_MASK	nopropmask;	/* events not to be propagated */
 	GR_EVENT_CLIENT	*eventclients;	/* clients interested in events */
 	GR_CURSOR_ID	cursorid;	/* cursor for this window */
@@ -362,8 +348,9 @@ struct gr_window {
 	GR_BOOL		realized;	/* TRUE means window is visible */
 	GR_BOOL		output;		/* TRUE if window can do output */
 	GR_WM_PROPS	props;		/* window properties*/
-	GR_CHAR		*title;		/* window title*/
-	MWCLIPREGION	*clipregion;	/* window clipping region */
+	char		*title;		/* window title*/
+	MWCLIPREGION*clipregion;/* window clipping region */
+	GR_PIXMAP	*buffer;	/* window buffer pixmap*/
 };
 
 /*
@@ -371,12 +358,12 @@ struct gr_window {
  * Note: first elements must match GR_DRAWABLE
  */
 struct gr_pixmap {
-	GR_COORD	x;		/* x position (0)*/
-	GR_COORD	y;		/* y position (0)*/
+	GR_COORD	x;			/* x position (0)*/
+	GR_COORD	y;			/* y position (0)*/
 	GR_SIZE		width;		/* width */
 	GR_SIZE		height;		/* height */
-        struct _mwscreendevice *psd;    /* associated screen device */
-	GR_WINDOW_ID	id;		/* pixmap id */
+	PSD			psd;		/* associated screen device */
+	GR_WINDOW_ID id;		/* pixmap id */
 	/* end of GR_DRAWABLE common members*/
 
 	GR_PIXMAP	*next;		/* next pixmap in list */
@@ -389,10 +376,10 @@ struct gr_pixmap {
 typedef struct gr_grabbed_key GR_GRABBED_KEY;
 struct gr_grabbed_key {
 	GR_GRABBED_KEY	*next;	/**< Next entry in the linked list of all key grabs. */
-	GR_CLIENT	*owner;	/**< Client to send hotkey events to. */
-	int		type;	/**< The type parameter passed to GrGrabKey(). */
+	GR_CLIENT		*owner;	/**< Client to send hotkey events to. */
+	int				type;	/**< The type parameter passed to GrGrabKey(). */
 	GR_WINDOW_ID	wid;	/**< Window to send events to. */
-	GR_KEY		key;	/**< 16-bit unicode key value, MWKEY_xxx. */
+	GR_KEY			key;	/**< 16-bit unicode key value, MWKEY_xxx. */
 };
 
 /*
@@ -406,7 +393,7 @@ struct gr_grabbed_key {
 /*
  * Graphics server routines.
  */
-int		GsInitialize(void);
+int			GsInitialize(void);
 void		GsClose(int fd);
 void		GsSelect(GR_TIMEOUT timeout);
 void		GsTerminate(void);
@@ -415,69 +402,60 @@ void		GsRedrawScreen(void);
 void		GsError(GR_ERROR code, GR_ID id);
 GR_BOOL		GsCheckMouseEvent(void);
 GR_BOOL		GsCheckKeyboardEvent(void);
-int		GsReadKeyboard(GR_CHAR *buf, int *modifiers);
-int		GsOpenKeyboard(void);
+int			GsReadKeyboard(char *buf, int *modifiers);
+int			GsOpenKeyboard(void);
 void		GsGetButtonInfo(int *buttons);
 void		GsGetModifierInfo(int *modifiers);
 void		GsCloseKeyboard(void);
 void		GsExposeArea(GR_WINDOW *wp, GR_COORD rootx, GR_COORD rooty,
-			GR_SIZE width, GR_SIZE height, GR_WINDOW *stopwp);
+				GR_SIZE width, GR_SIZE height, GR_WINDOW *stopwp);
 void		GsCheckCursor(void);
-void		GsWpNotifyActivate(GR_WINDOW *wp);
-void		GsWpSetFocus(GR_WINDOW *wp);
-void		GsWpDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm,
-			GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
-void		GsWpTileBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm,
-			GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
-void		GsWpClearWindow(GR_WINDOW *wp, GR_COORD x, GR_COORD y,
-			GR_SIZE width, GR_SIZE height, GR_BOOL exposeflag);
-void		GsWpUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap);
-void		GsWpRealizeWindow(GR_WINDOW *wp, GR_BOOL temp);
-void		GsWpDestroyWindow(GR_WINDOW *wp);
+void		GsNotifyActivate(GR_WINDOW *wp);
+void		GsSetFocus(GR_WINDOW *wp);
+void		GsDrawBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm,
+				GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
+void		GsTileBackgroundPixmap(GR_WINDOW *wp, GR_PIXMAP *pm,
+				GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
+void		GsInitWindowBuffer(GR_WINDOW *wp, GR_SIZE width, GR_SIZE height);
+void		GsClearWindow(GR_WINDOW *wp, GR_COORD x, GR_COORD y,
+				GR_SIZE width, GR_SIZE height, int exposeflag);
+void		GsUnrealizeWindow(GR_WINDOW *wp, GR_BOOL temp_unmap);
+void		GsRealizeWindow(GR_WINDOW *wp, GR_BOOL temp);
+void		GsDestroyWindow(GR_WINDOW *wp);
+GR_WINDOW_ID GsNewPixmap(GR_SIZE width, GR_SIZE height, int format, void *pixels);
+void		GsDestroyPixmap(GR_PIXMAP *pp);
 void		GsSetPortraitMode(int mode);
 void		GsSetPortraitModeFromXY(GR_COORD rootx, GR_COORD rooty);
-void		GsSetClipWindow(GR_WINDOW *wp, MWCLIPREGION *userregion,
-			int flags);
-void		GsHandleMouseStatus(GR_COORD newx, GR_COORD newy,
-			int newbuttons);
-void		GsFreePositionEvent(GR_CLIENT *client, GR_WINDOW_ID wid,
-			GR_WINDOW_ID subwid);
-void		GsDeliverButtonEvent(GR_EVENT_TYPE type, int buttons,
-			int changebuttons, int modifiers);
-void		GsDeliverMotionEvent(GR_EVENT_TYPE type, int buttons,
-			MWKEYMOD modifiers);
+void		GsSetClipWindow(GR_WINDOW *wp, MWCLIPREGION *userregion, int flags);
+void		GsHandleMouseStatus(GR_COORD newx, GR_COORD newy, int newbuttons);
+void		GsFreePositionEvent(GR_CLIENT *client, GR_WINDOW_ID wid, GR_WINDOW_ID subwid);
+void		GsDeliverButtonEvent(GR_EVENT_TYPE type, int buttons, int changebuttons, int modifiers);
+void		GsDeliverMotionEvent(GR_EVENT_TYPE type, int buttons, MWKEYMOD modifiers);
 void		GsDeliverKeyboardEvent(GR_WINDOW_ID wid, GR_EVENT_TYPE type,
-			GR_KEY keyvalue, GR_KEYMOD modifiers,
-			GR_SCANCODE scancode);
-void		GsDeliverExposureEvent(GR_WINDOW *wp, GR_COORD x, GR_COORD y,
-			GR_SIZE width, GR_SIZE height);
+			GR_KEY keyvalue, GR_KEYMOD modifiers, GR_SCANCODE scancode);
+void		GsDeliverExposureEvent(GR_WINDOW *wp,GR_COORD x,GR_COORD y,GR_SIZE width,GR_SIZE height);
 void		GsFreeExposureEvent(GR_CLIENT *client, GR_WINDOW_ID wid,
-			GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
+				GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
 void		GsDeliverUpdateEvent(GR_WINDOW *wp, GR_UPDATE_TYPE utype,
-			GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
-void		GsDeliverGeneralEvent(GR_WINDOW *wp, GR_EVENT_TYPE type,
-			GR_WINDOW *other);
+				GR_COORD x, GR_COORD y, GR_SIZE width, GR_SIZE height);
+void		GsDeliverGeneralEvent(GR_WINDOW *wp, GR_EVENT_TYPE type, GR_WINDOW *other);
 void		GsDeliverPortraitChangedEvent(void);
 void		GsDeliverScreenSaverEvent(GR_BOOL activate);
-void		GsDeliverRawMouseEvent(int x, int y, int buttons, int);
+void		GsDeliverRawMouseEvent(GR_COORD x, GR_COORD y, int buttons, int modifiers);
 void		GsDeliverClientDataReqEvent(GR_WINDOW_ID wid, GR_WINDOW_ID rid,
-			GR_SERIALNO serial, GR_MIMETYPE mimetype);
+				GR_SERIALNO serial, GR_MIMETYPE mimetype);
 void		GsDeliverClientDataEvent(GR_WINDOW_ID wid, GR_WINDOW_ID rid,
-			GR_SERIALNO serial, GR_LENGTH len, GR_LENGTH thislen,
-			void *data);
-void		GsDeliverSelectionChangedEvent(GR_WINDOW_ID old_owner,
-			GR_WINDOW_ID new_owner);
+				GR_SERIALNO serial, GR_LENGTH len, GR_LENGTH thislen, void *data);
+void		GsDeliverSelectionChangedEvent(GR_WINDOW_ID old_owner, GR_WINDOW_ID new_owner);
 #if MW_FEATURE_TIMERS
-void		GsDeliverTimerEvent(GR_CLIENT *client, GR_WINDOW_ID wid,
-			GR_TIMER_ID tid);
+void		GsDeliverTimerEvent(GR_CLIENT *client, GR_WINDOW_ID wid, GR_TIMER_ID tid);
 GR_TIMER	*GsFindTimer(GR_TIMER_ID timer_id);
-void            GsTimerCB(void *arg);
+void		GsTimerCB(void *arg);
 #endif /* MW_FEATURE_TIMERS */
 
 void		GsCheckMouseWindow(void);
 void		GsCheckFocusWindow(void);
-GR_DRAW_TYPE	GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid,
-			GR_DRAWABLE **retdp);
+GR_DRAW_TYPE GsPrepareDrawing(GR_DRAW_ID id, GR_GC_ID gcid, GR_DRAWABLE **retdp);
 GR_BOOL		GsCheckOverlap(GR_WINDOW *topwp, GR_WINDOW *botwp);
 GR_EVENT	*GsAllocEvent(GR_CLIENT *client);
 GR_WINDOW	*GsFindWindow(GR_WINDOW_ID id);
@@ -489,18 +467,18 @@ GR_CURSOR 	*GsFindCursor(GR_CURSOR_ID cursorid);
 GR_WINDOW	*GsPrepareWindow(GR_WINDOW_ID wid);
 GR_WINDOW	*GsFindVisibleWindow(GR_COORD x, GR_COORD y);
 void		GsDrawBorder(GR_WINDOW *wp);
-int		GsCurrentVt(void);
+int			GsCurrentVt(void);
 void		GsRedrawVt(int t);
-int		GsOpenSocket(void);
+int			GsOpenSocket(void);
 void		GsCloseSocket(void);
 void		GsAcceptClient(void);
 void		GsAcceptClientFd(int i);
-int		GsPutCh(int fd, unsigned char c);
+int			GsPutCh(int fd, unsigned char c);
 GR_CLIENT	*GsFindClient(int fd);
 void		GsDestroyClientResources(GR_CLIENT * client);
 void		GsDropClient(int fd);
-int		GsRead(int fd, void *buf, int c);
-int		GsWrite(int fd, void *buf, int c);
+int			GsRead(int fd, void *buf, int c);
+int			GsWrite(int fd, void *buf, int c);
 void		GsHandleClient(int fd);
 void		GsResetScreenSaver(void);
 void		GsActivateScreenSaver(void *arg);
@@ -517,9 +495,6 @@ extern	GR_GC		*cachegcp;		/* cached graphics context */
 extern	GR_GC		*listgcp;		/* list of all gc */
 extern	GR_REGION	*listregionp;		/* list of all regions */
 extern	GR_FONT		*listfontp;		/* list of all fonts */
-#if MW_FEATURE_IMAGES
-extern	GR_IMAGE	*listimagep;		/* list of all images */
-#endif
 extern	GR_CURSOR	*listcursorp;		/* list of all cursors */
 extern	GR_CURSOR	*stdcursor;		/* root window cursor */
 extern	GR_GC		*curgcp;		/* current graphics context */

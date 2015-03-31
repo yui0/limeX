@@ -18,50 +18,24 @@
 #include <string.h>
 #include "device.h"
 #include "devfont.h"
-#include "../drivers/genfont.h"
+#include "genfont.h"
+#include "swap.h"
 #include "intl.h"
 
-//#define DEBUG_TEXT_SHAPING
-
-/**
- * The current font.
- */
-static PMWFONT	gr_pfont;
+#define DEBUG_TEXT_SHAPING	0
 
 /* temp extern decls*/
-extern MWPIXELVAL gr_foreground;
-extern MWPIXELVAL gr_background;
-extern MWBOOL gr_usebg;
 extern MWCOREFONT *user_builtin_fonts;
 
-void corefont_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
-		const void *text, int cc, MWTEXTFLAGS flags);
-static int utf8_to_utf16(const unsigned char *utf8, int cc,
-		unsigned short *unicode16);
-static int uc16_to_utf8(const unsigned short *us, int cc, char *s);
+static int utf8_to_utf16(const unsigned char *utf8, int cc, unsigned short *unicode16);
+static int uc16_to_utf8(const unsigned short *us, int cc, unsigned char *s);
 
-
-/**
- * Set the font for future calls.
- *
- * @param pfont The font to use.  If NULL, the font is not changed.
- * @return The old font.
- */
-PMWFONT
-GdSetFont(PMWFONT pfont)
-{
-	PMWFONT	oldfont = gr_pfont;
-
-	if (pfont)
-		gr_pfont = pfont;
-	return oldfont;
-}
 
 /**
  * Select a font, based on various parameters.
  * If plogfont is specified, name and height parms are ignored
  * and instead used from MWLOGFONT.
- *
+ * 
  * If height is 0, match based on passed name, trying
  * builtins first for speed, then other font renderers.
  * If not found, return 0.  If height=0 is used for
@@ -77,12 +51,13 @@ GdSetFont(PMWFONT pfont)
  *                 plogfont is specified.
  * @param height   The height of the font in pixels.  Ignored if
  *                 plogfont is specified.
+ * @param width    The width of the font in pixels.  Ignored if
+ *                 plogfont is specified.
  * @param plogfont A structure describing the font, or NULL.
  * @return         A new font, or NULL on error.
  */
 PMWFONT
-GdCreateFont(PSD psd, const char *name, MWCOORD height,
-	const PMWLOGFONT plogfont)
+GdCreateFont(PSD psd, const char *name, MWCOORD height, MWCOORD width, const PMWLOGFONT plogfont)
 {
 	int 		i;
 	int		fontht;
@@ -126,6 +101,7 @@ GdCreateFont(PSD psd, const char *name, MWCOORD height,
 		fontclass = plogfont->lfClass;
 #endif
 		height = plogfont->lfHeight;
+		width = plogfont->lfWidth;
 		if (plogfont->lfUnderline)
 			fontattr = MWTF_UNDERLINE;
 	}
@@ -134,14 +110,14 @@ GdCreateFont(PSD psd, const char *name, MWCOORD height,
 	/* check builtin fonts first for speed*/
  	if (!height && (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_BUILTIN)) {
   		for(i = 0; i < scrinfo.fonts; ++i) {
- 			if(!strcmpi(pf[i].name, fontname)) {
+ 			if(!strcasecmp(pf[i].name, fontname)) {
   				pf[i].fontsize = pf[i].cfont->height;
 				pf[i].fontattr = fontattr;
-				DPRINTF("createfont: (height == 0) found builtin font %s (%d)\n", fontname, i);
+				//DPRINTF("createfont: (height == 0) found builtin font %s (%d)\n", fontname, i);
   				return (PMWFONT)&pf[i];
   			}
   		}
-		/*
+		/* 
 		 * Specified height=0 and no builtin font matched name.
 		 * if not font found with other renderer, no font
 		 * will be loaded, and 0 returned.
@@ -151,12 +127,15 @@ GdCreateFont(PSD psd, const char *name, MWCOORD height,
 		 * height, and the closest builtin font to the specified
 		 * height will always be returned.
 		 */
+		if (fontclass != MWLF_CLASS_ANY)
+			EPRINTF("builtin-createfont: %s,%d not found\n",
+				fontname, height);
   	}
 
 	/* check user builtin fonts next*/
 	upf = user_builtin_fonts;
 	while ( (upf != NULL) && (upf->name != NULL) ) {
-		if(!strcmpi(upf->name, fontname) && (upf->cfont->height == height) ) {
+		if(!strcasecmp(upf->name, fontname) && (upf->cfont->height == height) ) {
 			if( upf->fontprocs == NULL )
 				gen_setfontproc(upf);
 			upf->fontsize = upf->cfont->height;
@@ -171,106 +150,106 @@ GdCreateFont(PSD psd, const char *name, MWCOORD height,
 
 #if HAVE_FNT_SUPPORT
 	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_FNT) {
-		pfont = (PMWFONT) fnt_createfont(fontname, height, fontattr);
+		pfont = (PMWFONT)fnt_createfont(fontname, height, width, fontattr);
 		if (pfont) {
 			DPRINTF("fnt_createfont: using font %s\n", fontname);
-			return(pfont);
+			return pfont;
 		}
-		EPRINTF("fnt_createfont: %s,%d not found\n", fontname, height);
+		if (fontclass != MWLF_CLASS_ANY)
+			EPRINTF("fnt_createfont: %s,%d not found\n", fontname, height);
 	}
 #endif
 
 #if HAVE_PCF_SUPPORT
 	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_PCF) {
-		pfont = (PMWFONT) pcf_createfont(fontname, height, fontattr);
+		pfont = (PMWFONT)pcf_createfont(fontname, height, width, fontattr);
 		if (pfont) {
 			DPRINTF("pcf_createfont: using font %s\n", fontname);
-			return(pfont);
+			return pfont;
 		}
-		EPRINTF("pcf_createfont: %s,%d not found\n", fontname, height);
+		if (fontclass != MWLF_CLASS_ANY)
+			EPRINTF("pcf_createfont: %s,%d not found\n", fontname, height);
 	}
-#endif
-
-#if HAVE_FREETYPE_SUPPORT
- 	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_FREETYPE) {
-		if (freetype_init(psd)) {
-			if (plogfont && abs(plogfont->lfHeight) > FFMINAA_HEIGHT &&
-				plogfont->lfQuality)
-					fontattr |= MWTF_ANTIALIAS;
-
-			pfont = (PMWFONT)freetype_createfont(fontname, height,
-					fontattr);
-			if(pfont) {
-				/* FIXME kaffe kluge*/
-				pfont->fontattr |= MWTF_FREETYPE;
-				return pfont;
-			}
- 			EPRINTF("freetype_createfont: %s,%d not found\n",
-				fontname, height);
-		}
-  	}
 #endif
 
 #if HAVE_FREETYPE_2_SUPPORT
  	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_FREETYPE) {
-		if (freetype_init(psd)) {
-			/* FIXME auto antialias for height > 14 for kaffe*/
-			if (plogfont && plogfont->lfHeight > 14 &&
-				plogfont->lfQuality)
-					fontattr |= MWTF_ANTIALIAS;
+		/* FIXME auto antialias for height > 14 for kaffe*/
+		if (plogfont && abs(plogfont->lfHeight) > FT_MINAA_HEIGHT && plogfont->lfQuality)
+				fontattr |= MWTF_ANTIALIAS;
 
-			pfont = (PMWFONT)freetype2_createfont(fontname, height,
-					fontattr);
-			if(pfont) {
-				/* FIXME kaffe kluge*/
-				pfont->fontattr |= MWTF_FREETYPE;
-				return pfont;
-			}
-			EPRINTF("freetype2_createfont: %s,%d not found\n",
-				fontname, height);
+		pfont = (PMWFONT)freetype2_createfont(fontname, height, width, fontattr);
+		if(pfont) {
+			//DPRINTF("freetype_createfont: using font %s\n", fontname);
+			/* FIXME kaffe kluge*/
+			pfont->fontattr |= MWTF_FREETYPE;
+			return pfont;
 		}
+		if (fontclass != MWLF_CLASS_ANY)
+			EPRINTF("freetype2_createfont: %s,%d not found\n", fontname, height);
   	}
 #endif
 
 #if HAVE_T1LIB_SUPPORT
 	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_T1LIB) {
-		if (t1lib_init(psd)) {
-			pfont = (PMWFONT)t1lib_createfont(fontname, height,
-					fontattr);
-			if(pfont)
-				return pfont;
-			EPRINTF("t1lib_createfont: %s,%d not found\n",
-				fontname, height);
-		}
+		pfont = (PMWFONT)t1lib_createfont(fontname, height, width, fontattr);
+		if(pfont)
+			return pfont;
+		if (fontclass != MWLF_CLASS_ANY)
+			EPRINTF("t1lib_createfont: %s,%d not found\n", fontname, height);
   	}
 #endif
 
 #if HAVE_HZK_SUPPORT
 	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_HZK) {
-		/* Make sure the library is initialized */
-		if (hzk_init(psd)) {
-			pfont = (PMWFONT)hzk_createfont(fontname, height, fontattr);
-			if(pfont)
-				return pfont;
+		pfont = (PMWFONT)hzk_createfont(fontname, height, width, fontattr);
+		if(pfont)		
+			return pfont;
+		if (fontclass != MWLF_CLASS_ANY)
 			EPRINTF("hzk_createfont: %s,%d not found\n", fontname, height);
-		}
 	}
 #endif
 
 #if HAVE_EUCJP_SUPPORT
  	if (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_MGL) {
-		pfont = (PMWFONT)eucjp_createfont(fontname, height, fontattr);
+		pfont = (PMWFONT)eucjp_createfont(fontname, height, width, fontattr);
 		if (pfont) {
 			DPRINTF("eujcp_createfont: using font %s\n", fontname);
 			return pfont;
 		}
-		EPRINTF("eucjp_createfont: %s,%d not found\n", fontname, height);
+		if (fontclass != MWLF_CLASS_ANY)
+			EPRINTF("eucjp_createfont: %s,%d not found\n", fontname, height);
 	}
 #endif
 
+	if (fontclass == MWLF_CLASS_ANY) {
+		EPRINTF("createfont: %s,%d not found\n", fontname, height);
+		EPRINTF("  (tried "
+			"builtin_createfont"
+#if HAVE_FNT_SUPPORT
+			", fnt_createfont"
+#endif
+#if HAVE_PCF_SUPPORT
+			", pcf_createfont"
+#endif
+#if HAVE_FREETYPE_2_SUPPORT
+			", freetype2_createfont"
+#endif
+#if HAVE_T1LIB_SUPPORT
+			", t1lib_createfont"
+#endif
+#if HAVE_HZK_SUPPORT
+			", hzk_createfont"
+#endif
+#if HAVE_EUCJP_SUPPORT
+			", eujcp_createfont"
+#endif
+			")\n");
+	}
+
 	/*
-	 * No font yet found.  If height specified, we'll return
-	 * a builtin font.  Otherwise 0 will be returned.
+	 * No font yet found.  If the height was specified, we'll return the
+	 * most close builtin font as a fallback.  Otherwise 0 will be returned.
 	 */
  	if (height != 0 && (fontclass == MWLF_CLASS_ANY || fontclass == MWLF_CLASS_BUILTIN)) {
 		/* find builtin font closest in height*/
@@ -280,19 +259,19 @@ GdCreateFont(PSD psd, const char *name, MWCOORD height,
 		for(i = 0; i < scrinfo.fonts; ++i) {
 			pfont = (PMWFONT)&pf[i];
 			GdGetFontInfo(pfont, &fontinfo);
-			if(fontht > abs(height-fontinfo.height)) {
+			if(fontht > abs(height-fontinfo.height)) { 
 				fontno = i;
 				fontht = abs(height-fontinfo.height);
 			}
 		}
 		pf[fontno].fontsize = pf[fontno].cfont->height;
 		pf[fontno].fontattr = fontattr;
-DPRINTF("createfont: (height != 0) using builtin font %s (%d)\n", pf[fontno].name, fontno);
+		EPRINTF("createfont: height given, using builtin font %s (%d) as fallback\n", pf[fontno].name, fontno);
 		return (PMWFONT)&pf[fontno];
 	}
 
-	/* no font matched: don't load font, return 0*/
-DPRINTF("createfont: no font found, returning NULL\n");
+	/* no font found: don't load any font and return 0*/
+	EPRINTF("createfont: no height given, fallback search impossible, returning NULL\n");
 	return 0;
 }
 
@@ -304,15 +283,12 @@ DPRINTF("createfont: no font found, returning NULL\n");
  * @return         The old size.
  */
 MWCOORD
-GdSetFontSize(PMWFONT pfont, MWCOORD fontsize)
+GdSetFontSize(PMWFONT pfont, MWCOORD height, MWCOORD width)
 {
-	MWCOORD oldfontsize = pfont->fontsize;
-	pfont->fontsize = fontsize;
-
 	if (pfont->fontprocs->SetFontSize)
-	    pfont->fontprocs->SetFontSize(pfont, fontsize);
+	    return pfont->fontprocs->SetFontSize(pfont, height, width);
 
-	return oldfontsize;
+	return 0;
 }
 
 /**
@@ -330,7 +306,7 @@ GdSetFontRotation(PMWFONT pfont, int tenthdegrees)
 
 	if (pfont->fontprocs->SetFontRotation)
 	    pfont->fontprocs->SetFontRotation(pfont, tenthdegrees);
-
+	
 	return oldrotation;
 }
 
@@ -346,15 +322,10 @@ GdSetFontRotation(PMWFONT pfont, int tenthdegrees)
 int
 GdSetFontAttr(PMWFONT pfont, int setflags, int clrflags)
 {
-	MWCOORD	oldattr = pfont->fontattr;
-
-	pfont->fontattr &= ~clrflags;
-	pfont->fontattr |= setflags;
-
 	if (pfont->fontprocs->SetFontAttr)
-	    pfont->fontprocs->SetFontAttr(pfont, setflags, clrflags);
-
-	return oldattr;
+	    return pfont->fontprocs->SetFontAttr(pfont, setflags, clrflags);
+	
+	return 0;
 }
 
 /**
@@ -408,12 +379,12 @@ GdGetFontInfo(PMWFONT pfont, PMWFONTINFO pfontinfo)
  *              The encoding of str defaults to ASCII if not specified.
  */
 void
-GdText(PSD psd, MWCOORD x, MWCOORD y, const void *str, int cc,MWTEXTFLAGS flags)
+GdText(PSD psd, PMWFONT pfont, MWCOORD x, MWCOORD y, const void *str, int cc,MWTEXTFLAGS flags)
 {
 	const void *	text;
-	int		defencoding = gr_pfont->fontprocs->encoding;
+	int		defencoding = pfont->fontprocs->encoding;
 	int		force_uc16 = 0;
-	unsigned long	buf[256];
+	uint32_t *buf = NULL;
 
 	/*
 	 * DBCS encoding is handled a little special: if the selected
@@ -421,46 +392,58 @@ GdText(PSD psd, MWCOORD x, MWCOORD y, const void *str, int cc,MWTEXTFLAGS flags)
 	 * rather than converting to the renderer specification.  This is
 	 * because we allow DBCS-encoded strings to draw using the
 	 * specially-compiled-in font if the character is not ASCII.
-	 * This is specially handled in corefont_drawtext below.
+	 * This is specially handled in gen_drawtext below.
 	 *
 	 * If the font is not builtin, then the drawtext routine must handle
 	 * all glyph output, including ASCII.
 	 */
 	if (flags & MWTF_DBCSMASK) {
 		/* force double-byte sequences to UC16 if builtin font only*/
-		if (gr_pfont->fontprocs->GetTextBits == gen_gettextbits &&
-		    gr_pfont->fontprocs->DrawText == corefont_drawtext) {
+		if (pfont->fontprocs == &mwfontprocs) {
 			defencoding = MWTF_UC16;
 			force_uc16 = 1;
 		}
 	}
 
+	/* use strlen for char count when ascii or dbcs*/
+	if(cc == -1 && (flags & MWTF_PACKMASK) == MWTF_ASCII)
+		cc = strlen((char *)str);
+
 	/* convert encoding if required*/
 	if((flags & (MWTF_PACKMASK|MWTF_DBCSMASK)) != defencoding) {
+		/* allocate enough for output string utf8/uc32 is max 4 bytes, uc16 max 2*/
+		buf = ALLOCA(cc * 4);
 		cc = GdConvertEncoding(str, flags, cc, buf, defencoding);
 		flags &= ~MWTF_PACKMASK;	/* keep DBCS bits for drawtext*/
 		flags |= defencoding;
 		text = buf;
 	} else text = str;
 
-	/* use strlen for char count when ascii or dbcs*/
-	if(cc == -1 && (flags & MWTF_PACKMASK) == MWTF_ASCII)
-		cc = strlen((char *)str);
-
-	if(cc <= 0 || !gr_pfont->fontprocs->DrawText)
+	if(cc <= 0 || !pfont->fontprocs->DrawText) {
+		if (buf)
+			FREEA(buf);
 		return;
+	}
 
 	/* draw text string, DBCS flags may still be set*/
+#if HAVE_KSC5601_SUPPORT
+	if (flags & MWTF_DBCS_EUCKR)
+		;
+	else
+#endif
 	if (!force_uc16)	/* remove DBCS flags if not needed*/
 		flags &= ~MWTF_DBCSMASK;
-	gr_pfont->fontprocs->DrawText(gr_pfont, psd, x, y, text, cc, flags);
+	pfont->fontprocs->DrawText(pfont, psd, x, y, text, cc, flags);
+
+	if (buf)
+		FREEA(buf);
 }
 
 /*
- * Draw ascii text using COREFONT type font.
+ * Draw ASCII or MWTF_UC16 text using COREFONT type font (buitin, PCF, FNT)
  */
 void
-corefont_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
+gen_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
 	const void *text, int cc, MWTEXTFLAGS flags)
 {
 	const unsigned char *str = text;
@@ -470,71 +453,88 @@ corefont_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
 	MWCOORD		base;			/* baseline of text*/
 	MWCOORD		startx, starty;
 	const MWIMAGEBITS *bitmap;		/* bitmap for characters */
-	MWBOOL		bgstate;
+	MWBOOL		bgstate = gr_usebg;
 	int		clip;
+	MWBLITFUNC convblit;
+	MWBLITPARMS parms;
+
+	/* fill in unchanging convblit parms*/
+	parms.op = MWROP_COPY;					/* copy to dst, 1=fg (0=bg if usebg)*/
+	parms.data_format = MWIF_MONOWORDMSB;	/* data is 1bpp words, msb first*/
+	parms.fg_colorval = gr_foreground_rgb;
+	parms.bg_colorval = gr_background_rgb;
+	parms.fg_pixelval = gr_foreground;		/* for palette mask convblit*/
+	parms.bg_pixelval = gr_background;
+	parms.usebg = gr_usebg;
+	parms.srcx = 0;
+	parms.srcy = 0;
+	parms.dst_pitch = psd->pitch;			/* usually set in GdConversionBlit*/
+	parms.data_out = psd->addr;
+	parms.srcpsd = NULL;
+	convblit = GdFindConvBlit(psd, MWIF_MONOWORDMSB, MWROP_COPY);
 
 	if (flags & MWTF_DBCSMASK)
 		dbcs_gettextsize(pfont, istr, cc, flags, &width, &height, &base);
 	else pfont->fontprocs->GetTextSize(pfont, str, cc, flags, &width, &height, &base);
-
+	
 	if (flags & MWTF_BASELINE)
 		y -= base;
 	else if (flags & MWTF_BOTTOM)
 		y -= (height - 1);
 	startx = x;
 	starty = y + base;
-	bgstate = gr_usebg;
 
+	/* pre-clip entire text area for speed*/
 	switch (clip = GdClipArea(psd, x, y, x + width - 1, y + height - 1)) {
 	case CLIP_VISIBLE:
-		/* clear background once for all characters*/
-		if (gr_usebg)
-			psd->FillRect(psd, x, y, x + width - 1, y + height - 1,
-				gr_background);
-
-		/* FIXME if we had a low-level text drawer, plug in here:
-		psd->DrawText(psd, x, y, str, cc, gr_foreground, pfont);
-		GdFixCursor(psd);
-		return;
-		*/
-
-		/* save state for combined routine below*/
-		bgstate = gr_usebg;
-		gr_usebg = FALSE;
+		/* fast clear background once for all characters if drawing point by point*/
+		if (!convblit && gr_usebg) {
+			psd->FillRect(psd, x, y, x + width - 1, y + height - 1, gr_background);
+			gr_usebg = FALSE;
+		}
 		break;
 
 	case CLIP_INVISIBLE:
 		return;
 	}
 
-	/* Get the bitmap for each character individually, and then display
+	/*
+	 * Get the bitmap for each character individually, and then display
 	 * them possibly using clipping for each one.
 	 */
-
-	/*
-	 * If the string was marked as DBCS, then we've forced the conversion
-	 * to UC16 in GdText.  Here we special-case the non-ASCII values and
-	 * get the bitmaps from the specially-compiled-in font.  Otherwise,
-	 * we draw them using the normal pfont->fontprocs->GetTextBits.
-	 */
 	while (--cc >= 0 && x < psd->xvirtres) {
+		/*
+	 	 * If the string was marked as DBCS, then we've forced the conversion
+	 	 * to UC16 in GdText.  Here we special-case the non-ASCII values and
+	 	 * get the bitmaps from the specially-compiled-in font.  Otherwise,
+	 	 * we draw them using the normal pfont->fontprocs->GetTextBits.
+	 	 */
 		if (flags & MWTF_DBCSMASK)
-			dbcs_gettextbits(pfont, *istr++, flags, &bitmap, &width,
-				&height, &base);
+			dbcs_gettextbits(pfont, *istr++, flags, &bitmap, &width, &height, &base);
 		else {
 			int ch;
 
 			if (pfont->fontprocs->encoding == MWTF_UC16)
 				ch = *istr++;
 			else ch = *str++;
-			pfont->fontprocs->GetTextBits(pfont, ch, &bitmap, &width,
-				&height, &base);
+			pfont->fontprocs->GetTextBits(pfont, ch, &bitmap, &width, &height, &base);
 		}
 
-		if (clip == CLIP_VISIBLE)
-			drawbitmap(psd, x, y, width, height, bitmap);
-		else
-			GdBitmap(psd, x, y, width, height, bitmap);
+		/* use fast blit for text draw, fallback draw point-by-point*/
+		if (convblit) {
+			parms.dstx = x;
+			parms.dsty = y;
+			parms.height = height;
+			parms.width = width;
+			parms.src_pitch = ((width + 15) >> 4) << 1;	/* pad to WORD boundary*/
+			parms.data = (char *)bitmap;
+			/* skip clipping checks if fully visible*/
+			if (clip == CLIP_VISIBLE)
+				convblit(psd, &parms);
+			else
+				GdConversionBlit(psd, &parms);
+		} else
+			GdBitmapByPoint(psd, x, y, width, height, bitmap, clip);
 		x += width;
 	}
 
@@ -547,175 +547,7 @@ corefont_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
 	GdFixCursor(psd);
 }
 
-#if HAVE_FNT_SUPPORT | HAVE_PCF_SUPPORT
-/*
- * Draw MWTF_UC16 text using COREFONT type font.
- */
-void
-gen16_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
-	const void *text, int cc, MWTEXTFLAGS flags)
-{
-	const unsigned short *str = text;
-	MWCOORD		width;			/* width of text area */
-	MWCOORD		height;			/* height of text area */
-	MWCOORD		base;			/* baseline of text */
-	MWCOORD		startx, starty;
-	const MWIMAGEBITS *bitmap;		/* bitmap for characters */
-	MWBOOL		bgstate;
-	int		clip;
-
-	pfont->fontprocs->GetTextSize(pfont, str, cc, flags, &width, &height, &base);
-
-	if (flags & MWTF_BASELINE)
-		y -= base;
-	else if (flags & MWTF_BOTTOM)
-		y -= (height - 1);
-	startx = x;
-	starty = y + base;
-	bgstate = gr_usebg;
-
-	switch (clip = GdClipArea(psd, x, y, x + width - 1, y + height - 1)) {
-	case CLIP_VISIBLE:
-		/* clear background once for all characters*/
-		if (gr_usebg)
-			psd->FillRect(psd, x, y, x + width - 1, y + height - 1,
-				gr_background);
-
-		/* FIXME if we had a low-level text drawer, plug in here:
-		psd->DrawText(psd, x, y, str, cc, gr_foreground, pfont);
-		GdFixCursor(psd);
-		return;
-		*/
-
-		/* save state for combined routine below*/
-		bgstate = gr_usebg;
-		gr_usebg = FALSE;
-		break;
-
-	case CLIP_INVISIBLE:
-		return;
-	}
-
-	/* Get the bitmap for each character individually, and then display
-	 * them using clipping for each one.
-	 */
-	while (--cc >= 0 && x < psd->xvirtres) {
-		unsigned int ch = *str++;
-		pfont->fontprocs->GetTextBits(pfont, ch, &bitmap, &width,
-			&height, &base);
-
-		if (clip == CLIP_VISIBLE)
-			drawbitmap(psd, x, y, width, height, bitmap);
-		else
-			GdBitmap(psd, x, y, width, height, bitmap);
-		x += width;
-	}
-
-	if (pfont->fontattr & MWTF_UNDERLINE)
-		GdLine(psd, startx, starty, x, starty, FALSE);
-
-	/* restore background draw state*/
-	gr_usebg = bgstate;
-
-	GdFixCursor(psd);
-}
-#endif /* HAVE_FNT_SUPPORT | HAVE_PCF_SUPPORT*/
-
-#if HAVE_T1LIB_SUPPORT | HAVE_FREETYPE_SUPPORT
-/*
- * Produce blend table from src and dst based on passed alpha table
- * Used because we don't quite yet have GdArea with alphablending,
- * so we pre-blend fg/bg colors for fade effect.
- */
-void
-alphablend(PSD psd, OUTPIXELVAL *out, MWPIXELVAL src, MWPIXELVAL dst,
-	unsigned char *alpha, int count)
-{
-	unsigned int	a, d;
-	unsigned char	r, g, b;
-	MWCOLORVAL	palsrc, paldst;
-	extern MWPALENTRY gr_palette[256];
-
-	while (--count >= 0) {
-	    a = *alpha++;
-
-#define BITS(pixel,shift,mask)	(((pixel)>>shift)&(mask))
-	    if(a == 0)
-		*out++ = dst;
-	    else if(a == 255)
-		*out++ = src;
-	    else
-		switch(psd->pixtype) {
-	        case MWPF_TRUECOLOR0888:
-	        case MWPF_TRUECOLOR888:
-		    d = BITS(dst, 16, 0xff);
-		    r = (unsigned char)(((BITS(src, 16, 0xff) - d)*a)>>8) + d;
-		    d = BITS(dst, 8, 0xff);
-		    g = (unsigned char)(((BITS(src, 8, 0xff) - d)*a)>>8) + d;
-		    d = BITS(dst, 0, 0xff);
-		    b = (unsigned char)(((BITS(src, 0, 0xff) - d)*a)>>8) + d;
-		    *out++ = (r << 16) | (g << 8) | b;
-		    break;
-
-	        case MWPF_TRUECOLOR565:
-		    d = BITS(dst, 11, 0x1f);
-		    r = (unsigned char)(((BITS(src, 11, 0x1f) - d)*a)>>8) + d;
-		    d = BITS(dst, 5, 0x3f);
-		    g = (unsigned char)(((BITS(src, 5, 0x3f) - d)*a)>>8) + d;
-		    d = BITS(dst, 0, 0x1f);
-		    b = (unsigned char)(((BITS(src, 0, 0x1f) - d)*a)>>8) + d;
-		    *out++ = (r << 11) | (g << 5) | b;
-		    break;
-
-	        case MWPF_TRUECOLOR555:
-		    d = BITS(dst, 10, 0x1f);
-		    r = (unsigned char)(((BITS(src, 10, 0x1f) - d)*a)>>8) + d;
-		    d = BITS(dst, 5, 0x1f);
-		    g = (unsigned char)(((BITS(src, 5, 0x1f) - d)*a)>>8) + d;
-		    d = BITS(dst, 0, 0x1f);
-		    b = (unsigned char)(((BITS(src, 0, 0x1f) - d)*a)>>8) + d;
-		    *out++ = (r << 10) | (g << 5) | b;
-		    break;
-
-	        case MWPF_TRUECOLOR332:
-		    d = BITS(dst, 5, 0x07);
-		    r = (unsigned char)(((BITS(src, 5, 0x07) - d)*a)>>8) + d;
-		    d = BITS(dst, 2, 0x07);
-		    g = (unsigned char)(((BITS(src, 2, 0x07) - d)*a)>>8) + d;
-		    d = BITS(dst, 0, 0x03);
-		    b = (unsigned char)(((BITS(src, 0, 0x03) - d)*a)>>8) + d;
-		    *out++ = (r << 5) | (g << 2) | b;
-		    break;
-
-	        case MWPF_TRUECOLOR233:
-		    d = BITS(dst, 0, 0x07);
-		    r = (unsigned char)(((BITS(src, 0, 0x07) - d)*a)>>8) + d;
-		    d = BITS(dst, 3, 0x07);
-		    g = (unsigned char)(((BITS(src, 3, 0x07) - d)*a)>>8) + d;
-		    d = BITS(dst, 6, 0x03);
-		    b = (unsigned char)(((BITS(src, 6, 0x03) - d)*a)>>8) + d;
-		    *out++ = (r << 0) | (g << 3) | (b << 6);
-		    break;
-
-	        case MWPF_PALETTE:
-		    /* reverse lookup palette entry for blend ;-)*/
-		    palsrc = GETPALENTRY(gr_palette, src);
-		    paldst = GETPALENTRY(gr_palette, dst);
-		    d = REDVALUE(paldst);
-		    r = (unsigned char)(((REDVALUE(palsrc) - d)*a)>>8) + d;
-		    d = GREENVALUE(paldst);
-		    g = (unsigned char)(((GREENVALUE(palsrc) - d)*a)>>8) + d;
-		    d = BLUEVALUE(paldst);
-		    b = (unsigned char)(((BLUEVALUE(palsrc) - d)*a)>>8) + d;
-		    *out++ = GdFindNearestColor(gr_palette, (int)psd->ncolors,
-				MWRGB(r, g, b));
-		    break;
-	  	}
-	}
-}
-#endif /*HAVE_T1LIB_SUPPORT | HAVE_FREETYPE_SUPPORT*/
-
-#if !HAVE_FREETYPE_SUPPORT
+/* null routines (need porting from freetype 1)*/
 int
 GdGetTextSizeEx(PMWFONT pfont, const void *str, int cc,int nMaxExtent,
 	int* lpnFit, int* alpDx,MWCOORD *pwidth,MWCOORD *pheight,
@@ -735,7 +567,6 @@ GdGetFontList(MWFONTLIST ***fonts, int *numfonts)
 {
 	*numfonts = -1;
 }
-#endif /* !HAVE_FREETYPE_SUPPORT*/
 
 /**
  * Convert text from one encoding to another.
@@ -759,13 +590,14 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 {
 	const unsigned char 	*istr8;
 	const unsigned short 	*istr16;
-	const unsigned long	*istr32;
+	const uint32_t	*istr32;
 	unsigned char 		*ostr8;
 	unsigned short 		*ostr16;
-	unsigned long		*ostr32;
+	uint32_t		*ostr32;
 	unsigned int		ch;
+	unsigned short		s;
 	int			icc;
-	unsigned short		buf16[512];
+	unsigned short *buf16 = NULL;
 
 	iflags &= MWTF_PACKMASK|MWTF_DBCSMASK;
 	oflags &= MWTF_PACKMASK|MWTF_DBCSMASK;
@@ -776,12 +608,19 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 
 	/* first check for utf8 input encoding*/
 	if(iflags == MWTF_UTF8) {
+		/* allocate enough for output string, uc16 max 2*/
+		if (oflags != MWTF_UC16)
+			buf16 = ALLOCA(cc * 2);
+
 		/* we've only got uc16 now so convert to uc16...*/
 		cc = utf8_to_utf16((unsigned char *)istr, cc,
 			oflags==MWTF_UC16?(unsigned short*) ostr: buf16);
 
-		if(oflags == MWTF_UC16 || cc < 0)
+		if(oflags == MWTF_UC16 || cc < 0) {
+			if (buf16)
+				FREEA(buf16);
 			return cc;
+		}
 
 		/* will decode again to requested format (probably ascii)*/
 		iflags = MWTF_UC16;
@@ -792,6 +631,8 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 	if(iflags == MWTF_UC16 && oflags == MWTF_ASCII) {
 		/* only support uc16 convert to ascii now...*/
 		cc = UC16_to_GB( istr, cc, ostr);
+		if (buf16)
+			FREEA(buf16);
 		return cc;
 	}
 #endif
@@ -826,16 +667,14 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 		case MWTF_DBCS_BIG5:	/* Chinese BIG5*/
 			ch = *istr8++;
 			if (ch >= 0xA1 && ch <= 0xF9 && icc &&
-			    ((*istr8 >= 0x40 && *istr8 <= 0x7E) ||
-			     (*istr8 >= 0xA1 && *istr8 <= 0xFE))) {
+			    ((*istr8 >= 0x40 && *istr8 <= 0x7E) || (*istr8 >= 0xA1 && *istr8 <= 0xFE))) {
 				ch = (ch << 8) | *istr8++;
 				--icc;
 			}
 			break;
 		case MWTF_DBCS_EUCCN:	/* Chinese EUCCN (GB2312+0x80)*/
 			ch = *istr8++;
-			if (ch >= 0xA1 && ch <= 0xF7 && icc &&
-			    *istr8 >= 0xA1 && *istr8 <= 0xFE) {
+			if (ch >= 0xA1 && ch <= 0xF7 && icc && *istr8 >= 0xA1 && *istr8 <= 0xFE) {
 				ch = (ch << 8) | *istr8++;
 				--icc;
 			}
@@ -844,14 +683,17 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 			ch = *istr8++;
 			if (ch >= 0xA1 && ch <= 0xFE && icc &&
 			    *istr8 >= 0xA1 && *istr8 <= 0xFE) {
+#if MW_CPU_BIG_ENDIAN
 				ch = (ch << 8) | *istr8++;
+#else
+				ch = ch | (*istr8++ << 8);
+#endif
 				--icc;
 			}
 			break;
 		case MWTF_DBCS_EUCJP:	/* Japanese EUCJP*/
 			ch = *istr8++;
-			if (ch >= 0xA1 && ch <= 0xFE && icc &&
-			    *istr8 >= 0xA1 && *istr8 <= 0xFE) {
+			if (ch >= 0xA1 && ch <= 0xFE && icc && *istr8 >= 0xA1 && *istr8 <= 0xFE) {
 				ch = (ch << 8) | *istr8++;
 				--icc;
 			}
@@ -859,11 +701,9 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 		case MWTF_DBCS_JIS:	/* Japanese JISX0213*/
 			ch = *istr8++;
 			if (icc && (
-			    (ch >= 0xA1 && ch <= 0xFE && *istr8 >= 0xA1 && *istr8 <= 0xFE)
-			    ||
-			    (((ch >= 0x81 && ch <= 0x9F) || (ch >= 0xE0 && ch <= 0xEF)) &&
-			     (*istr8 >= 0x40 && *istr8 <= 0xFC && *istr8 != 0x7F))
-			            )) {
+				(ch >= 0xA1 && ch <= 0xFE && *istr8 >= 0xA1 && *istr8 <= 0xFE) ||
+			     (((ch >= 0x81 && ch <= 0x9F) || (ch >= 0xE0 && ch <= 0xEF)) &&
+			       (*istr8 >= 0x40 && *istr8 <= 0xFC && *istr8 != 0x7F)))) {
 					ch = (ch << 8) | *istr8++;
 					--icc;
 			}
@@ -875,7 +715,8 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 			*ostr8++ = (unsigned char)ch;
 			break;
 		case MWTF_UTF8:
-			ostr8 += uc16_to_utf8 ( (unsigned short*)&ch, 1, ostr8 );
+			s = (unsigned short)ch;
+			ostr8 += uc16_to_utf8(&s, 1, ostr8);
 			break;
 		case MWTF_UC16:
 			*ostr16++ = (unsigned short)ch;
@@ -890,6 +731,9 @@ GdConvertEncoding(const void *istr, MWTEXTFLAGS iflags, int cc, void *ostr,
 		}
 		++cc;
 	}
+
+	if (buf16)
+		FREEA(buf16);
 	return cc;
 }
 
@@ -917,33 +761,35 @@ GdGetTextSize(PMWFONT pfont, const void *str, int cc, MWCOORD *pwidth,
 	const void *	text;
 	MWTEXTFLAGS	defencoding = pfont->fontprocs->encoding;
 	int		force_uc16 = 0;
-	unsigned long	buf[256];
+	uint32_t *buf = NULL;
 
 	/* DBCS handled specially: see comment in GdText*/
 	if (flags & MWTF_DBCSMASK) {
 		/* force double-byte sequences to UC16 if builtin font only*/
-		if (pfont->fontprocs->GetTextBits == gen_gettextbits &&
-		    pfont->fontprocs->DrawText == corefont_drawtext) {
+		if (pfont->fontprocs == &mwfontprocs) {
 			defencoding = MWTF_UC16;
 			force_uc16 = 1;
 		}
 	}
 
+	/* use strlen for char count when ascii or dbcs*/
+	if(cc == -1 && (flags & MWTF_PACKMASK) == MWTF_ASCII)
+		cc = strlen((char *)str);
+
 	/* convert encoding if required*/
 	if((flags & (MWTF_PACKMASK|MWTF_DBCSMASK)) != defencoding) {
-		/*FIXME: if buf is not big enough, buf overflow may cause exceptions!!!!*/
+		/* allocate enough for output string utf8/uc32 is max 4 bytes, uc16 max 2*/
+		buf = ALLOCA(cc * 4);
 		cc = GdConvertEncoding(str, flags, cc, buf, defencoding);
 		flags &= ~MWTF_PACKMASK; /* keep DBCS bits for gettextsize*/
 		flags |= defencoding;
 		text = buf;
 	} else text = str;
 
-	/* use strlen for char count when ascii or dbcs*/
-	if(cc == -1 && (flags & MWTF_PACKMASK) == MWTF_ASCII)
-		cc = strlen((char *)str);
-
 	if(cc <= 0 || !pfont->fontprocs->GetTextSize) {
 		*pwidth = *pheight = *pbase = 0;
+		if (buf)
+			FREEA(buf);
 		return;
 	}
 
@@ -951,6 +797,9 @@ GdGetTextSize(PMWFONT pfont, const void *str, int cc, MWCOORD *pwidth,
 	if (force_uc16)		/* if UC16 conversion forced, string is DBCS*/
 		dbcs_gettextsize(pfont, text, cc, flags, pwidth, pheight, pbase);
 	else pfont->fontprocs->GetTextSize(pfont, text, cc, flags, pwidth, pheight, pbase);
+
+	if (buf)
+		FREEA(buf);
 }
 
 /**
@@ -968,8 +817,8 @@ GdGetTextSize(PMWFONT pfont, const void *str, int cc, MWCOORD *pwidth,
  * @return       New font, or NULL on error.
  */
 PMWFONT
-GdCreateFontFromBuffer(PSD psd, const unsigned char *buffer,
-		       unsigned length, const char *format, MWCOORD height)
+GdCreateFontFromBuffer(PSD psd, const unsigned char *buffer, unsigned length,
+	const char *format, MWCOORD height, MWCOORD width)
 {
 	PMWFONT pfont = NULL;
 
@@ -983,9 +832,7 @@ GdCreateFontFromBuffer(PSD psd, const unsigned char *buffer,
 	 * based on 'format' here.  (Suggestion: 'format' is the file
 	 * extension - e.g. TTF, PFR, ...)
 	 */
-
-	if (freetype_init(psd))
-		pfont = (PMWFONT)freetype2_createfontfrombuffer(buffer, length, height);
+	pfont = (PMWFONT)freetype2_createfontfrombuffer(buffer, length, height, width);
 	if (!pfont)
 		EPRINTF("GdCreateFontFromBuffer: create failed.\n");
 #endif
@@ -1001,11 +848,11 @@ GdCreateFontFromBuffer(PSD psd, const unsigned char *buffer,
  * @return         New font.
  */
 PMWFONT
-GdDuplicateFont(PSD psd, PMWFONT psrcfont, MWCOORD fontsize)
+GdDuplicateFont(PSD psd, PMWFONT psrcfont, MWCOORD height, MWCOORD width)
 {
 #if HAVE_FREETYPE_2_SUPPORT
 	if (psrcfont->fontprocs->Duplicate)
-		return psrcfont->fontprocs->Duplicate(psrcfont, fontsize);
+		return psrcfont->fontprocs->Duplicate(psrcfont, height, width);
 #endif
 	return psrcfont;
 }
@@ -1037,7 +884,7 @@ utf8_to_utf16(const unsigned char *utf8, int cc, unsigned short *unicode16)
 {
 	int count = 0;
 	unsigned char c0, c1;
-	unsigned long scalar;
+	uint32_t scalar;
 
 	while(--cc >= 0) {
 		c0 = *utf8++;
@@ -1125,18 +972,19 @@ utf8_to_utf16(const unsigned char *utf8, int cc, unsigned short *unicode16)
 	return count;
 }
 
-/*
- * warning: the length of output string may exceed six x the length of the input
- */
+/* 
+ * warning: the length of output string may exceed six x the length of the input 
+ */ 
 static int
-uc16_to_utf8(const unsigned short *us, int cc, char *s)
+uc16_to_utf8(const unsigned short *us, int cc, unsigned char *s)
 {
 	int i;
-	char *t = s;
-
+	unsigned char *t = s;
+	unsigned short uc16;
+	
 	for (i = 0; i < cc; i++) {
-		unsigned short uc16 = us[i];
-		if (uc16 <= 0x7F) {
+		uc16 = *us++;
+		if (uc16 <= 0x7F) { 
 			*t++ = (char) uc16;
 		} else if (uc16 <= 0x7FF) {
 			*t++ = 0xC0 | (unsigned char) ((uc16 >> 6) & 0x1F); /* upper 5 bits */
@@ -1151,9 +999,9 @@ uc16_to_utf8(const unsigned short *us, int cc, char *s)
 	return (t - s);
 }
 
-/*
-   UTF8 utility:
-   This map return the expected count of bytes based on the first char
+/* 
+   UTF8 utility: 
+   This map return the expected count of bytes based on the first char 
  */
 const char utf8_len_map[256] = {
   1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
@@ -1167,7 +1015,7 @@ const char utf8_len_map[256] = {
 };
 
 
-#ifdef DEBUG_TEXT_SHAPING
+#if DEBUG_TEXT_SHAPING
 /*
  *  Return the number of character (not byte) of UTF-8 string
  */
@@ -1175,7 +1023,9 @@ int utf8_nchar ( const char *str )
 {
 	int n = 0;
 	int al = strlen ( str );
-	while ( n < al ) n += utf8_len_map[(unsigned char)str[n]];
+
+	while ( n < al )
+		n += utf8_len_map[(unsigned char)str[n]];
 	return (n < al) ? n : al;
 }
 
@@ -1184,15 +1034,17 @@ static void	dumpUtf8 ( const char *str, int sz )
 	int i, n;
 	unsigned short uc16;
 	const char *last = str+sz;
-	printf ( "UTF-8 dump:\n" );
+
+	DPRINTF( "UTF-8 dump:\n" );
 	while ( str < last ) {
-		for ( i=0, n=utf8_len_map[(unsigned char)str[0]]; i < n; i++ ) printf ( "%02X", (unsigned char)str[i] );
+		for ( i=0, n=utf8_len_map[(unsigned char)str[0]]; i < n; i++ )
+			DPRINTF( "%02X", (unsigned char)str[i] );
 		utf8_to_utf16 ( str, n, &uc16 );
-		printf ( ": %04X\n", uc16 );
+		DPRINTF( ": %04X\n", uc16 );
 		str += n;
 	}
 }
-#endif
+#endif	
 
 #if HAVE_SHAPEJOINING_SUPPORT
 typedef struct char_shaped {
@@ -1411,7 +1263,7 @@ static const chr_shpjoin_t shaped_table2[] =
 #define assignShape(chr)	( ((chr) >= SHAPED_TABLE_START  && (chr) <= SHAPED_TABLE_TOP)? \
 				    &shaped_table[(chr)-SHAPED_TABLE_START] : \
                                   ((chr) >= SHAPED_TABLE2_START && (chr) <= SHAPED_TABLE2_TOP)? \
-				    &shaped_table2[(chr)-SHAPED_TABLE2_START] : NULL)
+				    &shaped_table2[(chr)-SHAPED_TABLE2_START] : NULL) 
 
 #define assignShapeUtf(txt, i) ( (utf8_len_map[(unsigned char)((txt)[(i)])] > 1)? \
 					doAssignShapeUtf((txt)+(i)) : NULL)
@@ -1512,8 +1364,7 @@ arabicJoin_UC16(const unsigned short *text, int len, unsigned long *pAttrib)
  * Note that text is currently left to right
  */
 char *
-arabicJoin_UTF8(const char *text, int len, int *pNewLen,
-		unsigned long *pAttrib)
+arabicJoin_UTF8(const char *text, int len, int *pNewLen, unsigned long *pAttrib)
 {
 	int i, sz;
 	char *new_str;
@@ -1580,7 +1431,7 @@ arabicJoin_UTF8(const char *text, int len, int *pNewLen,
 		*pNewLen = sz;
 	if (pAttrib)
 		*pAttrib = attrib;
-#ifdef DEBUG_TEXT_SHAPING
+#if DEBUG_TEXT_SHAPING
 	if (strcmp(new_str, text))
 		dumpUtf8(new_str, sz);
 #endif
@@ -1588,8 +1439,7 @@ arabicJoin_UTF8(const char *text, int len, int *pNewLen,
 }
 
 unsigned short *
-doCharShape_UC16(const unsigned short *text, int len, int *pNewLen,
-	unsigned long *pAttrib)
+doCharShape_UC16(const unsigned short *text, int len, int *pNewLen, unsigned long *pAttrib)
 {
 	unsigned short *conv = arabicJoin_UC16(text, len, pAttrib);
 
@@ -1607,8 +1457,7 @@ doCharShape_UTF8(const char *text, int len, int *pNewLen, unsigned long *pAttrib
 #else /* HAVE_SHAPEJOINING_SUPPORT */
 /* DUMMY FUNCTIONS */
 unsigned short *
-doCharShape_UC16(const unsigned short *text, int len, int *pNewLen,
-	unsigned long *pAttrib)
+doCharShape_UC16(const unsigned short *text, int len, int *pNewLen, unsigned long *pAttrib)
 {
 	unsigned short *conv = malloc((len + 1) * sizeof(unsigned short));
 
@@ -1645,8 +1494,7 @@ doCharShape_UTF8(const char *text, int len, int *pNewLen, unsigned long *pAttrib
 #include <fribidi/fribidi.h>
 
 char *
-doCharBidi_UTF8(const char *text, int len, int *v2lPos, char *pDirection,
-	unsigned long *pAttrib)
+doCharBidi_UTF8(const char *text, int len, int *v2lPos, char *pDirection, unsigned long *pAttrib)
 {
 	FriBidiChar *ftxt, *fvirt;
 	FriBidiChar localBuff[128];
@@ -1699,8 +1547,7 @@ doCharBidi_UTF8(const char *text, int len, int *v2lPos, char *pDirection,
 
 
 unsigned short *
-doCharBidi_UC16(const unsigned short *text, int len, int *v2lPos,
-	char *pDirection, unsigned long *pAttrib)
+doCharBidi_UC16(const unsigned short *text, int len, int *v2lPos, char *pDirection, unsigned long *pAttrib)
 {
 	FriBidiChar *ftxt, *fvirt;
 	FriBidiChar localBuff[128];
@@ -1755,8 +1602,7 @@ doCharBidi_UC16(const unsigned short *text, int len, int *v2lPos,
 #else
 /* DUMMY FUNCTIONS */
 char *
-doCharBidi_UTF8(const char *text, int len, int *v2lPos, char *pDirection,
-	unsigned long *pAttrib)
+doCharBidi_UTF8(const char *text, int len, int *v2lPos, char *pDirection, unsigned long *pAttrib)
 {
 	int i;
 	unsigned short *conv = malloc((len + 1) * sizeof(unsigned short));
@@ -1773,8 +1619,7 @@ doCharBidi_UTF8(const char *text, int len, int *v2lPos, char *pDirection,
 	return (char *) conv;
 }
 unsigned short *
-doCharBidi_UC16(const unsigned short *text, int len, int *v2lPos,
-	char *pDirection, unsigned long *pAttrib)
+doCharBidi_UC16(const unsigned short *text, int len, int *v2lPos, char *pDirection, unsigned long *pAttrib)
 {
 	int i;
 	char *conv = malloc((len + 1) * sizeof(char));

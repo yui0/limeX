@@ -19,7 +19,6 @@
 #include "nano-X.h"
 #include "device.h"
 #include "genmem.h"
-//#include "keysym.h"
 
 void GsHandleMouseStatus(GR_COORD, GR_COORD, int newbuttons);
 void GsDeliverKeyboardEvent(GR_WINDOW_ID, GR_EVENT_TYPE, GR_KEY, GR_KEYMOD, GR_SCANCODE);
@@ -42,8 +41,11 @@ int     vnc_thread_fd;
 pthread_t       httpd_thread; /* httpd server process thread */
 
 #endif
-#include "rfb/rfb.h"
+#include <rfb/rfb.h>
+#include <rfb/keysym.h>
 #include <assert.h>
+
+extern MWPALENTRY gr_palette[256];    /* current palette*/
 
 rfbScreenInfoPtr rfbScreen; /* the RFB screen structure */
 
@@ -60,18 +62,11 @@ static void	 (*_FillRect)(PSD psd,MWCOORD x1,MWCOORD y1,MWCOORD x2,
                 MWCOORD y2,MWPIXELVAL c);
 static void	 (*_Blit)(PSD destpsd, MWCOORD destx, MWCOORD desty, MWCOORD w,
                 MWCOORD h,PSD srcpsd,MWCOORD srcx,MWCOORD srcy,long op);
-static void	 (*_DrawArea)(PSD psd, driver_gc_t *gc, int op);
-static void	 (*_StretchBlit)(PSD destpsd, MWCOORD destx, MWCOORD desty,
-                MWCOORD dstw, MWCOORD dsth, PSD srcpsd, MWCOORD srcx,
-                MWCOORD srcy, MWCOORD srcw, MWCOORD srch, long op);
 
-
-static void UndrawCursor()
+static void UndrawCursor(void)
 {
-        if ( clients_connected && rfbScreen->cursorIsDrawn ) 
-        {
-                rfbUndrawCursor(rfbScreen);
-        }
+        //FIXME if ( clients_connected && rfbScreen->cursorIsDrawn ) 
+                //FIXME rfbUndrawCursor(rfbScreen);
 }       
 
 static void MarkRect( int x1, int y1, int x2, int y2 )
@@ -79,12 +74,11 @@ static void MarkRect( int x1, int y1, int x2, int y2 )
         if ( clients_connected )
         {
                 /* Enlarge  the updated rectangle by a pixel, needed for 1 pixel wide rects */
-                if ( x2 < rfbScreen->width - 1 ) 
+                if ( x2 < (rfbScreen->width - 1)) 
                         x2++;
                 else if ( x1 > 0 ) x1--;
                         
-                if ( y2 < rfbScreen->height - 1 ) 
-                
+                if ( y2 < (rfbScreen->height - 1)) 
                         y2++;
                 else if ( y1 > 0 ) y1--;
 
@@ -100,13 +94,14 @@ static void stubDrawPixel(PSD psd, MWCOORD x, MWCOORD y, MWPIXELVAL c)
 }
 
 
-static void stubDrawArea(PSD psd, driver_gc_t *gc, int op)
+#if 0
+static void stubDrawArea(PSD psd, driver_gc_t *gc);
 {
         UndrawCursor();
-        _DrawArea(psd,gc,op);
+        _DrawArea(psd,gc);
         MarkRect(gc->dstx, gc->dsty, gc->dstx + gc->dstw, gc->dstx + gc->dstw ); 
 }
-
+#endif
 
 static void stubFillRect(PSD psd, MWCOORD x1, MWCOORD y1, MWCOORD x2, MWCOORD y2,
 	MWPIXELVAL c)
@@ -141,17 +136,22 @@ static void stubBlit( PSD destpsd, MWCOORD destx, MWCOORD desty, MWCOORD w,
                 MarkRect( destx, desty, destx + w, desty + h );
 
 }
-static void stubStretchBlit(PSD destpsd, MWCOORD destx, MWCOORD desty,
-                MWCOORD dstw, MWCOORD dsth, PSD srcpsd, MWCOORD srcx,
-                MWCOORD srcy, MWCOORD srcw, MWCOORD srch, long op)
+
+#if 0
+static void stubStretchBlitEx(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start, int dest_y_start,
+	MWCOORD width, int height, int x_denominator, int y_denominator,
+	int src_x_fraction, int src_y_fraction,
+	int x_step_fraction, int y_step_fraction, long op)
 {
         UndrawCursor();
-        _StretchBlit( destpsd, destx, desty, dstw, dsth, srcpsd, srcx,
-                srcy, srcw, srch,  op);
-        if ( destpsd == actualpsd )
-                MarkRect( destx, desty, destx + dstw, desty + dsth );
+        _StretchBlitEx( dstpsd, srcpsd, dest_x_start, dest_y_start, width, height,
+			x_denominator, y_denominator, src_x_fraction, src_y_fraction,
+			x_step_fraction, y_step_fraction, op);
+        if ( dstpsd == actualpsd )
+                MarkRect( dest_x_start, dest_y_start, dest_x_start + width, dest_y_start + height );
 }
-        
+#endif
+
 static void clientgone(rfbClientPtr cl)
 {
         clients_connected--;
@@ -164,7 +164,7 @@ static void newclient( rfbClientPtr cl )
         cl->clientGoneHook = clientgone;
 
         UndrawCursor();
-#if MW_FEATURE_PSDOP_COPY
+#if 0
         MyStretchBlit( vncpsd, 0, 0, rfbScreen->width, rfbScreen->height, actualpsd, 0, 0, 
                        XRES, YRES, PSDOP_COPY );
 #endif
@@ -204,7 +204,7 @@ void * httpd_proc( void * _ )
             }
             nfds = select( max(rfbScreen->httpSock,rfbScreen->httpListenSock) + 1, &fds, NULL, NULL, NULL );
         
-            httpCheckFds( rfbScreen );
+            rfbHttpCheckFds( rfbScreen );
     } while ( nfds > 0 );
     return 0;
 }
@@ -231,7 +231,7 @@ static void handle_pointer(int buttonMask,int x,int y, struct _rfbClientRec* cl)
                awakeGsSelect();
 
         }
-        defaultPtrAddEvent(buttonMask, x, y, cl);
+        rfbDefaultPtrAddEvent(buttonMask, x, y, cl);
 
 }
 
@@ -440,7 +440,7 @@ static void handle_keyboard( rfbBool down, rfbKeySym sym, rfbClientPtr cl)
                         break;
                 default:
                         if ( sym & 0xFF00 )
-                                fprintf(stderr, "Unhandled VNC keysym: %04x\n", (int)sym);
+                                EPRINTF("Unhandled VNC keysym: %04x\n", (int)sym);
                 }
 
                 if ( key_modstate & MWKMOD_CTRL )
@@ -547,6 +547,9 @@ static void handle_keyboard( rfbBool down, rfbKeySym sym, rfbClientPtr cl)
 
 int GdOpenVNC( PSD psd, int argc, char *argv[] )
 {
+  rfbColourMap* cmap;
+  int i;
+
    /* Save the actual FB screen driver drawing functions */
         
    actualpsd = psd;
@@ -555,9 +558,9 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
    _DrawHorzLine = psd->DrawHorzLine;
    _DrawVertLine = psd->DrawVertLine;
    _FillRect = psd->FillRect;
-   _Blit = psd->Blit;
-   _DrawArea = psd->DrawArea;
-   _StretchBlit = psd->StretchBlit;
+//   _Blit = psd->Blit;
+//   _DrawArea = psd->DrawArea;
+//   _StretchBlitEx = psd->StretchBlitEx;
    
 
    /* Set the screen driver drawing functions to vnc stubs */
@@ -566,9 +569,9 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
    psd->DrawHorzLine = stubDrawHorzLine;
    psd->DrawVertLine = stubDrawVertLine;
    psd->FillRect = stubFillRect;
-   psd->Blit = stubBlit;
-   psd->DrawArea = stubDrawArea;
-   psd->StretchBlit = stubStretchBlit;
+//   psd->Blit = stubBlit;
+//   psd->DrawArea = stubDrawArea;
+//   psd->StretchBlit = stubStretchBlit;
                         
    /* Don't set bits x sample & samples x pixel, we'll do it later  */
    rfbScreen = rfbGetScreen(&argc,argv,psd->xres,psd->yres,-1,-1,-1);
@@ -580,70 +583,102 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
    /* NOW set bits x sample & samples x pixel */
         
    switch(psd->pixtype) {
+
    case  MWPF_TRUECOLOR332: /* 8 bpp */
-           
-           rfbScreen->rfbServerFormat.redMax = 7;
-           rfbScreen->rfbServerFormat.greenMax = 7;
-           rfbScreen->rfbServerFormat.blueMax = 3;
+           rfbScreen->serverFormat.redMax = 7;
+           rfbScreen->serverFormat.greenMax = 7;
+           rfbScreen->serverFormat.blueMax = 3;
 
-           rfbScreen->rfbServerFormat.redShift = 5;
-           rfbScreen->rfbServerFormat.greenShift = 2;
-           rfbScreen->rfbServerFormat.blueShift = 0;
+           rfbScreen->serverFormat.redShift = 5;
+           rfbScreen->serverFormat.greenShift = 2;
+           rfbScreen->serverFormat.blueShift = 0;
            break;
-   case  MWPF_TRUECOLOR565: 
 
-           rfbScreen->rfbServerFormat.greenMax = 63;
-           rfbScreen->rfbServerFormat.redShift = 11;
+   case  MWPF_TRUECOLOR565: 
+           rfbScreen->serverFormat.greenMax = 63;
+           rfbScreen->serverFormat.redShift = 11;
            goto skip555;
 
    case  MWPF_TRUECOLOR555: /* 16 bpp */
-           rfbScreen->rfbServerFormat.greenMax = 31;
-           rfbScreen->rfbServerFormat.redShift = 10;
+           rfbScreen->serverFormat.greenMax = 31;
+           rfbScreen->serverFormat.redShift = 10;
                 
            skip555:
-           rfbScreen->rfbServerFormat.redMax = 31;
-           rfbScreen->rfbServerFormat.blueMax = 31;
+           rfbScreen->serverFormat.redMax = 31;
+           rfbScreen->serverFormat.blueMax = 31;
            
-           rfbScreen->rfbServerFormat.greenShift = 5;
-           rfbScreen->rfbServerFormat.blueShift = 0;
+           rfbScreen->serverFormat.greenShift = 5;
+           rfbScreen->serverFormat.blueShift = 0;
 
            break;
-   case MWPF_TRUECOLOR0888: /* 24/32 bpp */
-   case MWPF_TRUECOLOR888:
-           rfbScreen->rfbServerFormat.redMax = 255;
-           rfbScreen->rfbServerFormat.greenMax = 255;
-           rfbScreen->rfbServerFormat.blueMax = 255;
 
-           rfbScreen->rfbServerFormat.redShift = 16;
-           rfbScreen->rfbServerFormat.greenShift = 8;
-           rfbScreen->rfbServerFormat.blueShift = 0;
+   case MWPF_TRUECOLOR1555:
+           rfbScreen->serverFormat.greenMax = 31;
+           rfbScreen->serverFormat.redMax = 31;
+           rfbScreen->serverFormat.blueMax = 31;
+
+           rfbScreen->serverFormat.redShift = 0;
+           rfbScreen->serverFormat.greenShift = 5;
+           rfbScreen->serverFormat.blueShift = 10;
+
+           break;
+
+   case MWPF_PALETTE:
+     cmap = &(rfbScreen->colourMap);
+     rfbScreen->serverFormat.trueColour = FALSE;
+     cmap->count = psd->ncolors;
+     cmap->is16 = FALSE;
+
+     if (cmap->data.bytes == 0) {
+       cmap->data.bytes=malloc(cmap->count*3);
+     }
+
+     for (i=0; i<cmap->count; i++) {
+       cmap->data.bytes[3*i+0] = gr_palette[i].r;
+       cmap->data.bytes[3*i+1] = gr_palette[i].g;
+       cmap->data.bytes[3*i+2] = gr_palette[i].b;
+     }
+     /* Fall through to MWPF_TRUECOLOR888 */
+
+   case MWPF_TRUECOLOR8888: /* 24/32 bpp */
+   case MWPF_TRUECOLOR888:
+           rfbScreen->serverFormat.redMax = 255;
+           rfbScreen->serverFormat.greenMax = 255;
+           rfbScreen->serverFormat.blueMax = 255;
+
+           rfbScreen->serverFormat.redShift = 16;
+           rfbScreen->serverFormat.greenShift = 8;
+           rfbScreen->serverFormat.blueShift = 0;
                 
            break;
         
    default:
+     break;
    }
 
    /* Set bpp. If VNC does not support nano-X bpp, it will refuse connections, 
       but nano-X will continue to run  */
 
-   rfbScreen->rfbServerFormat.bitsPerPixel = 
-   rfbScreen->rfbServerFormat.depth = 
+   rfbScreen->serverFormat.bitsPerPixel = 
+   rfbScreen->serverFormat.depth = 
    rfbScreen->bitsPerPixel = rfbScreen->depth = psd->bpp;
 
 
    rfbScreen->desktopName = "nano-X";
    rfbScreen->frameBuffer = psd->addr;
-   rfbScreen->rfbAlwaysShared = TRUE;
+   rfbScreen->alwaysShared = TRUE;
    rfbScreen->ptrAddEvent = handle_pointer;
    rfbScreen->kbdAddEvent = handle_keyboard;
    rfbScreen->newClientHook = newclient;
-   rfbScreen->dontSendFramebufferUpdate = FALSE;
+   // FIXME rfbScreen->dontSendFramebufferUpdate = FALSE;
    rfbScreen->cursor = NULL;
 
+   rfbScreen->httpPort = 5800;
    rfbScreen->httpDir = "/var/lib/httpd/";
-   rfbScreen->rfbAuthPasswdData = "/etc/vncpasswd";
+   rfbScreen->authPasswdData = "/etc/vncpasswd";
 
-   rfbScreen->paddedWidthInBytes = psd->linelen * (psd->bpp >> 3) ; 
+   //rfbScreen->paddedWidthInBytes = psd->linelen * (psd->bpp >> 3) ; 
+   rfbScreen->paddedWidthInBytes = psd->pitch;
         
    /* initialize the server */
    rfbInitServer(rfbScreen);
@@ -652,7 +687,7 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
    pipe(fd);
    vnc_thread_fd = fd[0];
    pthread_mutex_init( &eventMutex, NULL );
-   rfbScreen->rfbDeferUpdateTime = 25;
+   rfbScreen->deferUpdateTime = 25;
 //   rfbScreen->backgroundLoop = TRUE;
    rfbRunEventLoop( rfbScreen, 0, TRUE);
    pthread_create( &httpd_thread, 0, httpd_proc, 0 );
@@ -660,6 +695,7 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
 #endif
    return 1;
 }
+
 void GdCloseVNC( void )
 {
 

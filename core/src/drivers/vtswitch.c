@@ -34,8 +34,8 @@ int  	MwCheckVtChange(void);
 void 	MwRedrawVt(int t);
 
 /* local routines*/
-static void  	draw_enable(void);
-static void 	draw_disable(void);
+static void draw_enable(void);
+static void draw_disable(void);
 static void	vt_switch(int sig);
 
 /* null subdriver for drawing when switched out*/
@@ -49,28 +49,26 @@ static void	null_fillrect(PSD psd,MWCOORD x1,MWCOORD y1,MWCOORD x2,
 			MWCOORD y2,MWPIXELVAL c) {}
 static void	null_blit(PSD dstpsd,MWCOORD destx,MWCOORD desty,MWCOORD w,
 			MWCOORD h,PSD srcpsd,MWCOORD srcx,MWCOORD srcy,
-			long op) {}
-static void 	null_drawarea(PSD psd, driver_gc_t *gc, int op) {}
-static void	null_stretchblit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty,
-			MWCOORD dstw, MWCOORD dsth, PSD srcpsd, MWCOORD srcx,
-			MWCOORD srcy, MWCOORD srcw, MWCOORD srch, long op) {}
-static void	null_stretchblitex(PSD dstpsd, PSD srcpsd, MWCOORD dest_x_start,
-			MWCOORD dest_y_start, MWCOORD width, MWCOORD height,
-			int x_denominator, int y_denominator,
-			int src_x_fraction, int src_y_fraction,
-			int x_step_fraction, int y_step_fraction, long op) {}
+			int op) {}
+static void null_convblit(PSD psd, PMWBLITPARMS parms) {}
 
 static SUBDRIVER nulldriver = {
-	NULL,
 	null_drawpixel,
 	null_readpixel,
 	null_drawhorzline,
 	null_drawvertline,
 	null_fillrect,
 	null_blit,
-	null_drawarea,
-	null_stretchblit,
-	null_stretchblitex
+	null_convblit,
+	null_convblit,
+	null_convblit,
+	null_convblit,
+	null_convblit,
+	null_convblit,
+	null_convblit,
+	null_convblit,
+	null_convblit
+	null_convblit
 };
 
 static void
@@ -81,7 +79,7 @@ draw_enable(void)
 	visible = 1;
 
 	/* restore screen drawing functions*/
-	set_subdriver(&scrdev, &save, FALSE);
+	set_subdriver(&scrdev, &save);
 }
       
 static void

@@ -1,8 +1,10 @@
 /*
- * Copyright (c) 1999, 2000, 2002 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2002, 2010, 2011 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002 by Koninklijke Philips Electronics N.V.
  * Copyright (C) 1999 Bradley D. LaRonde (brad@ltc.com)
  * Copyright (c) 1991 David I. Bell
+ * Permission is granted to use, distribute, or modify this source,
+ * provided that this copyright notice remains intact.
  *
  * Device-independent top level mouse and cursor routines
  *
@@ -46,13 +48,14 @@ static MWCOORD 	cursavx;	/* saved cursor location*/
 static MWCOORD 	cursavy;
 static MWCOORD	cursavx2;
 static MWCOORD	cursavy2;
-static MWPIXELVAL curfg;		/* foreground color of cursor */
-static MWPIXELVAL curbg;		/* background color of cursor */
-static MWPIXELVAL cursavbits[MWMAX_CURSOR_SIZE * MWMAX_CURSOR_SIZE];
+static MWPIXELVALHW curfg;		/* foreground color of cursor */
+static MWPIXELVALHW curbg;		/* background color of cursor */
+static MWPIXELVALHW cursavbits[MWMAX_CURSOR_SIZE * MWMAX_CURSOR_SIZE];
 static MWIMAGEBITS cursormask[MWMAX_CURSOR_BUFLEN];
 static MWIMAGEBITS cursorcolor[MWMAX_CURSOR_BUFLEN];
 
 extern int gr_mode;
+extern MOUSEDEVICE mousedev;
 
 /* Advance declarations */
 static int filter_relative(int, int, int, int *, int *, int, int);
@@ -99,7 +102,7 @@ GdOpenMouse(void)
 
 	/* Force all mice to !RAW mode until the values are set */
 	mousedev.flags &= ~MOUSE_RAW;
-
+	
 	/* handle null mouse driver by hiding cursor*/
 	if(fd == -2)
 		GdHideCursor(&scrdev);
@@ -268,10 +271,10 @@ GdReadMouse(MWCOORD *px, MWCOORD *py, int *pb)
 #if FLIP_MOUSE_IN_PORTRAIT_MODE
 		if (!(mousedev.flags & MOUSE_RAW))
 			filter_absrotate(status, &dx, &dy);
-#endif
+#endif	
 	}
 
-	/*
+	/* 
 	 * At this point, we should have a valid mouse point. Check the button
 	 * state and set the flags accordingly.  We do this *after* the filters,
 	 * because some of the filters (like the transform) need to be called
@@ -380,19 +383,19 @@ GdShowCursor(PSD psd)
 {
 	MWCOORD 		x;
 	MWCOORD 		y;
-	MWPIXELVAL *	saveptr;
+	MWPIXELVALHW *	saveptr;
 	MWIMAGEBITS *	cursorptr;
 	MWIMAGEBITS *	maskptr;
 	MWIMAGEBITS 	curbit, cbits = 0, mbits = 0;
-	MWPIXELVAL 	oldcolor;
-	MWPIXELVAL 	newcolor;
+	MWPIXELVALHW 	oldcolor;
+	MWPIXELVALHW 	newcolor;
 	int 		oldmode;
 	int		prevcursor = curvisible;
 
 	if(++curvisible != 1)
 		return prevcursor;
 	oldmode = gr_mode;
-	gr_mode = MWMODE_COPY;
+	gr_mode = MWROP_COPY;
 
 	saveptr = cursavbits;
 	cursavx = curminx;
@@ -445,7 +448,7 @@ GdShowCursor(PSD psd)
 int
 GdHideCursor(PSD psd)
 {
-	MWPIXELVAL *	saveptr;
+	MWPIXELVALHW *	saveptr;
 	MWCOORD 		x, y;
 	int 		oldmode;
 	int		prevcursor = curvisible;
@@ -453,7 +456,7 @@ GdHideCursor(PSD psd)
 	if(curvisible-- <= 0)
 		return prevcursor;
 	oldmode = gr_mode;
-	gr_mode = MWMODE_COPY;
+	gr_mode = MWROP_COPY;
 
 	saveptr = cursavbits;
 	for (y = cursavy; y <= cursavy2; y++) {
@@ -523,7 +526,11 @@ GdFixCursor(PSD psd)
 }
 
 /* Input filter routines - global mouse filtering is cool */
+#if TOUCHSCREEN_EVENT
+#define JITTER_SHIFT_BITS	0	/* no jitter handling in standard event driver*/
+#else
 #define JITTER_SHIFT_BITS	2
+#endif
 #define JITTER_DEPTH		(1 << (JITTER_SHIFT_BITS))
 
 static MWTRANSFORM g_trans;	/* current transform*/
@@ -636,7 +643,7 @@ filter_absrotate(int state, int *xpos, int *ypos)
 		break;
 
 	case MWPORTRAIT_DOWN:
-		*xpos = x;
+		*xpos = scrdev.xres - x - 1;
 		*ypos = scrdev.yres - y - 1;
 		break;
 

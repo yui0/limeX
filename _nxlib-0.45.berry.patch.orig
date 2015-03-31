@@ -1,0 +1,6056 @@
+diff -Nuarp nxlib-0.45.orig/ChProperty.c nxlib-0.45/ChProperty.c
+--- nxlib-0.45.orig/ChProperty.c	2002-09-22 07:52:29.000000000 +0900
++++ nxlib-0.45/ChProperty.c	2009-03-15 15:47:57.000000000 +0900
+@@ -1,12 +1,14 @@
+ #include <string.h>
+ #include "nxlib.h"
+ 
++#define SZHASHTABLE	32
+ struct window_props {
+ 	Atom property;
+ 	Atom type;
+ 	int format;
+ 	unsigned char *data;
+-	int count;
++	int nelements;
++	int bytes;
+ 	struct window_props *next;
+ };
+ 
+@@ -15,174 +17,200 @@ struct windows {
+ 	struct window_props *properties;
+ 	struct windows *next;
+ };
+-static struct windows *window_list[32];
++static struct windows *window_list[SZHASHTABLE];
+ 
+-static int
+-_nxAddProperty(Window w, Atom property, Atom type, int format, int mode,
+-	       const unsigned char *data, int nelements)
++int XChangeProperty(Display *display, Window w, Atom property,
++		Atom type, int format, int mode,
++		_Xconst unsigned char *data, int nelements)
+ {
+-	int hash = w % 32;
+-	struct windows *win = 0;
+-	struct window_props *prop = 0;
+-
+-	if (!window_list[hash]) {
++	struct windows *win = NULL;
++	struct window_props *prop = NULL;
++	int hash = w % SZHASHTABLE;
++
++	printf("XChangeProperty called [Atom:%x,m:%x,d:%x]\n", type, mode, *data);
++	win = window_list[hash];
++	if (!win) {
+ 		win = window_list[hash] =
+ 			(struct windows *) Xcalloc(sizeof(struct windows), 1);
+ 	} else {
+-		struct windows *t = window_list[hash];
+-		while (t->next) {
++		struct windows *t;
++
++		for (t=win; ; t=t->next) {
+ 			if (t->w == w) {
+ 				win = t;
+ 				break;
+ 			}
+-
+-			t = t->next;
++			if (!t->next)
++				break;
+ 		}
+ 
+-		if (!win)
++		if (!win) {
+ 			win = t->next =
+ 				(struct windows *) Xcalloc(sizeof(struct windows), 1);
++		}
+ 	}
++	win->w = w;
+ 
+-	if (!win->properties)
++	if (!win->properties) {
+ 		prop = win->properties =
+ 			(struct window_props *) Xcalloc(sizeof(struct window_props), 1);
+-	else {
+-		struct window_props *t = win->properties;
+-		while (t->next) {
++	} else {
++		struct window_props *t;
++
++		for (t=win->properties; ; t=t->next) {
+ 			if (t->property == property) {
+ 				prop = t;
+ 				break;
+ 			}
+-
+-			t = t->next;
++			if (!t->next)
++				break;
+ 		}
+ 
+-		if (!prop)
++		if (!prop) {
+ 			prop = t->next =
+ 				(struct window_props *) Xcalloc(sizeof(struct window_props), 1);
++		}
+ 	}
+ 
+ 	switch (mode) {
+-	case PropModeAppend:
+-	case PropModePrepend:
++	case PropModeAppend:	// 2
++	case PropModePrepend:	// 1
+ 		if (prop->data) {
+-			char *n;
++			int f8 = prop->format / 8;
++			char *p;
++			int bytes;
+ 
++			//printf("XChangeProperty: %d,%d\n", format, bytes);
+ 			if (type != prop->type || format != prop->format)
+-				return (0);
++				return 0;
+ 
+-			n = (char *) Xmalloc((prop->count + nelements) *
+-					    (prop->format / 8));
++			bytes = (prop->nelements + nelements) * f8;
++			p = (char *) Xmalloc(bytes);
+ 
+ 			if (mode == PropModeAppend) {
+-				memcpy(n, prop->data,
+-				       prop->count * (prop->format / 8));
+-				memcpy(n + (prop->count * (prop->format / 8)),
+-				       data,
+-				       (nelements * (prop->format / 8)));
++				memcpy(p, prop->data, prop->nelements * f8);
++				memcpy(p + (prop->nelements * f8), data,
++				       (nelements * f8));
+ 			} else {
+-				memcpy(n, data,
+-				       nelements * (prop->format / 8));
+-				memcpy(n + (nelements * (prop->format / 8)),
+-				       prop->data,
+-				       (prop->count * (prop->format / 8)));
++				memcpy(p, data, nelements * f8);
++				memcpy(p + (nelements * f8), prop->data,
++				       (prop->nelements * f8));
+ 			}
+ 
+ 			Xfree(prop->data);
+-			prop->data = n;
+-
+-			prop->count = prop->count + nelements;
++			prop->data = (unsigned char*)p;
++			prop->nelements += nelements;
++			prop->bytes = bytes;
+ 			break;
+ 		}
+ 		/* Fall through */
+ 
+-	case PropModeReplace:
+-		if (prop->data)
+-			Xfree(prop->data);
+-		prop->data = (char *) Xmalloc(nelements * (format / 8));
+-		memcpy(prop->data, data, (nelements * (format / 8)));
++	case PropModeReplace:	// 0
++		if (prop->data) Xfree(prop->data);
++		if (format<0 || format/8 > 4) {
++			printf("XChangeProperty: format[%d]\n", format);
++			format = 8;
++		}
++		prop->bytes = nelements * (format / 8);
++		prop->data = (unsigned char*)Xmalloc(prop->bytes);
++		//printf("XChangeProperty: [%x,%d,%x]\n", prop,nelements,prop->bytes);
++		memcpy(prop->data, data, prop->bytes);
+ 
+ 		prop->property = property;
+ 		prop->type = type;
+ 		prop->format = format;
+-		prop->count = nelements;
+-
++		prop->nelements = nelements;
+ 		break;
+ 	}
+ 
+ 	return 1;
+ }
+ 
+-static int
+-_nxDelProperty(Window w, Atom property)
++int XDeleteProperty(Display *display, Window w, Atom property)
+ {
+-
+-	int hash = (w % 32);
+-
+ 	struct windows *win;
+ 	struct window_props *prop;
++	int hash = w % SZHASHTABLE;
+ 
+ 	for (win = window_list[hash]; win; win = win->next)
+ 		if (win->w == w) {
+-			struct window_props *prev = 0;
++			struct window_props *prev = NULL;
+ 
+-			for (prop = win->properties; prop; prop = prop->next)
++			for (prop = win->properties; prop; prop = prop->next) {
+ 				if (prop->property == property) {
+-					if (prev)
+-						prev->next = prop->next;
+-					else
+-						win->properties = prop->next;
++					if (prev) prev->next = prop->next;
++					else win->properties = prop->next;
+ 
+-					if (prop->data)
+-						Xfree(prop->data);
++					//if (prop->data) { Xfree(prop->data); prop->data=NULL; }
++					if (prop->data) Xfree(prop->data);
+ 					Xfree(prop);
+-					return (1);
++
++					if (win == window_list[hash])
++						window_list[hash] = NULL;
++					return 1;
+ 				}
++			}
+ 		}
+ 
+ 	return 1;
+ }
+ 
+-int
+-_nxDelAllProperty(Window w)
++int _nxDelAllProperty(Window w)
+ {
+-
+-	int hash = (w % 32);
+-
+ 	struct windows *win;
+ 	struct window_props *prop;
++	int hash = w % SZHASHTABLE;
+ 
+-	for (win = window_list[hash]; win; win = win->next)
++	for (win = window_list[hash]; win; win = win->next) {
+ 		if (win->w == w) {
+ 			prop = win->properties;
+ 			while (prop) {
+ 				struct window_props *next = prop->next;
+-				if (prop->data)
+-					Xfree(prop->data);
++
++				//if (prop->data) { Xfree(prop->data); prop->data=NULL; }
++				if (prop->data) Xfree(prop->data);
+ 				Xfree(prop);
+ 				prop = next;
+ 			}
+-
+ 			Xfree(win);
++
++			if (win == window_list[hash]) window_list[hash] = NULL;
+ 			return 1;
+ 		}
++	}
+ 
+ 	return 1;
+ }
+ 
+-int
+-XChangeProperty(Display * display, Window w, Atom property,
+-		Atom type, int format, int mode,
+-		_Xconst unsigned char *data, int nelements)
++int XGetWindowProperty(Display *dpy, Window w, Atom property, long offset,
++	long len, Bool bDel, Atom req, Atom *type, int *format,
++	unsigned long *nitems, unsigned long *bytes, unsigned char **data)
+ {
+-printf("XChangeProperty %s\n", XGetAtomName(display, property));
+-	return _nxAddProperty(w, property, type, format, mode,
+-			       data, nelements);
+-}
++	struct windows *win;
++	struct window_props *prop;
++	int hash = w % SZHASHTABLE;
+ 
+-int
+-XDeleteProperty(Display * display, Window w, Atom property)
+-{
+-	return _nxDelProperty(w, property);
++	printf("XGetWindowProperty called [Atom:%x]\n", (int)property);
++	for (win = window_list[hash]; win; win = win->next) {
++		if (win->w == w) {
++			for (prop = win->properties; prop; prop = prop->next) {
++				if (prop->property == property) {
++					*type = prop->type;
++					*format = prop->format;
++					//*data = prop->data;
++					*data = (unsigned char*)Xmalloc(prop->bytes);
++					memcpy(*data, prop->data, prop->bytes);
++					*nitems = prop->nelements;
++					*bytes = prop->bytes;
++					return 1;
++				}
++			}
++		}
++	}
++	*type = None;
++	*format = 0;
++	*data = 0;
++	*nitems = 0;
++	*bytes = 0;
++	return 0;	// failure
+ }
+diff -Nuarp nxlib-0.45.orig/ChSaveSet.c nxlib-0.45/ChSaveSet.c
+--- nxlib-0.45.orig/ChSaveSet.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/ChSaveSet.c	2009-03-04 20:32:35.000000000 +0900
+@@ -0,0 +1,18 @@
++#include "nxlib.h"
++
++// required for rasp
++int XChangeSaveSet(Display *dpy, Window win, int mode)
++{
++	printf("XChangeSaveSet called...\n");
++	return 1;
++}
++
++int XAddToSaveSet(Display *dpy, Window win)
++{
++	return XChangeSaveSet(dpy, win, SetModeInsert);
++}
++
++int XRemoveFromSaveSet(Display *dpy, Window win)
++{
++	return XChangeSaveSet(dpy, win, SetModeDelete);
++}
+diff -Nuarp nxlib-0.45.orig/ChWindow.c nxlib-0.45/ChWindow.c
+--- nxlib-0.45.orig/ChWindow.c	2002-07-12 14:02:52.000000000 +0900
++++ nxlib-0.45/ChWindow.c	2009-02-06 20:53:37.000000000 +0900
+@@ -6,3 +6,36 @@ XResizeWindow(Display *dpy, Window w, un
+ 	GrResizeWindow(w, width, height);
+ 	return 1;
+ }
++
++//#define AllMaskBits (CWX|CWY|CWWidth|CWHeight|\
++//		     CWBorderWidth|CWSibling|CWStackMode)
++int XConfigureWindow(Display *dpy, Window w, unsigned int mask, XWindowChanges *changes)
++{
++	GR_WINDOW_INFO wp;
++	GrGetWindowInfo(w, &wp);
++
++	printf("XConfigureWindow called...");
++	//mask &= AllMaskBits;
++	if (mask & (CWX|CWY)) {
++		printf(" XY(%d,%d)", mask&CWX? changes->x: wp.x, mask&CWY? changes->y: wp.y);
++		GrMoveWindow(w, mask&CWX? changes->x: wp.x, mask&CWY? changes->y: wp.y);
++	}
++	if (mask & (CWWidth|CWHeight)) {
++		printf(" WH(%d,%d)", mask&CWWidth? changes->width: wp.width, mask&CWHeight? changes->height: wp.height);
++		GrResizeWindow(w, mask&CWWidth? changes->width: wp.width, mask&CWHeight? changes->height: wp.height);
++	}
++	if (mask & CWBorderWidth) {
++		printf(" BW(%d)", changes->border_width);
++		XSetWindowBorderWidth(dpy, w, changes->border_width);
++	}
++
++	if (mask & CWSibling) {
++		printf(" Sib(%d)", changes->sibling);
++	}
++	if (mask & CWStackMode) {
++		printf(" Stc(%d)", changes->stack_mode);
++	}
++	printf("\n");
++
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/ClassHint.c nxlib-0.45/ClassHint.c
+--- nxlib-0.45.orig/ClassHint.c	2003-08-11 06:35:52.000000000 +0900
++++ nxlib-0.45/ClassHint.c	2009-03-04 20:17:23.000000000 +0900
+@@ -1,9 +1,118 @@
+ #include "nxlib.h"
+ #include "Xutil.h"
++#include "Xatom.h"
++#include <string.h>
+ 
+-XClassHint *
+-XAllocClassHint(void)
++XClassHint *XAllocClassHint(void)
+ {
+ 	return (XClassHint *) Xcalloc(1, sizeof(XClassHint));
+ }
+ 
++// required for xine
++Status XGetClassHint(Display *dpy, Window w, XClassHint *classhint)
++{
++	int len_name, len_class;
++
++	Atom actual_type;
++	int actual_format;
++	unsigned long nitems;
++	unsigned long leftover;
++	unsigned char *data = NULL;
++
++	printf("XGetClassHint called...\n");
++	if (XGetWindowProperty(dpy, w, XA_WM_CLASS, 0L, (long)BUFSIZ, False,
++		XA_STRING, &actual_type, &actual_format,
++			&nitems, &leftover, &data) != Success) return 0;
++
++	if ( (actual_type == XA_STRING) && (actual_format == 8) ) {
++		len_name = strlen((char *) data);
++		if (! (classhint->res_name = Xmalloc((unsigned)(len_name+1)))) {
++			Xfree((char *) data);
++			return 0;
++		}
++		strcpy(classhint->res_name, (char *) data);
++		if (len_name == nitems) len_name--;
++		len_class = strlen((char *) (data+len_name+1));
++		if (! (classhint->res_class = Xmalloc((unsigned)(len_class+1)))) {
++			Xfree(classhint->res_name);
++			classhint->res_name = (char *) NULL;
++			Xfree((char *) data);
++			return 0;
++		}
++		strcpy(classhint->res_class, (char *) (data+len_name+1));
++		Xfree( (char *) data);
++		return 1;
++	}
++	if (data) Xfree( (char *) data);
++	return 0;
++}
++
++// required for rasp
++Status XGetTransientForHint(Display *dpy, Window w, Window *propWindow)
++{
++	Atom actual_type;
++	int actual_format;
++	unsigned long nitems;
++	unsigned long leftover;
++	Window *data = NULL;
++
++	printf("XGetTransientForHint called..\n");
++	if (XGetWindowProperty(dpy, w, XA_WM_TRANSIENT_FOR, 0L, 1L, False,
++		XA_WINDOW, &actual_type, &actual_format,
++		&nitems, &leftover, (unsigned char **)&data) != Success) {
++		*propWindow = None;
++		return 0;
++	}
++	if ((actual_type==XA_WINDOW) && (actual_format==32) && (nitems != 0)) {
++		*propWindow = *data;
++		Xfree((char*)data);
++		return 1;
++	}
++
++	*propWindow = None;
++	if (data) Xfree((char*)data);
++	return 0;
++}
++
++// required for xloadimage
++#define safe_strlen(s) ((s) ? strlen(s) : 0)
++int XSetClassHint(Display *dpy, Window w, XClassHint *classhint)
++{
++	char *class_string;
++	char *s;
++	int len_nm, len_cl;
++
++	printf("XSetClassHint called..\n");
++	len_nm = safe_strlen(classhint->res_name);
++	len_cl = safe_strlen(classhint->res_class);
++	if ((class_string = s = Xmalloc((unsigned) (len_nm + len_cl + 2)))) {
++		if (len_nm) {
++			strcpy(s, classhint->res_name);
++			s += len_nm + 1;
++		} else {
++			*s++ = '\0';
++		}
++		if (len_cl) strcpy(s, classhint->res_class);
++		else *s = '\0';
++		XChangeProperty(dpy, w, XA_WM_CLASS, XA_STRING, 8,
++			PropModeReplace, (unsigned char *)class_string,
++			len_nm+len_cl+2);
++		Xfree(class_string);
++	}
++	return 1;
++}
++
++// old routine
++int XSetNormalHints(Display *dpy, Window w, XSizeHints *hints)
++{
++	printf("XSetNormalHints called...\n");
++	return 0;
++	//return XSetSizeHints(dpy, w, hints, XA_WM_NORMAL_HINTS);
++}
++
++int XSetTransientForHint(Display *dpy, Window w, Window propWindow)
++{
++	printf("XSetTransientForHint called..\n");
++	return XChangeProperty(dpy, w, XA_WM_TRANSIENT_FOR, XA_WINDOW, 32,
++		PropModeReplace, (unsigned char*)&propWindow, 1);
++}
+diff -Nuarp nxlib-0.45.orig/Colormap.c nxlib-0.45/Colormap.c
+--- nxlib-0.45.orig/Colormap.c	2002-08-26 12:48:01.000000000 +0900
++++ nxlib-0.45/Colormap.c	2009-02-08 16:49:22.000000000 +0900
+@@ -142,10 +142,24 @@ XCreateColormap(Display * display, Windo
+ }
+ 
+ int
+-XFreeColormap(Display * display, Colormap colormap)
++XFreeColormap(Display *display, Colormap colormap)
+ {
+ #if 0 // FIXME?
+ 	destroyColormap(colormap);
+ #endif
+ 	return 1;
+ }
++
++#include "Xutil.h"
++// required for Qt
++Status XGetRGBColormaps(Display *display, Window w, XStandardColormap **std_colormap, int *count, Atom property)
++{
++	printf("XGetRGBColormaps called...\n");
++//	*std_colormap = _nxDefaultColormap(display);
++	return 0;
++}
++
++XStandardColormap *XAllocStandardColormap()
++{
++	return calloc(1, sizeof(XStandardColormap));
++}
+diff -Nuarp nxlib-0.45.orig/Colorname.c nxlib-0.45/Colorname.c
+--- nxlib-0.45.orig/Colorname.c	2003-06-02 11:55:42.000000000 +0900
++++ nxlib-0.45/Colorname.c	2009-02-16 15:40:33.000000000 +0900
+@@ -52,7 +52,7 @@ GrGetColorByName(char *colorname, int *r
+ 		if (buf[0] != '!') {
+ 			char *p;
+ 			char name[256];
+-	
++
+ 			p = strInt(&r, buf);
+ 			p = strInt(&g, p);
+ 			p = strInt(&b, p);
+@@ -81,8 +81,12 @@ XAllocNamedColor(Display * dpy, Colormap
+ 	GR_COLOR c;
+ 	int r = 0, g = 0, b = 0;
+ 
+-	/* first look up color in rgb.txt color database */
+-	c = GrGetColorByName((char *) colorname, &r, &g, &b);
++	if (!strncmp(colorname, "rgb:", 4)) {
++		sscanf(&colorname[4], "%x/%x/%x", &r, &g, &b);
++	} else {
++		/* first look up color in rgb.txt color database */
++		c = GrGetColorByName((char *) colorname, &r, &g, &b);
++	}
+ //printf("XAllocNamedColor %s = %x\n", colorname, c);
+ 
+ 	hard_def->red = exact_def->red = r << 8;
+diff -Nuarp nxlib-0.45.orig/Context.c nxlib-0.45/Context.c
+--- nxlib-0.45.orig/Context.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Context.c	2009-02-06 10:56:13.000000000 +0900
+@@ -0,0 +1,171 @@
++#if 0
++#include <stdio.h>
++#include <stdlib.h>
++
++void* xalloc(size_t sz)
++{
++	void* p;
++	p = calloc(1, sz);
++	if (!p) exit(1);
++	return p;
++}
++/* Iterator */
++typedef struct _iterator {
++	void* element;
++	struct _iterator* next;
++} Iterator;
++/* Linked List */
++typedef struct _list {
++	int element_size;
++	struct _iterator* head;
++	struct _iterator* tail;
++} List;
++
++/* Linked Listの生成 */
++#define list_alloc(list, type) \
++	list = xalloc(sizeof(List)); \
++	list->element_size = sizeof(type);
++
++/* Iteratorに格納する要素のalloc */
++void* list_new_element(List* list)
++{
++	return xalloc(list->element_size);
++}
++/* Iteratorの取得 */
++Iterator* get_iterator(List* list)
++{
++	return list->head;
++}
++/* 要素を持っているか？ */
++int iterator_has_value(Iterator* ite)
++{
++	return ite != NULL;
++}
++/* 次の要素を取得する */
++void* iterator_next(Iterator* ite)
++{
++	return ite->next;
++}
++/* Linked Listにオブジェクトを追加する */
++void list_add(List* list, void* new_element)
++{
++	if (list->tail == NULL) {
++		/* 最初の要素 */
++		list->tail = list->head = xalloc(sizeof(Iterator));
++	} else {
++		Iterator* old_tail = list->tail;
++		old_tail->next = xalloc(sizeof(Iterator));
++		list->tail = old_tail->next;
++	}
++	list->tail->element = new_element;
++}
++/* Linked Listを開放する */
++void list_free(List* list)
++{
++	Iterator* it = get_iterator(list);
++	while (1) {
++		Iterator* old_it = it;
++		if (it == NULL) break;
++		free(it->element);
++		it = it->next;
++		free(old_it);
++	}
++}
++/* なんちゃって foreach */
++#define foreach(it, list) for(it = get_iterator(list); iterator_has_value(it); it = iterator_next(it))
++
++
++typedef struct _point {
++    int x;
++    int y;
++} Point;                        /* 適当な構造体サンプル */
++int main(int argc, char** argv)
++{
++    List* list;
++    Iterator* it;
++    int i;
++    list_alloc(list, Point);    /* リストを作る */
++    for (i = 0; i < 10; i++) {
++        Point* p1 = list_new_element(list);  /* リストに格納するelementの領域を貰う */
++        p1->x = i;
++        p1->y = i;
++        list_add(list, p1);     /* Point構造体をリストに追加する */
++    }
++    foreach (it, list) {        /* なんちゃってforeachの使い方 */
++        Point* p = it->element;
++        printf("point: (%d, %d)\n", p->x, p->y);
++    }
++    list_free(list);
++    return 0;
++}
++#endif
++
++
++#include "nxlib.h"
++#include "Xutil.h"
++
++typedef struct _XCList {
++	Display *display;
++	XID rid;
++	XContext context;
++	XPointer data;
++
++	struct _XCList	*prev;
++	struct _XCList	*next;
++} XCList;
++
++XCList xcl;
++
++int XFindContext(Display *display, XID rid, XContext context, XPointer *data)
++{
++	printf("XFindContext called...\n");
++	XCList *p = &xcl;
++	while (p->next) {
++		if (p->display == display && p->rid == rid && p->context == context) {
++			*data = p->data;
++			return 0;
++		}
++		p=p->next;
++	}
++	return XCNOENT;
++}
++
++int XSaveContext(Display *display, XID rid, XContext context, XPointer data)
++{
++	printf("XSaveContext called...\n");
++	XCList *p = &xcl;
++	while (p->next) {
++		if (p->display == display && p->rid == rid && p->context == context) {
++			p->data = data;	// over write
++			return 0;
++		}
++		p=p->next;
++	}
++
++	p->next = calloc(1, sizeof(XCList));	// with 0 clear
++	if (!p->next) return XCNOMEM;
++	p->next->prev=p;
++	p=p->next;
++
++	p->display = display;
++	p->rid = rid;
++	p->context = context;
++	p->data = data;
++	return 0;
++}
++
++int XDeleteContext(Display *display, XID rid, XContext context)
++{
++	printf("XDeleteContext called...\n");
++	XCList *p = &xcl;
++	while (p->next) {
++		if (p->display == display && p->rid == rid && p->context == context) {
++			p->prev->next = p->next;
++			p->next->prev = p->prev;
++			free(p);
++			return 0;
++		}
++		p=p->next;
++	}
++	return XCNOENT;
++}
+diff -Nuarp nxlib-0.45.orig/Copy.c nxlib-0.45/Copy.c
+--- nxlib-0.45.orig/Copy.c	2003-06-02 11:55:42.000000000 +0900
++++ nxlib-0.45/Copy.c	2009-02-04 20:24:04.000000000 +0900
+@@ -24,7 +24,7 @@ XCopyPlane(Display * display, Drawable s
+ 
+ 	// FIXME: plane ignored
+ 	if (plane != 0x00000001)
+-		printf("XCopyPlane: plane %x ignored\n", plane);
++		printf("XCopyPlane: plane %x ignored\n", (int)plane);
+ 
+ #if 0
+ 	/* test code instead of 1bpp pixmaps for sunclock...*/
+diff -Nuarp nxlib-0.45.orig/CrBFData.c nxlib-0.45/CrBFData.c
+--- nxlib-0.45.orig/CrBFData.c	2002-07-12 14:03:47.000000000 +0900
++++ nxlib-0.45/CrBFData.c	2009-02-04 20:24:04.000000000 +0900
+@@ -21,10 +21,17 @@ Pixmap
+ XCreateBitmapFromData(Display *display, Drawable d, _Xconst char *data,
+ 	unsigned int width, unsigned int height)
+ {
+-	// FIXME use XImages
++#if CPU_BIG_ENDIAN
++	return GrNewPixmapFromData(width, height, GR_RGB(255,255,255),
++		GR_RGB(0, 0, 0),(void *)data,
++		GR_BMDATA_BYTEREVERSE);
++#else
+ 	return GrNewPixmapFromData(width, height, GR_RGB(255,255,255),
+ 		GR_RGB(0, 0, 0),(void *)data,
+ 		GR_BMDATA_BYTEREVERSE|GR_BMDATA_BYTESWAP);
++#endif
++
++// FIXME use XImages
+ #if 0
+     XImage ximage;
+     GC gc;
+diff -Nuarp nxlib-0.45.orig/CrCursor.c nxlib-0.45/CrCursor.c
+--- nxlib-0.45.orig/CrCursor.c	2002-08-02 10:38:05.000000000 +0900
++++ nxlib-0.45/CrCursor.c	2009-02-04 20:24:04.000000000 +0900
+@@ -26,7 +26,7 @@ _nxCreateCursor(GR_WINDOW_ID cursor, GR_
+ 	h = min(mbb->height, MWMAX_CURSOR_SIZE);
+ 	bmask = GrNewBitmapFromPixmap(mask, mbb->x, mbb->y, w, h);
+ 	if (!bmask) {
+-		Xfree(bcursor);
++		free(bcursor);
+ 		return 0;
+ 	}
+ 
+diff -Nuarp nxlib-0.45.orig/CrGC.c nxlib-0.45/CrGC.c
+--- nxlib-0.45.orig/CrGC.c	2003-06-02 11:55:42.000000000 +0900
++++ nxlib-0.45/CrGC.c	2009-02-08 13:29:15.000000000 +0900
+@@ -100,10 +100,10 @@ setupGC(Display * dpy, GC gc, unsigned l
+ 		XSetSubwindowMode(dpy, gc, values->subwindow_mode);
+ 
+ 	if (valuemask & GCPlaneMask)
+-		printf("XCreatGC: GCPlaneMask not implemented\n");
++		printf("XCreateGC: GCPlaneMask not implemented\n");
+ 
+ 	if (valuemask & GCArcMode)
+-		printf("XCreatGC: GCArcMode not implemented\n");
++		printf("XCreateGC: GCArcMode not implemented\n");
+ }
+ 
+ /* note: unused Drawable d */
+diff -Nuarp nxlib-0.45.orig/CrPFBData.c nxlib-0.45/CrPFBData.c
+--- nxlib-0.45.orig/CrPFBData.c	2002-08-14 15:28:53.000000000 +0900
++++ nxlib-0.45/CrPFBData.c	2009-02-04 20:24:04.000000000 +0900
+@@ -40,10 +40,16 @@ XCreatePixmapFromBitmapData(Display *dis
+ 		fc = _nxColorvalFromPixelval(display, fg);
+ 		bc = _nxColorvalFromPixelval(display, bg);
+ 	}
+-printf("XCreatePixmapFromBitmapData %x,%x\n", fc, bc);
++printf("XCreatePixmapFromBitmapData %x,%x\n", (int)fc, (int)bc);
++
++#if CPU_BIG_ENDIAN
++	return GrNewPixmapFromData(width, height, fc, bc, (void *)data,
++		GR_BMDATA_BYTEREVERSE);
++#else
++	return GrNewPixmapFromData(width, height, fc, bc, (void *)data,
++		GR_BMDATA_BYTEREVERSE|GR_BMDATA_BYTESWAP);
++#endif
+ 
+-	return GrNewPixmapFromData(width, height, fc, bc,
+-		(void *)data, GR_BMDATA_BYTEREVERSE|GR_BMDATA_BYTESWAP);
+ #if 0
+     XImage ximage;
+     GC gc;
+diff -Nuarp nxlib-0.45.orig/CrPixmap.c nxlib-0.45/CrPixmap.c
+--- nxlib-0.45.orig/CrPixmap.c	2002-10-03 04:27:09.000000000 +0900
++++ nxlib-0.45/CrPixmap.c	2009-02-16 23:02:28.000000000 +0900
+@@ -5,7 +5,7 @@ XCreatePixmap(Display * dpy, Drawable d,
+ 	unsigned int height, unsigned int depth)
+ {
+ 	/* Drawable ignored with nano-X */
+-printf("XCreatePixmap %d,%d depth %d\n", width, height, depth);
++	printf("XCreatePixmap %d,%d depth %d\n", width, height, depth);
+ 	// FIXME depth ignored in pixmap
+ 	if (depth == 1) printf("XCreatePixmap created with depth 1\n");
+ 	return GrNewPixmap(width, height, NULL);
+@@ -14,7 +14,6 @@ printf("XCreatePixmap %d,%d depth %d\n",
+ int
+ XFreePixmap(Display * display, Pixmap pixmap)
+ {
+-
+ 	GrDestroyWindow(pixmap);
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/DrArc.c nxlib-0.45/DrArc.c
+--- nxlib-0.45.orig/DrArc.c	2003-06-16 14:01:50.000000000 +0900
++++ nxlib-0.45/DrArc.c	2009-02-04 20:24:04.000000000 +0900
+@@ -14,6 +14,7 @@ drawArc(Drawable d, GC gc, int x, int y,
+ 	if (angle2 == 0)
+ 		return;
+ 
++#if 0
+ 	/*
+ 	 * Convert X11 width/height to Nano-X radius required
+ 	 * for arc drawing.
+@@ -26,9 +27,9 @@ drawArc(Drawable d, GC gc, int x, int y,
+ 		--width;
+ 	if (!(height & 1))
+ 		--height;
++#endif
+ 	rx = width / 2;
+ 	ry = height / 2;
+-
+ 	/*
+ 	 * Convert X11 start/distance angles to Nano-X start/end angles.
+ 	 */
+@@ -56,9 +57,6 @@ drawArc(Drawable d, GC gc, int x, int y,
+ 		if (endAngle >= FULLCIRCLE)
+ 			endAngle = endAngle % FULLCIRCLE;
+ 	}
+-	/*printf("drawArc %d,%d %d,%d %d,%d (%d,%d)\n", x, y, width, height, angle1/64, angle2/64, startAngle/64, endAngle/64);*/
+-
+-	/* Call Nano-X routine, requires floating point*/
+ 	GrArcAngle(d, gc->gid, x+rx, y+ry, rx, ry, startAngle, endAngle, mode);
+ }
+ 
+@@ -68,6 +66,7 @@ XDrawArc(Display *display, Drawable d, G
+ {
+ 	/* X11 width/height is one less than Nano-X width/height*/
+ 	drawArc(d, gc, x, y, width+1, height+1, angle1, angle2, GR_ARC);
++
+ 	return 1;
+ }
+ 
+@@ -78,9 +77,10 @@ XDrawArcs(Display *display, Drawable d,
+ 
+ 	for (i = 0; i < narcs; i++) {
+ 		/* X11 width/height is one less than Nano-X width/height*/
+-		drawArc(d, gc, arcs[i].x, arcs[i].y,
+-			arcs[i].width+1, arcs[i].height+1, arcs[i].angle1,
+-			arcs[i].angle2, GR_ARC);
++		drawArc(d, gc, arcs->x, arcs->y,
++			arcs->width+1, arcs->height+1, arcs->angle1,
++			arcs->angle2, GR_ARC);
++		++arcs;
+ 	}
+ 	return 1;
+ }
+@@ -89,7 +89,7 @@ int
+ XFillArc(Display *display, Drawable d, GC gc, int x, int y,
+ 	unsigned int width, unsigned int height, int angle1, int angle2)
+ {
+-	drawArc(d, gc, x, y, width, height, angle1, angle2, GR_PIE);
++	drawArc(d, gc, x, y, width+1, height+1, angle1, angle2, GR_PIE);
+ 	return 1;
+ }
+ 
+@@ -98,8 +98,10 @@ XFillArcs(Display *display, Drawable d,
+ {
+ 	int i;
+ 
+-	for (i = 0; i < narcs; i++)
+-		drawArc(d, gc, arcs[i].x, arcs[i].y, arcs[i].width,
+-			arcs[i].height, arcs[i].angle1, arcs[i].angle2, GR_PIE);
++	for (i = 0; i < narcs; i++) {
++		drawArc(d, gc, arcs->x, arcs->y, arcs->width+1, arcs->height+1,
++			arcs->angle1, arcs->angle2, GR_PIE);
++		++arcs;
++	}
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/DrArc.org nxlib-0.45/DrArc.org
+--- nxlib-0.45.orig/DrArc.org	2002-08-26 13:03:36.000000000 +0900
++++ nxlib-0.45/DrArc.org	1970-01-01 09:00:00.000000000 +0900
+@@ -1,51 +0,0 @@
+-#include "nxlib.h"
+-
+-static void
+-drawArc(Drawable d, GC gc, int x, int y, int width, int height,
+-	int angle1, int angle2, int mode)
+-{
+-	int rx = width / 2;
+-	int ry = height / 2;
+-
+-	/* Note that this requires floating point.  Not good */
+-	GrArcAngle(d, gc->gid, x + rx, y + ry, rx, ry, angle1, angle2, mode);
+-}
+-
+-int
+-XDrawArc(Display * display, Drawable d, GC gc, int x, int y,
+-	unsigned int width, unsigned int height, int angle1, int angle2)
+-{
+-	drawArc(d, gc, x, y, width, height, angle1, angle2, GR_ARC);
+-	return 1;
+-}
+-
+-int
+-XDrawArcs(Display * display, Drawable d, GC gc, XArc * arcs, int narcs)
+-{
+-	int i;
+-
+-	for (i = 0; i < narcs; i++)
+-		drawArc(d, gc, arcs[i].x, arcs[i].y,
+-			     arcs[i].width, arcs[i].height, arcs[i].angle1,
+-			     arcs[i].angle2, GR_ARC);
+-	return 1;
+-}
+-
+-int
+-XFillArc(Display * display, Drawable d, GC gc, int x, int y,
+-	unsigned int width, unsigned int height, int angle1, int angle2)
+-{
+-	drawArc(d, gc, x, y, width, height, angle1, angle2, GR_PIE);
+-	return 1;
+-}
+-
+-int
+-XFillArcs(Display * display, Drawable d, GC gc, XArc * arcs, int narcs)
+-{
+-	int i;
+-
+-	for (i = 0; i < narcs; i++)
+-		drawArc(d, gc, arcs[i].x, arcs[i].y, arcs[i].width,
+-			arcs[i].height, arcs[i].angle1, arcs[i].angle2, GR_PIE);
+-	return 1;
+-}
+diff -Nuarp nxlib-0.45.orig/DrPoint.c nxlib-0.45/DrPoint.c
+--- nxlib-0.45.orig/DrPoint.c	2002-07-12 11:51:23.000000000 +0900
++++ nxlib-0.45/DrPoint.c	2009-02-04 20:24:04.000000000 +0900
+@@ -15,8 +15,10 @@ XDrawPoints(Display * display, Drawable
+ 	int i;
+ 
+ 	if (mode == CoordModeOrigin) {
+-		for (i = 0; i < npoints; i++)
++		for (i = 0; i < npoints; i++) {
+ 			GrPoint(d, gc->gid, points->x, points->y);
++			++points;
++		}
+ 	} else {
+ 		int prevx = 0, prevy = 0;
+ 
+@@ -25,6 +27,7 @@ XDrawPoints(Display * display, Drawable
+ 				prevy + points->y);
+ 			prevx += points->x;
+ 			prevy += points->y;
++			++points;
+ 		}
+ 	}
+ 
+diff -Nuarp nxlib-0.45.orig/DrRect.c nxlib-0.45/DrRect.c
+--- nxlib-0.45.orig/DrRect.c	2003-06-16 13:03:26.000000000 +0900
++++ nxlib-0.45/DrRect.c	2009-02-04 20:24:04.000000000 +0900
+@@ -17,8 +17,9 @@ XDrawRectangles(Display *display, Drawab
+ 
+ 	for (i = 0; i < nrect; i++) {
+ 		/* X11 width/height is one less than Nano-X width/height*/
+-		GrRect(d, gc->gid, rect[i].x, rect[i].y, rect[i].width+1,
+-		       rect[i].height+1);
++		GrRect(d, gc->gid, rect->x, rect->y, rect->width+1,
++		       rect->height+1);
++		++rect;
+ 	}
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/DrRect.org nxlib-0.45/DrRect.org
+--- nxlib-0.45.orig/DrRect.org	2002-07-12 11:50:50.000000000 +0900
++++ nxlib-0.45/DrRect.org	1970-01-01 09:00:00.000000000 +0900
+@@ -1,23 +0,0 @@
+-#include "nxlib.h"
+-
+-int
+-XDrawRectangle(Display * display, Drawable d, GC gc, int x, int y,
+-	       unsigned int width, unsigned int height)
+-{
+-	GrRect(d, gc->gid, x, y, width, height);
+-	return 1;
+-}
+-
+-int
+-XDrawRectangles(Display * display, Drawable d, GC gc, XRectangle * rect,
+-		int nrect)
+-{
+-
+-	int i;
+-
+-	for (i = 0; i < nrect; i++)
+-		GrRect(d, gc->gid, rect[i].x, rect[i].y, rect[i].width,
+-		       rect[i].height);
+-
+-	return 1;
+-}
+diff -Nuarp nxlib-0.45.orig/ErrorHandler.c nxlib-0.45/ErrorHandler.c
+--- nxlib-0.45.orig/ErrorHandler.c	2002-07-12 11:41:45.000000000 +0900
++++ nxlib-0.45/ErrorHandler.c	2009-03-08 21:49:42.000000000 +0900
+@@ -2,6 +2,12 @@
+ 
+ static XIOErrorHandler _errorfunc = 0;
+ 
++//static XErrorHandler _XErrorFunction = 0;
++//long _libX__XErrorFunctionFlag = 0;
++//void *_libX__XErrorFunctionPtr = 0;
++// from Xlibinit.h
++int (*_XErrorFunction)(Display*, XErrorEvent*) = 0;
++
+ void
+ _nxErrorHandler(GR_EVENT * event)
+ {
+@@ -22,3 +28,13 @@ XSetIOErrorHandler(XIOErrorHandler handl
+ 	_errorfunc = handle;
+ 	return prev;
+ }
++
++//int XSetErrorHandler( int (*handler)(Display*, XErrorEvent*) )
++XErrorHandler XSetErrorHandler(XErrorHandler handler)
++{
++//	XErrorHandler old = _XErrorFunction;
++	printf("XSetErrorHandler called [%x]\n", (unsigned int)handler);
++	_XErrorFunction = handler;
++//	return old;
++	return 0;
++}
+diff -Nuarp nxlib-0.45.orig/Extension.c nxlib-0.45/Extension.c
+--- nxlib-0.45.orig/Extension.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Extension.c	2009-03-15 16:18:06.000000000 +0900
+@@ -0,0 +1,146 @@
++#include "nxlib.h"
++#include <string.h>
++
++// from /usr/include/X11/extensions/shapestr.h
++#define SHAPENAME "SHAPE"
++#define SHAPE_MAJOR_VERSION	1	/* current version numbers */
++#define SHAPE_MINOR_VERSION	1
++
++typedef struct _EXT_Manage {
++	char *name;
++	char ver;
++	int event;
++	int error;
++} EXT_Manage;
++EXT_Manage exmanage[] = {
++	{ SHAPENAME, SHAPE_MAJOR_VERSION, LASTEvent+1, 0, },
++	{ NULL, 0, 0, 0 }
++};
++
++Bool XQueryExtension(Display *dpy, _Xconst char *name,
++	int *major_opcode, int *first_event, int *first_error)
++{
++	EXT_Manage *p = exmanage;
++	printf("XQueryExtension called [%s]\n", name);
++
++	while (p->name) {
++		if (!strcmp(p->name, name)) {
++			if (major_opcode) *major_opcode = p->ver;
++			if (first_event) *first_event = p->event;
++			if (first_error) *first_error = p->error;
++			return 1;
++		}
++		p++;
++	}
++
++	return 0;
++}
++
++// This codes run from extutil.c in libXext
++// required for Qt
++XExtCodes *XInitExtension(Display *dpy, _Xconst char *name)
++{
++	printf("XInitExtension called [%s]\n", name);
++	return 0;
++}
++
++static int ext = 0;
++XExtCodes *XAddExtension(Display *dpy)
++{
++	XExtCodes *codes = calloc(1, sizeof(XExtCodes));
++	if (codes) {
++		//codes->major_opcode = ext;
++		codes->extension = ext++;
++	}
++	printf("XAddExtension called [#%d]\n", codes ? codes->extension : -1);
++	return codes;
++	/*printf("XAddExtension called\n");
++	return 0;*/
++}
++
++int (*XESetCloseDisplay(Display *dpy, int extension, int (*proc)()))()
++{
++	printf("XESetCloseDisplay called [#%d]\n", extension);
++	return NULL;
++}
++
++// from libXi
++int /*XDeviceInfo **/XListInputDevices(Display *dpy, int *ndevices)
++{
++	return NULL;
++}
++int XFreeDeviceList()
++{
++	return NULL;
++}
++
++int /*XExtDisplayInfo **/XextFindDisplay(/*XExtensionInfo *extinfo, Display *dpy*/)
++{
++	return NULL;
++}
++#if 0
++int XextAddDisplay()
++{
++	return NULL;
++}
++
++int XRenderFreePicture()
++{
++	return NULL;
++}
++int XRenderFreeGlyphSet()
++{
++	return NULL;
++}
++int XRenderCompositeText32()
++{
++	return NULL;
++}
++int XRenderCompositeText16()
++{
++	return NULL;
++}
++int XRenderCompositeText8()
++{
++	return NULL;
++}
++#endif
++
++Bool XSyncQueryExtension(Display *dpy, int *event_base, int *error_base)
++{
++	printf("XSyncQueryExtension called\n");
++	//*event_base = *error_base = 0; //segfault
++	return 0;
++}
++Bool XShmQueryExtension(Display *dpy, int *event_base, int *error_base)
++{
++	printf("XShmQueryExtension called\n");
++	return 0;
++}
++// required for qt4
++Bool XkbQueryExtension(Display *dpy, int *event_base, int *error_base)
++{
++	printf("XkbQueryExtension called\n");
++	return 0;
++}
++
++// required for OpenGL
++XExtData **XEHeadOfExtensionList(XEDataObject object)
++{
++	return *(XExtData ***)&object;
++}
++
++int XAddToExtensionList(XExtData **structure, XExtData *ext_data)
++{
++	ext_data->next = *structure;
++	*structure = ext_data;
++	return 1;
++}
++
++XExtData *XFindOnExtensionList(XExtData **structure, int number)
++{
++	XExtData *ext;
++	ext = *structure;
++	while (ext && (ext->number != number)) ext = ext->next;
++	return ext;
++}
+diff -Nuarp nxlib-0.45.orig/FillPolygon.c nxlib-0.45/FillPolygon.c
+--- nxlib-0.45.orig/FillPolygon.c	2002-08-14 10:37:47.000000000 +0900
++++ nxlib-0.45/FillPolygon.c	2009-02-04 20:28:10.000000000 +0900
+@@ -27,8 +27,8 @@ XFillPolygon(Display * display, Drawable
+ 		}
+ 	}
+ 
+-	if (shape == Complex || shape == Convex)
+-		printf("XFillPolygon: Complex/Convex\n");
++//	if (shape == Complex || shape == Convex)
++//		printf("XFillPolygon: Complex/Convex\n");
+ 
+ 	GrFillPoly(d, gc->gid, npoints, gr_points);
+ 
+diff -Nuarp nxlib-0.45.orig/FillRct.c nxlib-0.45/FillRct.c
+--- nxlib-0.45.orig/FillRct.c	2002-07-12 12:07:03.000000000 +0900
++++ nxlib-0.45/FillRct.c	2009-02-04 20:24:04.000000000 +0900
+@@ -14,9 +14,11 @@ int
+ XFillRectangles(Display *dpy, Drawable d, GC gc, XRectangle *rects, int nrects) {
+ 	int i;
+ 
+-	for(i = 0; i < nrects; i++) 
+-		XFillRectangle(dpy, d, gc, rects[i].x, rects[i].y,
+-				rects[i].width, rects[i].height);
++	for(i = 0; i < nrects; i++) {
++		XFillRectangle(dpy, d, gc, rects->x, rects->y,
++				rects->width, rects->height);
++		++rects;
++	}
+ 
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/FontInfo.c nxlib-0.45/FontInfo.c
+--- nxlib-0.45.orig/FontInfo.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/FontInfo.c	2009-02-16 16:47:27.000000000 +0900
+@@ -0,0 +1,32 @@
++#include "nxlib.h"
++
++int XFreeFontInfo(char **names, XFontStruct *info, int actualCount)
++{
++	int i;
++	if (names) {
++		Xfree(names[0]-1);
++		for (i = 1; i < actualCount; i++) {
++			Xfree(names[i]);
++		}
++		Xfree((char*)names);
++	}
++	if (info) {
++		for (i = 0; i < actualCount; i++) {
++			if (info[i].per_char)
++				Xfree((char*)info[i].per_char);
++			if (info[i].properties)
++				Xfree((char*)info[i].properties);
++		}
++		Xfree((char*)info);
++	}
++	return 1;
++}
++
++#include "Xlcint.h"
++#include "Xlib.h"
++XFontSetExtents *XExtentsOfFontSet(XFontSet font_set)
++{
++	//printf("XExtentsOfFontSet called...\n");
++	if (!font_set) return NULL;
++	return &font_set->core.font_set_extents;
++}
+diff -Nuarp nxlib-0.45.orig/FreeGC.c nxlib-0.45/FreeGC.c
+--- nxlib-0.45.orig/FreeGC.c	2002-08-14 15:16:54.000000000 +0900
++++ nxlib-0.45/FreeGC.c	2009-02-04 20:24:04.000000000 +0900
+@@ -3,9 +3,15 @@
+ int
+ XFreeGC(Display *dpy, GC gc)
+ {
+-	GrDestroyGC(gc->gid);
++	XGCValues *vp = (XGCValues *)gc->ext_data;
++
++	/* free current region, if any*/
++	if (vp->clip_mask != None)
++		GrDestroyRegion(vp->clip_mask);
+ 
+-	Xfree((XGCValues *)gc->ext_data);
++	GrDestroyGC(gc->gid);
++	Xfree(vp);
+ 	Xfree(gc);
++
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/GetGCVals.c nxlib-0.45/GetGCVals.c
+--- nxlib-0.45.orig/GetGCVals.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/GetGCVals.c	2009-02-07 23:42:59.000000000 +0900
+@@ -0,0 +1,79 @@
++#include "nxlib.h"
++
++// All gc fields except GCClipMask and GCDashList
++#define ValidGCValuesBits (GCFunction | GCPlaneMask | GCForeground | \
++			   GCBackground | GCLineWidth | GCLineStyle | \
++			   GCCapStyle | GCJoinStyle | GCFillStyle | \
++			   GCFillRule | GCTile | GCStipple | \
++			   GCTileStipXOrigin | GCTileStipYOrigin | \
++			   GCFont | GCSubwindowMode | GCGraphicsExposures | \
++			   GCClipXOrigin | GCClipYOrigin | GCDashOffset | \
++			   GCArcMode)
++
++Status XGetGCValues(Display *dpy, GC gc, unsigned long valuemask, XGCValues *values)
++{
++	XGCValues *vp = (XGCValues *)gc->ext_data;
++
++	if (valuemask == ValidGCValuesBits) {
++		char dashes = values->dashes;
++		Pixmap clip_mask = values->clip_mask;
++		*values = *vp;
++		values->dashes = dashes;
++		values->clip_mask = clip_mask;
++		return True;
++	}
++	if (valuemask & ~ValidGCValuesBits) return False;
++
++	if (valuemask & GCFunction)
++		values->function = vp->function;
++
++	if (valuemask & GCPlaneMask)
++		values->plane_mask = vp->plane_mask;
++
++	if (valuemask & GCForeground)
++		values->foreground = vp->foreground;
++	if (valuemask & GCBackground)
++		values->background = vp->background;
++
++	if (valuemask & GCLineWidth)
++		values->line_width = vp->line_width;
++	if (valuemask & GCLineStyle)
++		values->line_style = vp->line_style;
++	if (valuemask & GCCapStyle)
++		values->cap_style = vp->cap_style;
++	if (valuemask & GCJoinStyle)
++		values->join_style = vp->join_style;
++	if (valuemask & GCFillStyle)
++		values->fill_style = vp->fill_style;
++	if (valuemask & GCFillRule)
++		values->fill_rule = vp->fill_rule;
++
++	if (valuemask & GCTile)
++		values->tile = vp->tile;
++	if (valuemask & GCStipple)
++		values->stipple = vp->stipple;
++
++	if (valuemask & GCTileStipXOrigin)
++		values->ts_x_origin = vp->ts_x_origin;
++	if (valuemask & GCTileStipYOrigin)
++		values->ts_y_origin = vp->ts_y_origin;
++
++	if (valuemask & GCFont)
++		values->font = vp->font;
++	if (valuemask & GCSubwindowMode)
++		values->subwindow_mode = vp->subwindow_mode;
++	if (valuemask & GCGraphicsExposures)
++		values->graphics_exposures = vp->graphics_exposures;
++
++	if (valuemask & GCClipXOrigin)
++		values->clip_x_origin = vp->clip_x_origin;
++	if (valuemask & GCClipYOrigin)
++		values->clip_y_origin = vp->clip_y_origin;
++
++	if (valuemask & GCDashOffset)
++		values->dash_offset = vp->dash_offset;
++	if (valuemask & GCArcMode)
++		values->arc_mode = vp->arc_mode;
++
++	return True;
++}
+diff -Nuarp nxlib-0.45.orig/GetGeom.c nxlib-0.45/GetGeom.c
+--- nxlib-0.45.orig/GetGeom.c	2002-09-20 12:56:28.000000000 +0900
++++ nxlib-0.45/GetGeom.c	2009-02-05 22:33:23.000000000 +0900
+@@ -21,3 +21,17 @@ XGetGeometry(Display *dpy, Drawable d, W
+ 
+ 	return 1;
+ }
++
++#include "Xutil.h"
++int XWMGeometry(Display *d, int s,
++	_Xconst char* user_geom, _Xconst char* default_geom,
++	unsigned int border_width, XSizeHints* hints,
++	int *x, int *y, int *width, int *height, int *gravity)
++{
++	sscanf(user_geom, "%dx%d", width, height);
++	//hints->width = hints->min_width = hints->max_width = /*base_width =*/ *width;
++	//hints->height = hints->min_height = hints->max_height = /*base_height =*/ *height;
++	//*x = *y = 0;
++	printf("XWMGeometry called [%s, %dx%d]\n", user_geom, *width, *height);
++	return WidthValue|HeightValue;
++}
+diff -Nuarp nxlib-0.45.orig/GetPntMap.c nxlib-0.45/GetPntMap.c
+--- nxlib-0.45.orig/GetPntMap.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/GetPntMap.c	2009-03-15 17:03:20.000000000 +0900
+@@ -0,0 +1,72 @@
++#include "nxlib.h"
++#include <string.h>
++
++// required for opera
++int XGetPointerMapping(Display *dpy, unsigned char *map, int nmap)
++{
++	printf("XGetPointerMapping called..\n");
++	if (!map) return 0;
++	strcpy((char*)map, "123456789");
++	return 9;
++	//return NULL;
++}
++
++// required for gvim
++int XDisplayKeycodes(Display *dpy,
++	int *min_keycode_return, int *max_keycode_return)
++{
++	// look up StrKeysym.c
++	*min_keycode_return = /*dpy->min_keycode*/9;
++	*max_keycode_return = /*dpy->max_keycode*/113;
++	return 1;
++}
++
++KeySym *XGetKeyboardMapping(Display *dpy, /*KeyCode*/unsigned int first_keycode,
++	int count, int *keysyms_per_keycode)
++{
++	int kc = first_keycode;
++	KeySym *p, *ks = Xcalloc(1, count);
++	if (!ks) return 0;
++
++	//printf("XGetKeyboardMapping called [%x,c:%d]", kc, count);
++	printf("XGetKeyboardMapping called [%x,c:%d]\n", kc, count);
++	p = ks;
++	//*keysyms_per_keycode = 0;
++	for (; count>0; count--) {
++		*p = XKeycodeToKeysym(dpy, kc, 0);
++		p++;
++		/*printf(" %0x >", kc);
++		if ((*p = XKeycodeToKeysym(dpy, kc, 0))) {
++			printf(" %0x", *p);
++			*(keysyms_per_keycode)++, p++;
++		}*/
++		kc++;
++	}
++	/*printf(" [c:%d]\n", *keysyms_per_keycode);
++	if (!(*keysyms_per_keycode)) return 0;*/
++	*keysyms_per_keycode = 2;
++
++	return ks;
++}
++
++XModifierKeymap *XGetModifierMapping(Display *display)
++{
++	XModifierKeymap *modmap;
++	printf("XGetModifierMapping called..\n");
++
++	modmap = (XModifierKeymap *)Xcalloc(1, sizeof(XModifierKeymap));
++	modmap->max_keypermod = 0;
++	modmap->modifiermap = NULL;
++	//modmap->modifiermap = (KeyCode*)Xmalloc(1);
++	return modmap;
++}
++
++int XFreeModifiermap(XModifierKeymap *map)
++{
++	printf("XFreeModifiermap called..\n");
++	if (map) {
++		if (map->modifiermap) Xfree((char *) map->modifiermap);
++		Xfree((char *) map);
++	}
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/GetWMProps.c nxlib-0.45/GetWMProps.c
+--- nxlib-0.45.orig/GetWMProps.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/GetWMProps.c	2009-03-15 15:25:07.000000000 +0900
+@@ -0,0 +1,121 @@
++#include "nxlib.h"
++#include "Xutil.h"
++#include "Xatom.h"
++//#include <string.h>
++
++// from GetTxtProp.c
++// required for kaffeine
++Status XGetTextProperty(Display *display, Window window, XTextProperty *tp, Atom property)
++{
++	Atom actual_type;
++	int actual_format = 0;
++	unsigned long nitems = 0L, leftover = 0L;
++	unsigned char *prop = NULL;
++
++	printf("XGetTextProperty called..\n");
++	if (XGetWindowProperty(display, window, property, 0L, 1000000L, False,
++		AnyPropertyType, &actual_type, &actual_format, &nitems, &leftover,
++		&prop) == Success && actual_type != None) {
++		/* okay, fill it in */
++		tp->value = prop;
++		tp->encoding = actual_type;
++		tp->format = actual_format;
++		tp->nitems = nitems;
++		return True;
++	}
++
++	tp->value = NULL;
++	tp->encoding = None;
++	tp->format = 0;
++	tp->nitems = 0;
++	return False;
++}
++
++Status XGetWMName(Display *dpy, Window w, XTextProperty *tp)
++{
++	return XGetTextProperty(dpy, w, tp, XA_WM_NAME);
++}
++
++Status XGetWMIconName(Display *dpy, Window w, XTextProperty *tp)
++{
++	return XGetTextProperty(dpy, w, tp, XA_WM_ICON_NAME);
++}
++
++Status XGetWMClientMachine(Display *dpy, Window w, XTextProperty *tp)
++{
++	return XGetTextProperty(dpy, w, tp, XA_WM_CLIENT_MACHINE);
++}
++
++#define NumPropWMHintsElements 9 /* number of elements in this structure */
++XWMHints *XGetWMHints(Display *dpy, Window w)
++{
++	XWMHints *prop;
++	//XWMHints *hints;
++	Atom actual_type;
++	int actual_format;
++	unsigned long leftover;
++	unsigned long nitems;
++
++	printf("XGetWMHints called..\n");
++	if (XGetWindowProperty(dpy, w, XA_WM_HINTS, 0L,
++		NumPropWMHintsElements, False, XA_WM_HINTS, &actual_type,
++		&actual_format, &nitems, &leftover, (unsigned char **)&prop)
++		!= Success) return NULL;
++
++	/* If the property is undefined on the window, return null pointer. */
++	/* pre-R3 bogusly truncated window_group, don't fail on them */
++	if ((actual_type != XA_WM_HINTS) ||
++		(nitems < (NumPropWMHintsElements-1)) || (actual_format != 32)) {
++		if (prop) Xfree((char*)prop);
++		return NULL;
++	}
++	return prop;
++#if 0
++	/* static copies not allowed in library, due to reentrancy constraint*/
++	if ((hints = (XWMHints*)Xcalloc(1, (unsigned)sizeof(XWMHints)))) {
++		hints->flags = prop->flags;
++		hints->input = (prop->input ? True : False);
++		hints->initial_state = cvtINT32toInt(prop->initialState);
++		hints->icon_pixmap = prop->iconPixmap;
++		hints->icon_window = prop->iconWindow;
++		hints->icon_x = cvtINT32toInt(prop->iconX);
++		hints->icon_y = cvtINT32toInt(prop->iconY);
++		hints->icon_mask = prop->iconMask;
++		if (nitems >= NumPropWMHintsElements)
++			hints->window_group = prop->windowGroup;
++		else
++			hints->window_group = 0;
++	}
++	Xfree((char *)prop);
++	return hints;
++#endif
++}
++
++Status XGetCommand(Display *dpy, Window w, char ***argvp, int *argcp)
++{
++	XTextProperty tp;
++	int argc;
++	char **argv;
++
++	printf("XGetCommand called..\n");
++	if (!XGetTextProperty(dpy, w, &tp, XA_WM_COMMAND)) return 0;
++
++	if (tp.encoding != XA_STRING || tp.format != 8) {
++		if (tp.value) Xfree((char*) tp.value);
++		return 0;
++	}
++
++	// ignore final <NUL> if present since UNIX WM_COMMAND is nul-terminated
++	if (tp.nitems && (tp.value[tp.nitems - 1] == '\0')) tp.nitems--;
++
++	// create a string list and return if successful
++	if (!XTextPropertyToStringList(&tp, &argv, &argc)) {
++		if (tp.value) Xfree((char*) tp.value);
++		return 0;
++	}
++
++	if (tp.value) Xfree((char*) tp.value);
++	*argvp = argv;
++	*argcp = argc;
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/Grab.c nxlib-0.45/Grab.c
+--- nxlib-0.45.orig/Grab.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Grab.c	2009-02-19 20:12:18.000000000 +0900
+@@ -0,0 +1,26 @@
++#include "nxlib.h"
++
++// required for Xt
++int XGrabButton(Display *display, unsigned int button, unsigned int modifiers,
++	Window grab_window, Bool owner_events, unsigned int event_mask,
++	int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor)
++{
++	printf("XGrabButton called...\n");
++	return 0;
++}
++
++// required for rasp
++int XGrabKey(Display *dpy, int key, unsigned int modifiers, Window grab_window,
++	Bool owner_events, int pointer_mode, int keyboard_mode)
++
++{
++	printf("XGrabKey called...\n");
++	return 0;
++}
++
++/*int XGrabKeyboard(Display *display, Window w, Bool owner_events,
++	int pointer_mode, int keyboard_mode, Time time)
++{
++	printf("XGrabKeyboard called...\n");
++	return 0;
++}*/
+diff -Nuarp nxlib-0.45.orig/IM.c nxlib-0.45/IM.c
+--- nxlib-0.45.orig/IM.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/IM.c	2009-03-17 23:47:00.000000000 +0900
+@@ -0,0 +1,448 @@
++#include <string.h>
++#include "nxlib.h"
++//#include "Xutil.h"
++#include "Xlcint.h"
++
++#if 0
++typedef enum {
++	CREATE_IC = 1,
++	SET_ICVAL = 2,
++	GET_ICVAL = 3
++} XICOp_t;
++
++char *_SetICValueData(XIC ic, XIMArg *values, XICOp_t mode)
++{
++	XIMArg *p;
++	char *return_name = NULL;
++
++	for (p = values; p != NULL && p->name != NULL; p++) {
++		if (!strcmp(p->name, XNInputStyle)) {
++			if (mode == CREATE_IC)
++				ic->core.input_style = (XIMStyle)p->value;
++		} else if (!strcmp(p->name, XNClientWindow)) {
++			ic->core.client_window = (Window)p->value;
++		} else if (!strcmp(p->name, XNFocusWindow)) {
++			ic->core.focus_window = (Window)p->value;
++		} else if (!strcmp(p->name, XNPreeditAttributes)
++			|| !strcmp(p->name, XNStatusAttributes)) {
++			return_name = _SetICValueData(ic, (XIMArg*)p->value, mode);
++			if (return_name) break;
++		} else {
++			return_name = p->name;
++			break;
++		}
++	}
++	return return_name;
++}
++
++char *_GetICValueData(XIC ic, XIMArg *values, XICOp_t mode)
++{
++	XIMArg *p;
++	char *return_name = NULL;
++
++	for (p = values; p->name != NULL; p++) {
++		if (!strcmp(p->name, XNInputStyle)) {
++			*((XIMStyle *)(p->value)) = ic->core.input_style;
++		} else if (!strcmp(p->name, XNClientWindow)) {
++			*((Window *)(p->value)) = ic->core.client_window;
++		} else if (!strcmp(p->name, XNFocusWindow)) {
++			*((Window *)(p->value)) = ic->core.focus_window;
++		} else if (!strcmp(p->name, XNFilterEvents)) {
++			*((unsigned long *)(p->value))= ic->core.filter_events;
++		} else if (!strcmp(p->name, XNPreeditAttributes)
++			|| !strcmp(p->name, XNStatusAttributes)) {
++			return_name = _GetICValueData(ic, (XIMArg*)p->value, mode);
++			if (return_name) break;
++		} else {
++			return_name = p->name;
++			break;
++		}
++	}
++	return return_name;
++}
++
++char *_SetICValues(XIC ic, XIMArg *args)
++{
++	char *ret;
++	if (!ic) return args->name;
++	ret = _SetICValueData(ic, args, SET_ICVAL);
++	return ret;
++}
++
++char *_GetICValues(XIC ic, XIMArg *args)
++{
++	char *ret;
++	if (!ic) return args->name;
++	ret = _GetICValueData(ic, args, GET_ICVAL);
++	return ret;
++}
++
++int _MbLookupString(XIC xic, XKeyEvent *ev, char *buffer, int bytes,
++	KeySym *keysym, Status *status)
++{
++	XComposeStatus NotSupportedYet;
++	int length;
++
++	length = XLookupString(ev, buffer, bytes, keysym, &NotSupportedYet);
++	if (keysym && *keysym == NoSymbol) {
++		*status = XLookupNone;
++	} else if (length > 0) {
++		*status = XLookupBoth;
++	} else {
++		*status = XLookupKeySym;
++	}
++	return length;
++}
++
++int _WcLookupString(XIC xic, XKeyEvent *ev, wchar_t * buffer, int wlen,
++	KeySym *keysym, Status *status)
++{
++	XComposeStatus NotSupportedYet;
++	int length;
++	/* In single-byte, mb_len = wc_len */
++	char *mb_buf = (char *)Xmalloc(wlen);
++
++	length = XLookupString(ev, mb_buf, wlen, keysym, &NotSupportedYet);
++	if (keysym && *keysym == NoSymbol) {
++		*status = XLookupNone;
++	} else if (length > 0) {
++		*status = XLookupBoth;
++	} else {
++		*status = XLookupKeySym;
++	}
++	mbstowcs(buffer, mb_buf, length);
++	XFree(mb_buf);
++	return length;
++}
++
++static _Xconst XICMethodsRec local_ic_methods = {
++//	_DestroyIC, 		/* destroy */
++//	_SetFocus,		/* set_focus */
++//	_UnsetFocus,		/* unset_focus */
++	NULL,	 		/* destroy */
++	NULL,			/* set_focus */
++	NULL,			/* unset_focus */
++	_SetICValues,		/* set_values */
++	_GetICValues,		/* get_values */
++//	_MbReset,		/* mb_reset */
++//	_WcReset,		/* wc_reset */
++	NULL,			/* mb_reset */
++	NULL,			/* wc_reset */
++	NULL,			/* utf8_reset */		/* ??? */
++	_MbLookupString,	/* mb_lookup_string */
++	_WcLookupString,	/* wc_lookup_string */
++	NULL			/* utf8_lookup_string */	/* ??? */
++};
++
++Status _CloseIM(XIM im)
++{
++	printf("_CloseIM called [%x]\n", (int)im);
++	/*StaticXIM im = (StaticXIM)xim;
++	_XlcCloseConverter(im->private->ctom_conv);
++	_XlcCloseConverter(im->private->ctow_conv);
++	XFree(im->private);*/
++	XFree(im->core.im_name);
++	if (im->core.res_name) XFree(im->core.res_name);
++	if (im->core.res_class) XFree(im->core.res_class);
++	return 1; /*bugID 4163122*/
++}
++
++char *_SetIMValues(XIM xim, XIMArg *arg)
++{
++	printf("_SetIMValues called [%s]\n", arg->name);
++	return arg->name;	/* evil */
++}
++
++char *_GetIMValues(XIM xim, XIMArg *values)
++{
++	XIMArg *p;
++	XIMStyles *styles;
++
++	printf("_GetIMValues called [%s]\n", values->name);
++	for (p = values; p->name != NULL; p++) {
++		if (strcmp(p->name, XNQueryInputStyle) == 0) {
++			styles = (XIMStyles*)Xmalloc(sizeof(XIMStyles));
++			*(XIMStyles**)p->value = styles;
++			styles->count_styles = 1;
++			styles->supported_styles =
++				(XIMStyle*)Xmalloc(styles->count_styles * sizeof(XIMStyle));
++			styles->supported_styles[0] = (XIMPreeditNone | XIMStatusNone);
++		} else {
++			break;
++		}
++	}
++	return p->name;
++}
++
++XIC _CreateIC(XIM im, XIMArg *arg)
++{
++	XIC ic;
++
++	printf("_CreateIC called [%x]\n", (int)im);
++	if (!(ic = Xcalloc(1, sizeof(XICRec)))) return NULL;
++
++	ic->methods = (XICMethods)&local_ic_methods;
++	ic->core.im = im;
++	ic->core.filter_events = KeyPressMask;
++
++	if ((_SetICValueData(ic, arg, CREATE_IC) != NULL)
++		|| (!(ic->core.input_style))) {
++		XFree(ic);
++		return 0;
++	}
++
++	return ic;
++}
++
++static _Xconst XIMMethodsRec local_im_methods = {
++	_CloseIM,	/* close */
++	_SetIMValues,	/* set_values */
++	_GetIMValues, 	/* get_values */
++	_CreateIC,	/* create_ic */
++	NULL,		/* ctstombs */
++	NULL		/* ctstowcs */
++};
++#endif
++
++// XrmDatabase rdb??
++XIM XOpenIM(Display *dpy,
++	struct _XrmHashBucketRec *rdb, char *res_name, char *res_class)
++{
++	XIM im;
++	//XIMStaticXIMRec *local_impart;
++
++	printf("XOpenIM called <name:%s, class:%s>\n", res_name, res_class);
++	//printf("XOpenIM called...\n");
++	//if (!(im = Xmalloc(sizeof(XIM)))) return 0;
++	if (!(im = Xcalloc(1, sizeof(XIM)))) return 0;
++	//if (!(local_impart = Xcalloc(1, sizeof(XIMRec)))) return 0;
++	//im->private = local_impart;
++	//im->methods        = (XIMMethods)&local_im_methods;
++	//im->core.display   = dpy;
++
++#if 0
++	// @im=kimera
++	strcpy(im->core.im_name, "kimera");
++
++	//im->private = local_impart;
++	im->methods        = (XIMMethods)&local_im_methods;
++	//im->core.lcd       = lcd;
++	im->core.ic_chain  = (XIC)NULL;
++	im->core.display   = dpy;
++	im->core.rdb       = rdb;
++	im->core.res_name  = NULL;
++	im->core.res_class = NULL;
++
++/*	local_impart->ctom_conv = ctom_conv;
++	local_impart->ctow_conv = ctow_conv;*/
++	/*local_impart->ctom_conv = NULL;
++	local_impart->ctow_conv = NULL;*/
++
++	if (res_name && *res_name) {
++		im->core.res_name  = (char*)Xmalloc(strlen(res_name)+1);
++		strcpy(im->core.res_name, res_name);
++	}
++	if (res_class && *res_class) {
++		im->core.res_class = (char*)Xmalloc(strlen(res_class)+1);
++		strcpy(im->core.res_class, res_class);
++	}
++#endif
++
++	return im;
++}
++
++Status XCloseIM(XIM im)
++{
++	printf("XCloseIM called.. %x\n", (int)im);
++	/*StaticXIM im = (StaticXIM)xim;
++	_XlcCloseConverter(im->private->ctom_conv);
++	_XlcCloseConverter(im->private->ctow_conv);
++	XFree(im->private);
++	XFree(im->core.im_name);
++	if (im->core.res_name) XFree(im->core.res_name);
++	if (im->core.res_class) XFree(im->core.res_class);*/
++	if (im) Xfree(im);
++	return 1; /*bugID 4163122*/
++}
++
++// Return the Display associated with the input method.
++Display *XDisplayOfIM(XIM im)
++{
++	printf("XDisplayOfIM called.. %x\n", (int)im);
++	return im->core.display;
++}
++
++// Return the Locale associated with the input method.
++char *XLocaleOfIM(XIM im)
++{
++	printf("XLocaleOfIM called.. %x\n", (int)im);
++	return im ? im->core.lcd->core->name : 0;
++}
++
++
++#if 0
++void _XIMCountNestedList(XIMArg *args, int *total_count)
++{
++	for (; args->name; args++) {
++		if (!strcmp(args->name, XNVaNestedList))
++			_XIMCountNestedList((XIMArg *)args->value, total_count);
++		else
++			++(*total_count);
++	}
++}
++
++void _XIMCountVaList(va_list var, int *total_count)
++{
++	char *attr;
++	*total_count = 0;
++
++	for (attr = va_arg(var, char*); attr; attr = va_arg(var, char*)) {
++		if (!strcmp(attr, XNVaNestedList)) {
++			_XIMCountNestedList(va_arg(var, XIMArg*), total_count);
++		} else {
++			(void)va_arg(var, XIMArg*);
++			++(*total_count);
++		}
++	}
++}
++
++int _XIMNestedListToNestedList(
++	XIMArg *nlist,   /* This is the new list */
++	XIMArg *list)    /* The original list */
++{
++	XIMArg *ptr = list;
++
++	while (ptr->name) {
++		if (!strcmp(ptr->name, XNVaNestedList)) {
++			nlist += _XIMNestedListToNestedList(nlist, (XIMArg *)ptr->value);
++		} else {
++			nlist->name = ptr->name;
++			nlist->value = ptr->value;
++			ptr++;
++			nlist++;
++		}
++	}
++	return ptr - list;
++}
++
++void _XIMVaToNestedList(va_list var, int max_count, XIMArg **args_return)
++{
++	XIMArg *args;
++	char   *attr;
++
++	if (max_count <= 0) {
++		*args_return = (XIMArg *)NULL;
++		return;
++	}
++
++	args = (XIMArg *)Xmalloc((unsigned)(max_count + 1) * sizeof(XIMArg));
++	*args_return = args;
++	if (!args) return;
++
++	for (attr = va_arg(var, char*); attr; attr = va_arg(var, char*)) {
++		if (!strcmp(attr, XNVaNestedList)) {
++			args += _XIMNestedListToNestedList(args, va_arg(var, XIMArg*));
++		} else {
++			args->name = attr;
++			args->value = va_arg(var, XPointer);
++			args++;
++		}
++	}
++	args->name = (char*)NULL;
++}
++
++char *XSetIMValues(XIM im, ...)
++{
++	printf("XSetIMValues called\n");
++//	return 0;
++
++	va_list var;
++	int     total_count;
++	XIMArg *args;
++	char   *ret;
++
++	// so count the stuff dangling here
++	va_start(var, im);
++	_XIMCountVaList(var, &total_count);
++	va_end(var);
++
++	// now package it up so we can send it along
++	va_start(var, im);
++	_XIMVaToNestedList(var, total_count, &args);
++	va_end(var);
++
++	ret = (*im->methods->set_values) (im, args);
++	if (args) Xfree((char *)args);
++	return ret;
++}
++
++char *XGetIMValues(XIM im, ...)
++{
++	va_list var;
++	int     total_count;
++	XIMArg *args;
++	char   *ret;
++
++	// so count the stuff dangling here
++	va_start(var, im);
++	_XIMCountVaList(var, &total_count);
++	va_end(var);
++
++	// now package it up so we can send it along
++	va_start(var, im);
++	_XIMVaToNestedList(var, total_count, &args);
++	va_end(var);
++
++	ret = (*im->methods->get_values) (im, args);
++	if (args) Xfree((char *)args);
++	return ret;
++}
++
++// Create an input context within the input method,
++// and return a pointer to the input context.
++XIC XCreateIC(XIM im, ...)
++{
++	va_list var;
++	int     total_count;
++	XIMArg *args;
++	XIC     ic;
++	printf("XCreateIC called..\n");
++
++	// so count the stuff dangling here
++	va_start(var, im);
++	_XIMCountVaList(var, &total_count);
++	va_end(var);
++
++	// now package it up so we can send it along
++	va_start(var, im);
++	_XIMVaToNestedList(var, total_count, &args);
++	va_end(var);
++
++	ic = (XIC) (*im->methods->create_ic) (im, args);
++	if (args) Xfree((char *)args);
++	if (ic) {
++		ic->core.next = im->core.ic_chain;
++		im->core.ic_chain = ic;
++	}
++	return ic;
++}
++#endif
++XIC XCreateIC(XIM im, ...)
++{
++	XIC ic;
++	printf("XCreateIC called...\n");
++	if (!(ic = Xcalloc(1, sizeof(XICRec)))) return 0;
++	return ic;
++}
++
++int XmbLookupString(XIC ic, XKeyPressedEvent *e,
++	char *buff, int len, KeySym *ks, Status *status)
++{
++	printf("XmbLookupString called..\n");
++	*status = XLookupBoth;
++	return XLookupString(e, buff, len, ks, status);
++
++	/*if (ic->core.im)
++		return (*ic->methods->mb_lookup_string) (ic, e, buff, len, ks, status);
++	return XLookupNone;*/
++}
+diff -Nuarp nxlib-0.45.orig/INSTALL nxlib-0.45/INSTALL
+--- nxlib-0.45.orig/INSTALL	2003-06-02 11:55:42.000000000 +0900
++++ nxlib-0.45/INSTALL	2009-02-04 20:24:04.000000000 +0900
+@@ -1,15 +1,18 @@
+ NXLIB build and installation instructions
+-Version 0.44, May 30, 2003
++Version 0.46, November 17, 2007
+ 
+ 1. Modify Makefile to set Microwindows and X11 include and lib directories
+-	MWIN=/usr2/microwin/src
++	MWIN=/pathto/microwin/src
+ 	X11=/usr/X11R6
+ 
+ 	Microwindows v0.90 or later must be used.
+ 
+-2. Modify Makefile to set X11 PCF font search directories (2)
++2. Modify Makefile to set X11 PCF and Truetype font search directories
+ 	X11_FONT_DIR1=/usr/lib/X11/fonts/100dpi
+ 	X11_FONT_DIR2=/usr/lib/X11/fonts/misc
++	X11_FONT_DIR3=/usr/lib/X11/fonts/TTF
++
++	More fonts directories can be added in font.c
+ 
+ 3. Modify Makefile to set rgb.txt file location
+ 	X11_RGBTXT=/usr/lib/X11/rgb.txt
+diff -Nuarp nxlib-0.45.orig/Image.c nxlib-0.45/Image.c
+--- nxlib-0.45.orig/Image.c	2003-08-12 05:04:10.000000000 +0900
++++ nxlib-0.45/Image.c	2009-03-16 23:37:54.000000000 +0900
+@@ -1,5 +1,3 @@
+-/* Portions Copyright 2003, Jordan Crouse (jordan@cosmicpenguin.net) */
+-
+ #define MWINCLUDECOLORS
+ #include "nxlib.h"
+ #include <stdlib.h>
+@@ -43,7 +41,6 @@ static unsigned long
+ get_pixel8(XImage *image, unsigned int x, unsigned int y)
+ {
+ 	unsigned char *src = image->data + (y * image->bytes_per_line) + x;
+-
+ 	return *src;
+ }
+ 
+@@ -51,7 +48,6 @@ static int
+ put_pixel8(XImage *image, unsigned int x, unsigned int y, unsigned long pixel)
+ {
+ 	unsigned char *src = image->data + (y * image->bytes_per_line) + x;
+-
+ 	*src = pixel;
+ 	return 1;
+ }
+@@ -61,7 +57,6 @@ get_pixel16(XImage *image, unsigned int
+ {
+ 	unsigned short *src = (unsigned short *)
+ 		(image->data + (y * image->bytes_per_line) + (x << 1));
+-
+ 	return *src;
+ }
+ 
+@@ -70,7 +65,6 @@ put_pixel16(XImage *image, int x, int y,
+ {
+ 	unsigned short *src = (unsigned short *)
+ 		(image->data + (y * image->bytes_per_line) + (x << 1));
+-
+ 	*src = pixel;
+ 	return 1;
+ }
+@@ -80,7 +74,6 @@ get_pixel32(XImage *image, unsigned int
+ {
+ 	unsigned long *src = (unsigned long *)
+ 		(image->data + (y * image->bytes_per_line) + (x << 2));
+-
+ 	return *src;
+ }
+ 
+@@ -89,7 +82,6 @@ put_pixel32(XImage *image, unsigned int
+ {
+ 	unsigned long *src = (unsigned long *)
+ 		(image->data + (y * image->bytes_per_line) + (x << 2));
+-
+ 	*src = pixel;
+ 	return 1;
+ }
+@@ -128,14 +120,44 @@ computePitch(int bpp, int width, int *pi
+ 	*bytesperpixel = bytespp;
+ }
+ 
++void setImageFunc(XImage *image)
++{
++	image->f.create_image = XCreateImage;
++	image->f.destroy_image = destroy_image;
++	image->f.sub_image = 0;		//FIXME
++	image->f.add_pixel = 0;
++	switch (image->bits_per_pixel) {
++	case 1:
++		image->f.get_pixel = get_pixel1;
++		image->f.put_pixel = put_pixel1;
++		break;
++	case 8:
++		image->f.get_pixel = get_pixel8;
++		image->f.put_pixel = put_pixel8;
++		break;
++	case 16:
++		image->f.get_pixel = get_pixel16;
++		image->f.put_pixel = put_pixel16;
++		break;
++	case 32:
++		image->f.get_pixel = get_pixel32;
++		image->f.put_pixel = put_pixel32;
++		break;
++	default:
++		printf("createImageStruct: unsupported bpp\n");
++	}
++
++	return;
++}
++
+ static XImage *
+ createImageStruct(unsigned int width, unsigned int height, unsigned int depth,
+ 	int format, int bytes_per_line, int bitmap_pad, unsigned long red_mask,
+ 	unsigned long green_mask, unsigned long blue_mask)
+ {
+-	XImage *image = (XImage *) Xcalloc(sizeof(XImage), 1);
+-	if (!image)
+-		return 0;
++	//XImage *image = (XImage *) Xcalloc(sizeof(XImage), 1);
++	XImage *image = (XImage *) Xcalloc(1, sizeof(XImage));
++	if (!image) return 0;
+ 
+ 	image->width = width;
+ 	image->height = height;
+@@ -168,6 +190,7 @@ createImageStruct(unsigned int width, un
+ 	image->green_mask = green_mask;
+ 	image->blue_mask = blue_mask;
+ 
++#if 0
+ 	image->f.create_image = XCreateImage;
+ 	image->f.destroy_image = destroy_image;
+ 	image->f.sub_image = 0;		//FIXME
+@@ -192,6 +215,8 @@ createImageStruct(unsigned int width, un
+ 	default:
+ 		printf("createImageStruct: unsupported bpp\n");
+ 	}
++#endif
++	setImageFunc(image);
+ 
+ 	return image;
+ }
+@@ -200,19 +225,19 @@ createImageStruct(unsigned int width, un
+  * Create an image in either, preferably in hw format.
+  */
+ XImage *
+-XCreateImage(Display * display, Visual * visual, unsigned int depth,
++XCreateImage(Display *display, Visual *visual, unsigned int depth,
+ 	int format, int offset, char *data, unsigned int width,
+ 	unsigned int height, int bitmap_pad, int bytes_per_line)
+ {
+ 	XImage *image;
+ 	unsigned long red_mask = 0, green_mask = 0, blue_mask = 0;
+-	
++
+ 	if (depth == 24) {
+ 		printf("XCreateImage: changing depth to GR_PIXELVAL\n");
+ 		depth = sizeof(GR_PIXELVAL) * 8;
+ 	}
+ 	if (depth != display->screens[0].root_depth) {
+-		printf("XCreateImage: depth != hw_format\n");
++		printf("XCreateImage: depth[%d] != hw_format[%d]\n", depth, display->screens[0].root_depth);
+ 		//if (depth == 1)	//FIXME
+ 			//depth = sizeof(GR_PIXELVAL) * 8;
+ 	}
+@@ -231,12 +256,20 @@ XCreateImage(Display * display, Visual *
+ 	return image;
+ }
+ 
++/*unsigned int Ones(unsigned long mask)
++{
++	register unsigned long y;
++	y = (mask >> 1) &033333333333;
++	y = mask - y - ((y >>1) & 033333333333);
++	return ((unsigned int) (((y + (y >> 3)) & 030707070707) % 077));
++}*/
++
+ /*
+  * Create an image, (always in GR_PIXELVAL format), and initialize
+  * using GrReadArea.
+  */
+ XImage *
+-XGetImage(Display * display, Drawable d, int x, int y,
++XGetImage(Display *display, Drawable d, int x, int y,
+ 	unsigned int width, unsigned int height,
+ 	unsigned long plane_mask, int format)
+ {
+@@ -251,19 +284,43 @@ XGetImage(Display * display, Drawable d,
+ 	    y < 0 || (y + height) > winfo.height) {
+ 		/* Error - BadMatch */
+ 		printf("XGetImage: Image out of bounds\n");
+-		printf("    %d %d - %d %d is out of bounds on %d, %d - %d %d\n",
+-		       x, y, width, height, 0, 0, winfo.width, winfo.height);
++		printf("    %d %d - %d %d is out of bounds on %d %d - %d %d\n",
++		       x, y, x+width, y+height, 0, 0, winfo.width, winfo.height);
++{
++//extern XErrorHandler _XErrorFunction;
++extern int (*_XErrorFunction)(Display*, XErrorEvent*);
++		XErrorEvent ev;
++//		ev.type = BadMatch;
++		ev.display = display;
++		ev.serial = XNextRequest;
++//		ev.request_code = <X11/Xproto.h>
++		ev.error_code = BadMatch;
++		if (_XErrorFunction) _XErrorFunction(display, &ev);
++}
+ 		return NULL;
+ 	}
+ 
+-	if (format == XYPixmap)
+-		printf("XGetImage warning: broken for XYPixmap\n");
+-
+-	/* 
+-	 * create XImage in GrReadArea compatible format,
+-	 * which is always sizeof(GR_PIXELVAL), not hw display format
+-	 */
+-	depth = sizeof(GR_PIXELVAL) * 8;
++	if (format == XYPixmap) {
++		/*depth = Ones(plane_mask &
++			(((unsigned long)0xFFFFFFFF) >> (32 - sizeof(GR_PIXELVAL)*8)));*/
++		//depth = sizeof(GR_PIXELVAL) * 8;
++		depth = 1;	// for Qt (Mask)
++		printf("XGetImage warning: broken for XYPixmap (bpp %d)\n", depth);
++
++		visual = XDefaultVisual(display, 0);
++		image = createImageStruct(width, height, 1, format, 0, 0,
++			visual->red_mask, visual->green_mask, visual->blue_mask);
++		if (!image) return NULL;
++		image->data = (char *)malloc(width/*image->bytes_per_line*/ * height);
++		memset(image->data, 0xff, width/*image->bytes_per_line*/ * height);
++		return image;
++	} else {
++		/*
++		* create XImage in GrReadArea compatible format,
++		* which is always sizeof(GR_PIXELVAL), not hw display format
++		*/
++		depth = sizeof(GR_PIXELVAL) * 8;
++	}
+ 
+ #if 0
+ 	if (depth <= 8)
+@@ -276,12 +333,12 @@ XGetImage(Display * display, Drawable d,
+ 	drawsize = sizeof(GR_PIXELVAL);
+ 
+ 	visual = XDefaultVisual(display, 0);
+-	image = createImageStruct(width, height, depth, format, 0, 0,
++	image = createImageStruct(width, height, depth, format, 0, 0/*display->bitmap_pad*/,
+ 		visual->red_mask, visual->green_mask, visual->blue_mask);
+-	if (!image)
+-		return NULL;
++	if (!image) return NULL;
+ 
+-	image->data = (char *) Xcalloc(width * height * drawsize, 1);
++	//image->data = (char *) Xcalloc(width * height * drawsize, 1);
++	image->data = (char *) Xcalloc(1, width * height * drawsize);
+ 	GrReadArea(d, x, y, width, height, (void *) image->data);
+ 
+ 	if (format == XYPixmap && plane_mask != 0xFFFFFFFF)
+@@ -290,119 +347,198 @@ XGetImage(Display * display, Drawable d,
+ 	return image;
+ }
+ 
+-/*
+- * Output a non-palettized image.  Never uses colormap, but instead
+- * uses GrArea with image depth parameter for server conversion.
+- */
++#if 0
++int _XSetImage(XImage *srcimg, XImage *dstimg, int x, int y)
++{
++	unsigned long pixel;
++	int row, col;
++	int width, height, startrow, startcol;
++
++	if (x < 0) {
++		startcol = -x;
++		x = 0;
++	} else
++		startcol = 0;
++	if (y < 0) {
++		startrow = -y;
++		y = 0;
++	} else
++		startrow = 0;
++	width = dstimg->width - x;
++	if (srcimg->width < width) width = srcimg->width;
++	height = dstimg->height - y;
++	if (srcimg->height < height) height = srcimg->height;
++
++	/* this is slow, will do better later */
++	for (row = startrow; row < height; row++) {
++		for (col = startcol; col < width; col++) {
++			//pixel = XGetPixel(srcimg, col, row);
++			//XPutPixel(dstimg, x + col, y + row, pixel);
++			dstimg->f.put_pixel(dstimg, x + col, y + row, srcimg->f.get_pixel(srcimg, col, row));
++		}
++	}
++	return 1;
++}
++#endif
++
++XImage *XGetSubImage(Display *dpy, Drawable d, int x, int y,
++	unsigned int width, unsigned int height, unsigned long plane_mask,
++	int format, XImage *dest_image, int dest_x, int dest_y)
++{
++	XImage *img;
++	int i, n;
++	char *p, *s;
++
++	printf("XGetSubImage src %d,%d wxh %d,%d dst %d,%d\n",
++		x, y, width, height, dest_x, dest_y);
++	img = XGetImage(dpy, d, x, y, width, height, plane_mask, format);
++	if (!img) return NULL;
++
++	// どちらのルーチンでも大丈夫
++	//_XSetImage(img, dest_image, dest_x, dest_y);
++	n = width * sizeof(GR_PIXELVAL);
++	s = img->data;
++	p = dest_image->data + (dest_y * dest_image->bytes_per_line) + (dest_x * dest_image->depth/8);
++	for (i=0; i<height; i++) {
++		memcpy(p, s, n);
++		p += dest_image->bytes_per_line;
++		s += img->bytes_per_line;
++	}
++	//XDestroyImage(img);
++	destroy_image(img);
+ 
+-/* This takes a portion of the image buffer and rearranges it to keep from 
+-   freaking out GrArea. This will take into account a shifted src_x 
++	return dest_image;
++}
++
++/* This takes a portion of the image buffer and rearranges it to keep from
++   freaking out GrArea. This will take into account a shifted src_x
+    (or a width that is not as large as the declared image width).
+ */
+-
+-static void
+-showPartialImage(GR_WINDOW_ID d, GR_GC_ID gc, GR_RECT *srect, GR_RECT *drect, char *src, int mode)
++inline void showPartialImage(Display *display, GR_WINDOW_ID d, GR_GC_ID gc, GR_RECT *srect,
++	GR_RECT *drect, char *src, int pixtype)
+ {
+-	char *dst = 0, *local = 0;
++	char *dst, *buffer;
+ 	char *ptr = src;  /* This will already be adjusted to the inital X and Y of the image */
+ 	int r, size = 0;
+ 
+-	switch(mode) {
+-	case MWPF_TRUECOLOR332: 
+-		size = 1; break;
++	switch(pixtype) {
++	case MWPF_TRUECOLOR332:
++		size = 1;
++		break;
+ 	case MWPF_TRUECOLOR555:
+ 	case MWPF_TRUECOLOR565:
+-		size = 2; break;
++		size = 2;
++		break;
+ 	case MWPF_TRUECOLOR888:
+-		size = 3; break;
++		size = 3;
++		break;
+ 	case MWPF_TRUECOLOR0888:
+-		size = 4; break;
++		size = 4;
++		break;
++	case MWPF_HWPIXELVAL:
++		size = display->screens[0].root_depth / 8;
++		break;
+ 	}
+ 
+ 	/* Allocate a local buffer - this is much faster than doing N GrArea calls */
+-	dst = local = (char *) malloc( (drect->width * size) * drect->height);
+-
+-	if (!local) return;
++	dst = buffer = (char *)ALLOCA( (drect->width * size) * drect->height);
++	if (!dst) return;
+ 
+ 	/* Copy each row to the buffer */
+-
+ 	for(r = 0; r < drect->height; r++) {
+-		memcpy(dst, ptr, drect->width * size); 
++		memcpy(dst, ptr, drect->width * size);
+ 		dst += (drect->width * size);
+ 
+-		ptr += (srect->width - srect->x) * size;  /* Move to the end of the line on the real buffer */
+-		ptr += (srect->x * size);              /* And then offset ourselves accordingly          */
++		/* Move to the end of the line on the real buffer */
++		ptr += (srect->width - srect->x) * size;
++
++		/* And then offset ourselves accordingly          */
++		ptr += (srect->x * size);
+ 	}
+-	       
+-	GrArea(d, gc, drect->x, drect->y, drect->width, drect->height, local, mode);
+-	free(local);
++
++	GrArea(d, gc, drect->x, drect->y, drect->width, drect->height, buffer, pixtype);
++	FREEA(buffer);
+ }
+ 
++/*
++ * Output a truecolor (non-palettized) image using GrArea.
++ * Image bits may need Nano-X conversion if not in hw pixel format.
++ */
+ static int
+ putTrueColorImage(Display * display, Drawable d, GC gc, XImage *image,
+ 	int src_x, int src_y, int dest_x, int dest_y,
+ 	unsigned int width, unsigned int height)
+ {
+-	int mode = MWPF_PIXELVAL;
+-	unsigned char *src = image->data;
+-
+-#ifdef DEBUG
+-	printf("putTrueColorImage depth %d  src %d,%d wxh %d,%d dst %d,%d\n",
+-	       image->depth, src_x, src_y, width, height, dest_x, dest_y);
+-#endif
++	int		pixtype = MWPF_HWPIXELVAL;	/* assume hw pixel format*/
++	unsigned char *	src;
+ 
++	/* convert pixtype if image bpp not hw format*/
+ 	switch (image->bits_per_pixel) {
+-	case 1:	// major FIXME
++	case 1:
+ 		printf("putTruecolorImage bpp 1 FIXME\n");
+ 		src = image->data;
+-		return 1; // must return, will crash server
+-		break;
++		return 0; // must return, will crash server major FIXME
+ 	case 8:
+-		mode = MWPF_TRUECOLOR332;
++		if (display->screens[0].root_depth != 8)
++			pixtype = MWPF_TRUECOLOR332;
+ 		src = image->data + (src_y * image->bytes_per_line) + src_x;
+ 		break;
+ 	case 16:
+-		if (display->screens[0].root_visual->bits_per_rgb == 5)
+-			mode = MWPF_TRUECOLOR555;
+-		else
+-			mode = MWPF_TRUECOLOR565;
++		if (display->screens[0].root_depth != 16) {
++			/* we don't check 565 vs 555 here, just assume hw format*/
++			if (display->screens[0].root_visual->bits_per_rgb == 5)
++				pixtype = MWPF_TRUECOLOR555;
++			else
++				pixtype = MWPF_TRUECOLOR565;
++		}
+ 		src = image->data + (src_y * image->bytes_per_line) + (src_x << 1);
+ 		break;
+ 	case 24:
+-		mode = MWPF_TRUECOLOR888;
++		if (display->screens[0].root_depth != 24)
++			pixtype = MWPF_TRUECOLOR888;
+ 		src = image->data + (src_y * image->bytes_per_line) + (src_x * 3);
+ 		break;
+ 	case 32:
+-		mode = MWPF_TRUECOLOR0888;
++		if (display->screens[0].root_depth != 32)
++			pixtype = MWPF_TRUECOLOR0888;
+ 		src = image->data + (src_y * image->bytes_per_line) + (src_x << 2);
+ 		break;
+ 	default:
+ 		printf("XPutImage: unsupported bpp %d\n", image->bits_per_pixel);
++		return 0;
+ 	}
+ 
+-#ifdef DEBUG
+-	printf("putTrueColorImage nxmode = %d\n", mode);
++#if 1
++	printf("putTrueColorImage depth %d pixtype %d src %d,%d wxh %d,%d dst %d,%d\n",
++		image->depth, pixtype, src_x, src_y, width, height, dest_x, dest_y);
+ #endif
++	/* X11 does draw backgrounds on pixmaps but not text... ugh...*/
++	/* this likely will set the GC incorrectly for future non-pixmap draws*/
++	GrSetGCUseBackground(gc->gid, GR_TRUE);
+ 
+ 	/* We can only do a direct GrArea if the width is the same as the width
+ 	   of our image buffer.  Otherwise, we need to move to a slower path that
+ 	   handles the situation better.
+ 	*/
+-
+-	if (!src_x && width == image->width) 
++	if (src_x == 0 && width == image->width)
+ 		GrArea((GR_WINDOW_ID)d, (GR_GC_ID)gc->gid, dest_x, dest_y,
+-		       width, height, src, mode);
++		       width, height, src, pixtype);
+ 	else {
+ 		GR_RECT srect, drect;
+-		srect.x = src_x;  srect.y = src_y;
+-		srect.width = image->width;  srect.height = image->height;
+-		
+-		drect.x = dest_x;  drect.y = dest_y;
+-		drect.width = width;  drect.height = height;
+-		
+-		showPartialImage((GR_WINDOW_ID) d, (GR_GC_ID) gc->gid, &srect, &drect, src, mode);
+-	}
+ 
++		srect.x = src_x;
++		srect.y = src_y;
++		srect.width = image->width;
++		srect.height = image->height;
++
++		drect.x = dest_x;
++		drect.y = dest_y;
++		drect.width = width;
++		drect.height = height;
++
++		showPartialImage(display, (GR_WINDOW_ID)d, (GR_GC_ID)gc->gid,
++			&srect, &drect, src, pixtype);
++	}
+ 	return 1;
+ }
+ 
+@@ -411,7 +547,7 @@ putTrueColorImage(Display * display, Dra
+  * These images are defined in any bpp but contain colormap indices.
+  */
+ static int
+-putImage(Display * display, Drawable d, GC gc, XImage * image,
++putImage(Display *display, Drawable d, GC gc, XImage *image,
+ 	int src_x, int src_y, int dest_x, int dest_y,
+ 	unsigned int width, unsigned int height)
+ {
+@@ -421,9 +557,8 @@ putImage(Display * display, Drawable d,
+ 		((src_y * (image->bytes_per_line)) + src_x);
+ 	nxColormap *colormap = _nxFindColormap(XDefaultColormap(display, 0));
+ 
+-printf("putImage: bpp %d\n", image->depth);
+-	if (!colormap)
+-		return 0;
++	printf("putImage: bpp %d\n", image->depth);
++	if (!colormap) return 0;
+ 
+ 	dst = buffer = ALLOCA(width * height * sizeof(unsigned long));
+ 
+@@ -438,6 +573,10 @@ printf("putImage: bpp %d\n", image->dept
+ 				src += 4;
+ 				continue;
+ 
++			/*case 24:
++				cl = (unsigned short) *((unsigned long *) src);
++				src += 3;
++				continue;*/
+ 			//case 24: FIXME
+ 			case 16:
+ 				cl = (unsigned short) *((unsigned short *) src);
+@@ -483,15 +622,116 @@ printf("putImage: bpp %d\n", image->dept
+ 	return 1;
+ }
+ 
+-int
+-XPutImage(Display * display, Drawable d, GC gc, XImage * image,
+-	int src_x, int src_y, int dest_x, int dest_y, unsigned int width,
+-	unsigned int height)
+-{
++int XPutImage(Display *display, Drawable d, GC gc, XImage *image,
++	int src_x, int src_y, int dest_x, int dest_y, unsigned int _width,
++	unsigned int _height)
++{
++	long width = _width;
++	long height = _height;
++
++	// 何故かスクロールがおかしくなる
++	/*if (src_x<0) {
++		width += src_x;
++		src_x = 0;
++	}
++	if (src_y<0) {
++		height += src_y;
++		src_y = 0;
++	}
++	if (dest_x<0) {
++		printf("XPutImage warning src(%d,%d) wxh(%d,%d) dst(%d,%d)\n", src_x, src_y, width, height, dest_x, dest_y);
++		width += dest_x;
++		if (width <= 0) return 0;
++		dest_x = 0;
++	}
++	if (dest_y<0) {
++		printf("XPutImage warning src(%d,%d) wxh(%d,%d) dst(%d,%d)\n", src_x, src_y, width, height, dest_x, dest_y);
++		height += dest_y;
++		if (height <= 0) return 0;
++		dest_y = 0;
++	}*/
++
+ 	// FIXME bpp 1
+-	if (XDefaultVisual(display, 0)->class == TrueColor && image->depth != 1)
++	if (display->screens[0].root_visual->class == TrueColor && image->depth != 1)
+ 		return putTrueColorImage(display, d, gc, image, src_x, src_y,
+ 			dest_x, dest_y, width, height);
+ 	return putImage(display, d, gc, image, src_x, src_y, dest_x, dest_y,
+ 			width, height);
+ }
++
++#if 0
++/*
++ * This routine initializes the image object function pointers.  The
++ * intent is to provide native (i.e. fast) routines for native format images
++ * only using the generic (i.e. slow) routines when fast ones don't exist.
++ * However, with the current rather botched external interface, clients may
++ * have to mung image attributes after the image gets created, so the fast
++ * routines always have to check to make sure the optimization is still
++ * valid, and reinit the functions if not.
++ */
++void _XInitImageFuncPtrs(XImage *image)
++{
++	image->f.create_image = XCreateImage;
++	image->f.destroy_image = _XDestroyImage;
++	if ((image->format == ZPixmap) && (image->bits_per_pixel == 8)) {
++		image->f.get_pixel = _XGetPixel8;
++		image->f.put_pixel = _XPutPixel8;
++	} else if (((image->bits_per_pixel | image->depth) == 1) &&
++		(image->byte_order == image->bitmap_bit_order)) {
++		image->f.get_pixel = _XGetPixel1;
++		image->f.put_pixel = _XPutPixel1;
++	} else if ((image->format == ZPixmap) &&
++		(image->bits_per_pixel == 32)) {
++		image->f.get_pixel = _XGetPixel32;
++		image->f.put_pixel = _XPutPixel32;
++	} else if ((image->format == ZPixmap) &&
++		(image->bits_per_pixel == 16)) {
++		image->f.get_pixel = _XGetPixel16;
++		image->f.put_pixel = _XPutPixel16;
++	} else {
++		image->f.get_pixel = _XGetPixel;
++		image->f.put_pixel = _XPutPixel;
++	}
++	image->f.sub_image = _XSubImage;
++/*	image->f.set_image = _XSetImage;*/
++	image->f.add_pixel = _XAddPixel;
++}
++#endif
++
++// required for gtk
++#define ROUNDUP(nbytes, pad) ((((nbytes) + ((pad)-1)) / (pad)) * ((pad)>>3))
++Status XInitImage(XImage *image)
++{
++	int min_bytes_per_line;
++	printf("XInitImage called..\n");
++//	return 0;
++
++	if (image->depth == 0 || image->depth > 32 ||
++		image->bits_per_pixel > 32 || image->bitmap_unit > 32 ||
++		image->bits_per_pixel < 0 || image->bitmap_unit < 0 ||
++		(image->format != XYBitmap && image->format != XYPixmap &&
++		image->format != ZPixmap) ||
++		(image->format == XYBitmap && image->depth != 1) ||
++		(image->bitmap_pad != 8 && image->bitmap_pad != 16 &&
++		image->bitmap_pad != 32) || image->xoffset < 0)
++		return 0;
++
++	// compute per line accelerator.
++	if (image->format == ZPixmap) {
++		min_bytes_per_line =
++			ROUNDUP((image->bits_per_pixel * image->width), image->bitmap_pad);
++	} else {
++		min_bytes_per_line =
++			ROUNDUP((image->width + image->xoffset), image->bitmap_pad);
++	}
++
++	if (image->bytes_per_line == 0) {
++		image->bytes_per_line = min_bytes_per_line;
++	} else if (image->bytes_per_line < min_bytes_per_line) {
++		return 0;
++	}
++	//_XInitImageFuncPtrs(image);
++	setImageFunc(image);
++
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/ListFonts.c nxlib-0.45/ListFonts.c
+--- nxlib-0.45.orig/ListFonts.c	2002-10-06 09:17:08.000000000 +0900
++++ nxlib-0.45/ListFonts.c	2009-02-04 20:24:04.000000000 +0900
+@@ -9,7 +9,7 @@ struct _list {
+ 	struct _list *next;
+ };
+ 
+-static struct _list *g_fontlist = 0;
++static struct _list *g_fontlist = NULL;
+ 
+ static struct _list *
+ _createFontList(void)
+@@ -21,6 +21,7 @@ _createFontList(void)
+ 			(struct _list *)Xcalloc(sizeof(struct _list), 1);
+ 	else {
+ 		struct _list *t;
++
+ 		for (t = g_fontlist; t->next; t = t->next)
+ 			continue;
+ 		ptr = t->next =
+@@ -40,8 +41,8 @@ _addFontToList(struct _list *list, char
+ 				(list->alloc + 5) * sizeof(char *));
+ 		list->alloc += 5;
+ 	}
+-
+ 	list->list[list->used++] = strdup(font);
++
+ 	return list->used;
+ }
+ 
+@@ -50,12 +51,11 @@ _getFontList(struct _list *list, int *si
+ {
+ 	if (!list->list) {
+ 		*size = 0;
+-		return 0;
++		return NULL;
+ 	}
+ 
+ 	if (list->alloc != list->used)
+-		list->list =
+-			Xrealloc(list->list, (list->used) * sizeof(char *));
++		list->list = Xrealloc(list->list, (list->used) * sizeof(char *));
+ 
+ 	*size = list->used;
+ 	return list->list;
+@@ -65,7 +65,7 @@ static void
+ _freeFontList(char **fontlist)
+ {
+ 	struct _list *ptr = g_fontlist;
+-	struct _list *prev = 0;
++	struct _list *prev = NULL;
+ 
+ 	if (!fontlist)
+ 		return;
+@@ -74,7 +74,7 @@ _freeFontList(char **fontlist)
+ 		if (ptr->list == fontlist) {
+ 			int i;
+ 			for (i = 0; i < ptr->used; i++)
+-				Xfree(ptr->list[i]);
++				free(ptr->list[i]);
+ 
+ 			Xfree(ptr->list);
+ 
+diff -Nuarp nxlib-0.45.orig/LoadFont.c nxlib-0.45/LoadFont.c
+--- nxlib-0.45.orig/LoadFont.c	2003-08-12 05:04:45.000000000 +0900
++++ nxlib-0.45/LoadFont.c	2009-03-04 20:33:57.000000000 +0900
+@@ -1,8 +1,15 @@
+ #include "nxlib.h"
++#include "Xatom.h"
+ #include <stdlib.h>
+ #include <string.h>
+ 
+ static int
++min(int a, int b)
++{
++	return (a < b)? a: b;
++}
++
++static int
+ prefix(const char *prestr, char *allstr)
+ {
+ 	while (*prestr)
+@@ -13,16 +20,28 @@ prefix(const char *prestr, char *allstr)
+ 	return 1;
+ }
+ 
+-char *
+-_nxFindX11Font(const char *xfontname)
++static int
++any(int c, const char *str)
++{
++	while (*str)
++		if (*str++ == c)
++			return 1;
++	return 0;
++}
++
++static char *
++_nxFindX11Font(const char *matchstr, int *height)
+ {
+ 	int fcount, i, f;
+-	char *ret;
++	char *ret, *file;
+ 	char buffer[128];
+ 
+ 	if (!_nxfontcount)
+ 		_nxSetDefaultFontDir();
+ 
++	/* return height 0 unless requested scaleable pixel size*/
++	*height = 0;
++
+ 	/* Go through all of the font dirs */
+ 	for (f = 0; f < _nxfontcount; f++) {
+ 		FILE *fontdir = _nxLoadFontDir(_nxfontlist[f]);
+@@ -37,77 +56,108 @@ _nxFindX11Font(const char *xfontname)
+ 			continue;
+ 		}
+ 
++		/* Then through each line in the fonts.dir file for XLFD match*/
+ 		for (i = 0; i < fcount; i++) {
+-			char *file = buffer, *font = 0;
++			char *xlfd;
++			file = buffer;
+ 
+ 			fgets(buffer, 128, fontdir);
+ 
+-			/* Remove the end 'o line */
++			/* XLFD is second space separated field*/
+ 			buffer[strlen(buffer) - 1] = '\0';
++			xlfd = strchr(buffer, ' ');
++			*xlfd++ = '\0';
+ 
+-			/* Find the field seperator */
+-
+-			font = strchr(buffer, ' ');
+-			*font++ = '\0';
+-
+-			//printf("checking '%s' '%s'\n", xfontname, font);
+-			if (strcmp(xfontname, font) == 0) {
++			/* check for exact XLFD match first*/
++			if (strcmp(matchstr, xlfd) == 0) {
++return_fontpath:
++				/* return full path to font file*/
+ 				ret = (char *) Xmalloc(strlen(_nxfontlist[f]) +
+ 						      strlen(file) + 2);
+ 				sprintf(ret, "%s/%s", _nxfontlist[f], file);
+ 
+ 				fclose(fontdir);
+ 				return ret;
++			} else {
++				/* otherwise check for scaleable font match spec
++				 * with passed pixel size, that is:
++				 *     match XLFD  "...normal--0-0-0-0-0-..."
++				 * with passed     "...normal--12-0-0-0-0-..."
++				 * for height 12.
++				 */
++				int j;
++				int reqsize = 0;
++				int dashcount = 0;
++				int len = min(strlen(xlfd), strlen(matchstr));
++
++				/* match passed scaleable height at '--0-' in XLFD string*/
++				for (j = 0; j < len && dashcount < 8; j++) {
++					if (xlfd[j] == '-')
++						++dashcount;
++					if (xlfd[j] != matchstr[j]) {
++						if (dashcount == 7 && xlfd[j] == '0') {
++							int st = j;
++							while (matchstr[j] >= '0' && matchstr[j] <= '9') {
++								reqsize = reqsize * 10 + (matchstr[j++] - '0');
++							}
++							/* rest of XLFD line must match for now*/
++							if (strcmp(&matchstr[j], &xlfd[st+1]) == 0) {
++								*height = reqsize;
++								goto return_fontpath;
++							}
++						}
++						break;
++					}
++				}
+ 			}
+ 		}
+ 
+-		/* not found, try <prefix.pcf> */
++		/* Not found, check each line for passed prefix within fontname*/
+ 		fseek(fontdir, 0L, SEEK_SET);
+ 		fgets(buffer, 128, fontdir);
+ 		for (i = 0; i < fcount; i++) {
+-			char *file = buffer, *font = 0;
++			char *p;
++			file = buffer;
+ 
+ 			fgets(buffer, 128, fontdir);
+ 
+-			/* Remove the end 'o line */
++			/* fontname is first space separated field*/
+ 			buffer[strlen(buffer) - 1] = '\0';
++			p = strchr(buffer, ' ');
++			*p = '\0';
+ 
+-			/* Find the field seperator */
+-
+-			font = strchr(buffer, ' ');
+-			*font++ = '\0';
++			/* prefix allows font.pcf to match font.pcf.gz for example*/
++			if (prefix(matchstr, file)) {
++				/*int dashcount, reqsize = 0;
++				for (dashcount = 0; dashcount < 8, *(++p); ) {
++					if (*p == '-') ++dashcount;
++					if (dashcount == 7) {
++						p++;
++						while (*p >= '0' && *p <= '9') {
++							reqsize = reqsize * 10 + (*p - '0');
++							p++;
++						}
++						*height = reqsize;
++						break;
++					}
++				}*/
+ 
+-			//printf("chk2 '%s' '%s'\n", xfontname, file);
+-			if (prefix(xfontname, file)) {
+-				ret = (char *) Xmalloc(strlen(_nxfontlist[f]) +
+-						      strlen(file) + 2);
+-				sprintf(ret, "%s/%s", _nxfontlist[f], file);
+-
+-				fclose(fontdir);
+-				return ret;
++				goto return_fontpath;
+ 			}
+ 		}
+ 
+ 		if (fontdir)
+ 			fclose(fontdir);
+ 	}
+-	return 0;
+-}
+-
+-static int
+-any(int c, const char *str)
+-{
+-	while (*str)
+-		if (*str++ == c)
+-			return 1;
+-	return 0;
++	return NULL;
+ }
+ 
+ Font
+ XLoadFont(Display * dpy, _Xconst char *name)
+ {
+ 	GR_FONT_ID font = 0;
+-	char *fontname;
++	char *	   fontname;
++	int	   height;
+ 
+ 	/* first check for wildcards*/
+ 	if (any('*', name) || any('?', name)) {
+@@ -116,37 +166,68 @@ XLoadFont(Display * dpy, _Xconst char *n
+ 
+ 		/* pick first sorted return value for now...*/
+ 		fontlist = XListFonts(dpy, name, 100000, &count);
+-		if (fontlist)
+-			fontname = fontlist[0];
++		if (fontlist) fontname = fontlist[0];
+ 	} else
+ 		fontname = (char *)name;
+ 
+-	/* first try to find from X11/fonts.dir file*/
+-	fontname = _nxFindX11Font(fontname);
++	/* first try to find XLFD or fontname from X11/fonts.dir file*/
++	fontname = _nxFindX11Font(fontname, &height);
+ 
+ 	/* if not found, try 6x13 for "fixed"*/
+ 	if (!fontname && !strcmp(name, "fixed"))
+-		fontname = _nxFindX11Font("6x13");
++		fontname = _nxFindX11Font("6x13", &height);
+ 
+ 	/* found font, load into server*/
+-	if (fontname)
+-		font = GrCreateFont(fontname, 0, NULL);
++	if (fontname) {
++		font = GrCreateFont(fontname, height, NULL);
++		GrSetFontAttr(font, GR_TFANTIALIAS | GR_TFKERNING, 0);
++	}
++	printf("XLoadFont('%s') = '%s' height %d [%d]\n", name, fontname, height, font);
++	if (fontname) Xfree(fontname);
+ 
+-printf("XLoadFont('%s') = '%s' [%d]\n", name, fontname, font);
+-	if (fontname)
+-		Xfree(fontname);
+ 	return font;
+ }
+ 
+-/* Stub out XCreateFontSet - but return the right values so we don't 
+-   freak out GTK 
+-*/
+-XFontSet
+-XCreateFontSet(Display *display, _Xconst char *base_font_name_list, 
++// required for rasp
++#include "Xlcint.h"
++XFontSet XCreateFontSet(Display *display, _Xconst char *base_font_name_list,
+ 	char ***missing_charset_list_return, int *missing_charset_count_return,
+ 	char **def_string_return)
+ {
++	printf("XCreateFontSet called [%s] NULLだとエラー\n", base_font_name_list);
++	return NULL;
++
++	/*// xfontselがエラーに
++	XFontSet fs = Xcalloc(1, sizeof(XFontSet));
++	printf("XCreateFontSet called [%s]\n", base_font_name_list);
++	XFontStruct *f = XLoadQueryFont(display, base_font_name_list);
++	if (!f) return NULL;
++	fs->core.font_info.font_struct_list = Xmalloc(sizeof(XFontStruct*));
++	fs->core.font_info.font_name_list = Xmalloc(sizeof(char**));
++	fs->core.font_info.font_struct_list[0] = f;
++	fs->core.font_info.font_name_list[0] = base_font_name_list;
++	fs->core.font_info.num_font = 1;
++	//GrGetFontInfo(font_ID, &finfo);
++	//fs->core.font_set_extents.max_ink_extent
++	fs->core.font_set_extents.max_logical_extent.y = f->max_bounds.ascent;
++	fs->core.font_set_extents.max_logical_extent.height = f->max_bounds.ascent + f->max_bounds.descent;
+ 	*missing_charset_list_return = NULL;
+ 	*missing_charset_count_return = 0;
+-	return NULL;
++	return fs;*/
++}
++
++/* Stub out XGetFontProperty*/
++Bool XGetFontProperty(XFontStruct *font, Atom atom, unsigned long *value_return)
++{
++	printf("XGetFontProperty called\n");
++	switch (atom) {
++	case XA_FONT:			/* 18*/
++	case XA_UNDERLINE_POSITION:	/* 51*/
++	case XA_UNDERLINE_THICKNESS:	/* 52*/
++		break;
++	default:
++		printf("XGetFontProperty: Unknown FontProperty Atom %d\n",
++			(int)atom);
++	}
++	return 0;
+ }
+diff -Nuarp nxlib-0.45.orig/Locale.c nxlib-0.45/Locale.c
+--- nxlib-0.45.orig/Locale.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Locale.c	2009-02-06 16:18:44.000000000 +0900
+@@ -0,0 +1,9 @@
++#include <stdio.h>
++#include <stdlib.h>
++
++// required for Xt
++char *XSetLocaleModifiers(char *modifier_list)
++{
++	printf("XSetLocaleModifiers called [%s]\n", modifier_list);
++	return getenv("LANG");
++}
+diff -Nuarp nxlib-0.45.orig/Makefile nxlib-0.45/Makefile
+--- nxlib-0.45.orig/Makefile	2003-08-12 05:05:51.000000000 +0900
++++ nxlib-0.45/Makefile	2009-03-15 23:17:06.000000000 +0900
+@@ -4,11 +4,9 @@
+ # note: if build fails, rebuild keysymstr.h by "make distclean",
+ #       then "make"
+ #
+-# 11 Aug 2003
+-#
+ 
+ # set to Microwindows and X11 include and lib directories
+-MWIN=/usr2/microwin/src
++MWIN=../core/src
+ X11=/usr/X11R6
+ 
+ MWIN_INCLUDE=$(MWIN)/include
+@@ -16,9 +14,14 @@ MWIN_LIB=$(MWIN)/lib
+ X11_LIB=$(X11)/lib
+ 
+ # set to font PCF file search directories, rgb.txt file location
+-X11_FONT_DIR1=/usr/lib/X11/fonts/100dpi
+-X11_FONT_DIR2=/usr/lib/X11/fonts/misc
+-X11_RGBTXT=/usr/lib/X11/rgb.txt
++#X11_FONT_DIR1=/usr/share/X11/fonts/100dpi
++X11_FONT_DIR1=/usr/share/X11/fonts/misc
++X11_FONT_DIR2=/usr/share/X11/fonts/misc
++X11_FONT_DIR3=/usr/share/fonts/ja/TrueType
++X11_RGBTXT=/usr/share/X11/rgb.txt
++
++# set to Y for big endian architecture (should be automatic)
++BIGENDIAN=N
+ 
+ # set to Y to make shared X11 libs
+ SHAREDLIB=Y
+@@ -38,10 +41,12 @@ CC = gcc
+ LN = ln -s
+ MV = mv
+ RM = rm -f
+-DEBUG = -g
++#DEBUG = -g
++DEBUG = -Os
+ CFLAGS += -Wall $(DEBUG) -I$(MWIN_INCLUDE)
+ CFLAGS += -DX11_FONT_DIR1=\"$(X11_FONT_DIR1)\"
+ CFLAGS += -DX11_FONT_DIR2=\"$(X11_FONT_DIR2)\"
++CFLAGS += -DX11_FONT_DIR3=\"$(X11_FONT_DIR3)\"
+ CFLAGS += -DX11_RGBTXT=\"$(X11_RGBTXT)\"
+ xCFLAGS += -O2 -fno-strength-reduce
+ 
+@@ -60,7 +65,11 @@ OBJS = DestWind.o MapWindow.o NextEvent.
+ 	ListPix.o GetGeom.o SetIFocus.o Shape.o\
+ 	font.o Free.o stub.o\
+ 	ClassHint.o Text16.o ListFonts.o QueryFont.o TextExt.o SetFontPath.o\
+-	AllocColor.o ParseColor.o QueryColor.o Colormap.o Colorname.o
++	AllocColor.o ParseColor.o QueryColor.o Colormap.o Colorname.o\
++	Selection.o XMisc.o \
++	Request.o Context.o Grab.o Screen.o Extension.o XKB.o Locale.o \
++	Resource.o GetGCVals.o Threads.o IM.o SetWMProto.o FontInfo.o \
++	GetPntMap.o GetWMProps.o ChSaveSet.o TextToStr.o QueryBest.o
+ 
+ ifeq ($(INCLUDE_XRM), Y)
+ OBJS += Quarks.o Xrm.o
+@@ -74,6 +83,10 @@ endif
+ 
+ LIBS = libnx11.a
+ 
++ifeq ($(BIGENDIAN), Y)
++CFLAGS += -DCPU_BIG_ENDIAN=1
++endif
++
+ ifeq ($(SHAREDLIB), Y)
+ CFLAGS += -fPIC
+ LIBS += lib$(LIBNAME).so.$(SOLIBREV)
+@@ -118,9 +131,12 @@ cleanlibs:
+ distclean: clean
+ 	rm -f keysymstr.h
+ 
+-keysymstr.h: 
++keysymstr.h:
+ 	perl ./keymap.pl $(X11_INCLUDE)/X11 > ./keysymstr.h
+ 
++tt: tt.o $(LIBS)
++	cc -o tt tt.c -L. -lnx11 $(SOEXTRALIBS)
++
+ .SUFFIXES:
+ .SUFFIXES: .c .o
+ 
+diff -Nuarp nxlib-0.45.orig/NextEvent.c nxlib-0.45/NextEvent.c
+--- nxlib-0.45.orig/NextEvent.c	2003-05-31 12:58:01.000000000 +0900
++++ nxlib-0.45/NextEvent.c	2009-02-13 16:10:16.000000000 +0900
+@@ -60,13 +60,13 @@ translateXEventType(int xtype)
+ 	case FocusOut:
+ 		return GR_EVENT_MASK_FOCUS_OUT;
+ 	}
+-	return GR_EVENT_MASK_NONE;
+ 
++	return GR_EVENT_MASK_NONE;
+ }
+ 
+ /* translate nano-X event to X11 event*/
+ static void
+-translateNXEvent(Display *dpy, GR_EVENT * ev, XEvent * event)
++translateNXEvent(Display *dpy, GR_EVENT *ev, XEvent *event)
+ {
+ 	static GR_TIMEOUT lasttime = 0;
+ 
+@@ -102,6 +102,10 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->xcrossing.state |= Button2Mask;
+ 			if (pev->buttons & GR_BUTTON_R)
+ 				event->xcrossing.state |= Button3Mask;
++			if (pev->buttons & GR_BUTTON_UP)
++				event->xcrossing.state |= Button4Mask;
++			if (pev->buttons & GR_BUTTON_DOWN)
++				event->xcrossing.state |= Button5Mask;
+ 		}
+ 		break;
+ 
+@@ -127,6 +131,10 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->xmotion.state |= Button2Mask;
+ 			if (pev->buttons & GR_BUTTON_R)
+ 				event->xmotion.state |= Button3Mask;
++			if (pev->buttons & GR_BUTTON_UP)
++				event->xmotion.state |= Button4Mask;
++			if (pev->buttons & GR_BUTTON_DOWN)
++				event->xmotion.state |= Button5Mask;
+ 		}
+ 		break;
+ 
+@@ -153,12 +161,20 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->xbutton.button = Button2;
+ 			else if (pev->changebuttons & GR_BUTTON_R)
+ 				event->xbutton.button = Button3;
++			else if (pev->changebuttons & GR_BUTTON_UP)
++				event->xbutton.button = Button4;
++			else if (pev->changebuttons & GR_BUTTON_DOWN)
++				event->xbutton.button = Button5;
+ 			if (pev->buttons & GR_BUTTON_L)
+ 				event->xbutton.state |= Button1Mask;
+ 			if (pev->buttons & GR_BUTTON_M)
+ 				event->xbutton.state |= Button2Mask;
+ 			if (pev->buttons & GR_BUTTON_R)
+ 				event->xbutton.state |= Button3Mask;
++			if (pev->buttons & GR_BUTTON_UP)
++				event->xbutton.state |= Button4Mask;
++			if (pev->buttons & GR_BUTTON_DOWN)
++				event->xbutton.state |= Button5Mask;
+ 		}
+ 		break;
+ 	case GR_EVENT_TYPE_BUTTON_UP:
+@@ -183,12 +199,20 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->xbutton.button = Button2;
+ 			else if (pev->changebuttons & GR_BUTTON_R)
+ 				event->xbutton.button = Button3;
++			else if (pev->changebuttons & GR_BUTTON_UP)
++				event->xbutton.button = Button4;
++			else if (pev->changebuttons & GR_BUTTON_DOWN)
++				event->xbutton.button = Button5;
+ 			if (pev->buttons & GR_BUTTON_L)
+ 				event->xbutton.state |= Button1Mask;
+ 			if (pev->buttons & GR_BUTTON_M)
+ 				event->xbutton.state |= Button2Mask;
+ 			if (pev->buttons & GR_BUTTON_R)
+ 				event->xbutton.state |= Button3Mask;
++			if (pev->buttons & GR_BUTTON_UP)
++				event->xbutton.state |= Button4Mask;
++			if (pev->buttons & GR_BUTTON_DOWN)
++				event->xbutton.state |= Button5Mask;
+ 		}
+ 		break;
+ 
+@@ -244,13 +268,13 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->type = MapNotify;
+ 				event->xmap.event = pev->wid;
+ 				event->xmap.window = pev->subwid;
+-				//event->xmap.override_redirect = 
++				//event->xmap.override_redirect =
+ 			} else if (pev->utype == GR_UPDATE_UNMAP) {
+ 				event->type = UnmapNotify;
+ 				event->xunmap.event = pev->wid;
+ 				event->xunmap.window = pev->subwid;
+ 				event->xany.window = pev->wid;
+-				//event->xunmap.from_configure = 
++				//event->xunmap.from_configure =
+ #if 0 /* temp handled below*/
+ 			} else if (pev->utype == GR_UPDATE_REPARENT) {
+ 				event->type = ReparentNotify;
+@@ -259,7 +283,7 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->xreparent.x = pev->x;
+ 				event->xreparent.y = pev->y;
+ 				//event->xreparent.parent = pev->subwid;
+-				//event->xreparent.override_redirect = 
++				//event->xreparent.override_redirect =
+ #endif
+ 			} else if (pev->utype == GR_UPDATE_DESTROY) {
+ 				event->type = DestroyNotify;
+@@ -282,9 +306,9 @@ translateNXEvent(Display *dpy, GR_EVENT
+ 				event->xconfigure.y = pev->y;
+ 				event->xconfigure.width = pev->width;
+ 				event->xconfigure.height = pev->height;
+-				//event->xconfigure.border_width = 
+-				//event->xconfigure.above = 
+-				//event->xconfigure.override_redirect = 
++				//event->xconfigure.border_width =
++				//event->xconfigure.above =
++				//event->xconfigure.override_redirect =
+ 			} else
+ 				printf("translateNXEvent: unhandled update event subtype %d\n", pev->utype);
+ 			break;
+@@ -377,7 +401,7 @@ XQLength(Display * dpy)
+ 	return XEventsQueued(dpy, QueuedAfterReading);
+ }
+ 
+-/* 
++/*
+  * Return next event in queue, or if none, flush output and wait for
+  * events.
+  */
+diff -Nuarp nxlib-0.45.orig/OpenDis.c nxlib-0.45/OpenDis.c
+--- nxlib-0.45.orig/OpenDis.c	2002-10-06 10:40:04.000000000 +0900
++++ nxlib-0.45/OpenDis.c	2009-02-04 20:24:04.000000000 +0900
+@@ -352,3 +352,15 @@ XServerVendor(Display *display)
+ {
+ 	return ServerVendor(display);
+ }
++
++unsigned long
++XBlackPixel(Display * display, int screen_number)
++{
++	return display->screens[screen_number].black_pixel;
++}
++
++unsigned long
++XWhitePixel(Display * display, int screen_number)
++{
++	return display->screens[screen_number].white_pixel;
++}
+diff -Nuarp nxlib-0.45.orig/PmapBgnd.c nxlib-0.45/PmapBgnd.c
+--- nxlib-0.45.orig/PmapBgnd.c	2002-10-03 04:32:04.000000000 +0900
++++ nxlib-0.45/PmapBgnd.c	2009-02-13 22:49:29.000000000 +0900
+@@ -1,14 +1,18 @@
+ #include "nxlib.h"
+ 
+-int
+-XSetWindowBackgroundPixmap(Display * dpy, Window w, Pixmap pixmap)
++int XSetWindowBackgroundPixmap(Display *dpy, Window w, Pixmap pixmap)
+ {
+ 	/* FIXME... if ParentRelative is specified, then we should use our */
+ 	/* parent's background pixmap.  That would involve a copy???      */
+ 
+-printf("XSetWindowBackgroundPixmap %d %d\n", w, pixmap);
+-	if (pixmap == ParentRelative)
++	printf("XSetWindowBackgroundPixmap %d %d\n", (int)w, (int)pixmap);
++	if (pixmap == ParentRelative) {
+ 		return 1;
++		/*GR_WINDOW_INFO wp;
++		GrGetWindowInfo(w, &wp);
++		GrGetWindowInfo(wp.parent, &wp);
++		pixmap = wp.bgpixid;*/
++	}
+ 
+ 	GrSetBackgroundPixmap(w, pixmap, GR_BACKGROUND_TILE);
+ 	return 1;
+diff -Nuarp nxlib-0.45.orig/QueryBest.c nxlib-0.45/QueryBest.c
+--- nxlib-0.45.orig/QueryBest.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/QueryBest.c	2009-03-15 23:18:01.000000000 +0900
+@@ -0,0 +1,9 @@
++#include "nxlib.h"
++
++Status XQueryBestSize(Display *dpy, int class, Drawable which_screen, unsigned int  width, unsigned int height, unsigned int *w, unsigned int *h)
++{
++	printf("XQueryBestSize called\n");
++	*w = width;
++	*h = height;
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/Region.c nxlib-0.45/Region.c
+--- nxlib-0.45.orig/Region.c	2003-08-11 06:36:37.000000000 +0900
++++ nxlib-0.45/Region.c	2009-02-19 13:54:53.000000000 +0900
+@@ -52,7 +52,7 @@ int
+ XDestroyRegion(Region r)
+ {
+ 	GrDestroyRegion(r->rid);
+-	XFree(r);
++	Xfree(r);
+ 
+ 	return 1;
+ }
+@@ -65,16 +65,25 @@ XUnionRectWithRegion(XRectangle *rect, R
+ 	if (!rect->width || !rect->height)
+ 		return 0;
+ 
+-	if (source != dest)
+-		printf("XUnionRectWithRegion - Source and dest different FIXME\n");
+-
+ 	/* copy rect since dimensions differ*/
+ 	gr_rect.x = rect->x;
+ 	gr_rect.y = rect->y;
+ 	gr_rect.width = rect->width;
+ 	gr_rect.height = rect->height;
+ 
+-	GrUnionRectWithRegion(dest->rid, &gr_rect);
++	if (source != dest) {
++		/*Region r = XCreateRegion();
++		if (!r) return 0;
++		//GrUnionRectWithRegion(r->rid, &gr_rect);
++		GrSetRectRegionIndirect(r->rid, &gr_rect);
++		XUnionRegion(r, source, dest);
++		XDestroyRegion(r);*/
++
++		printf("XUnionRectWithRegion - Source and dest different FIXME\n");
++		GrUnionRectWithRegion(dest->rid, &gr_rect);
++	} else {
++		GrUnionRectWithRegion(dest->rid, &gr_rect);
++	}
+ 
+ #if CLIENTREGIONS
+ 	GR_RECT extents;
+@@ -84,6 +93,21 @@ XUnionRectWithRegion(XRectangle *rect, R
+ #endif
+ 	return 1;
+ }
++/*int XUnionRectWithRegion(XRectangle *rect, Region source, Region dest)
++{
++	REGION region;
++
++	if (!rect->width || !rect->height) return 0;
++	region.rects = &region.extents;
++	region.numRects = 1;
++	region.extents.x1 = rect->x;
++	region.extents.y1 = rect->y;
++	region.extents.x2 = rect->x + rect->width;
++	region.extents.y2 = rect->y + rect->height;
++	region.size = 1;
++
++	return XUnionRegion(&region, source, dest);
++}*/
+ 
+ int
+ XPointInRegion(Region region, int x, int y)
+@@ -170,7 +194,7 @@ XEmptyRegion(Region r)
+ 	return 1;
+ }
+ 
+-int 
++int
+ XOffsetRegion(Region region, int x, int y)
+ {
+ 	GrOffsetRegion(region->rid, x, y);
+@@ -321,9 +345,9 @@ XIntersectRegion(reg1, reg2, newReg)
+ 	(!EXTENTCHECK(&reg1->extents, &reg2->extents)))
+         newReg->numRects = 0;
+     else
+-	miRegionOp (newReg, reg1, reg2, 
++	miRegionOp (newReg, reg1, reg2,
+     		(voidProcp) miIntersectO, (voidProcp) NULL, (voidProcp) NULL);
+-    
++
+     /*
+      * Can't alter newReg's extents before we call miRegionOp because
+      * it might be one of the source regions and miRegionOp depends
+@@ -365,7 +389,7 @@ XUnionRegion(reg1, reg2, newReg)
+     /*
+      * Region 1 completely subsumes region 2
+      */
+-    if ((reg1->numRects == 1) && 
++    if ((reg1->numRects == 1) &&
+ 	(reg1->extents.x1 <= reg2->extents.x1) &&
+ 	(reg1->extents.y1 <= reg2->extents.y1) &&
+ 	(reg1->extents.x2 >= reg2->extents.x2) &&
+@@ -379,7 +403,7 @@ XUnionRegion(reg1, reg2, newReg)
+     /*
+      * Region 2 completely subsumes region 1
+      */
+-    if ((reg2->numRects == 1) && 
++    if ((reg2->numRects == 1) &&
+ 	(reg2->extents.x1 <= reg1->extents.x1) &&
+ 	(reg2->extents.y1 <= reg1->extents.y1) &&
+ 	(reg2->extents.x2 >= reg1->extents.x2) &&
+@@ -390,7 +414,7 @@ XUnionRegion(reg1, reg2, newReg)
+         return 1;
+     }
+ 
+-    miRegionOp (newReg, reg1, reg2, (voidProcp) miUnionO, 
++    miRegionOp (newReg, reg1, reg2, (voidProcp) miUnionO,
+     		(voidProcp) miUnionNonO, (voidProcp) miUnionNonO);
+ 
+     newReg->extents.x1 = min(reg1->extents.x1, reg2->extents.x1);
+@@ -417,10 +441,10 @@ XXorRegion( sra, srb, dr )
+ }
+ 
+ /*
+- * Check to see if the region is empty.  Assumes a region is passed 
++ * Check to see if the region is empty.  Assumes a region is passed
+  * as a parameter
+  */
+-int 
++int
+ XEmptyRegion( r )
+     Region r;
+ {
+@@ -429,9 +453,9 @@ XEmptyRegion( r )
+ }
+ 
+ /*
+- *	Check to see if two regions are equal	
++ *	Check to see if two regions are equal
+  */
+-int 
++int
+ XEqualRegion( r1, r2 )
+     Region r1, r2;
+ {
+@@ -452,7 +476,7 @@ XEqualRegion( r1, r2 )
+     return TRUE;
+ }
+ 
+-int 
++int
+ XPointInRegion( pRegion, x, y )
+     Region pRegion;
+     int x, y;
+diff -Nuarp nxlib-0.45.orig/Request.c nxlib-0.45/Request.c
+--- nxlib-0.45.orig/Request.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Request.c	2009-02-06 14:04:20.000000000 +0900
+@@ -0,0 +1,15 @@
++#include "nxlib.h"
++
++// required for libXrender.so
++unsigned long XNextRequest(Display *display)
++{
++	printf("XNextRequest called...\n");
++	return ++display->request;
++}
++
++// required for gdk
++long XExtendedMaxRequestSize(Display *display)
++{
++	printf("XExtendedMaxRequestSize called...\n");
++	return 0;
++}
+diff -Nuarp nxlib-0.45.orig/Resource.c nxlib-0.45/Resource.c
+--- nxlib-0.45.orig/Resource.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Resource.c	2009-02-06 16:47:04.000000000 +0900
+@@ -0,0 +1,7 @@
++#include "nxlib.h"
++
++char *XResourceManagerString(Display *display)
++{
++	printf("XResourceManagerString called...\n");
++	return "LimeX:0";
++}
+diff -Nuarp nxlib-0.45.orig/Screen.c nxlib-0.45/Screen.c
+--- nxlib-0.45.orig/Screen.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Screen.c	2009-03-08 22:18:22.000000000 +0900
+@@ -0,0 +1,50 @@
++#include "nxlib.h"
++
++int XDisplayHeight(Display *display, int screen_number)
++{
++//	printf("XDisplayHeight called\n");
++//	return 480;
++
++	GR_SCREEN_INFO sip;
++	GrGetScreenInfo(&sip);
++	printf("XDisplayHeight called [%d]\n", sip.vs_height);
++	return sip.vs_height;
++}
++
++int XDisplayWidth(Display *display, int screen_number)
++{
++//	printf("XDisplayWidth called\n");
++//	return 640;
++
++	GR_SCREEN_INFO sip;
++	GrGetScreenInfo(&sip);
++	printf("XDisplayWidth called [%d]\n", sip.vs_width);
++	return sip.vs_width;
++}
++
++// XListDepths - return info from connection setup
++int *XListDepths(Display *dpy, int scrnum, int *countp)
++{
++	Screen *scr;
++	int count;
++	int *depths;
++
++	printf("XListDepths called..\n");
++	if (scrnum < 0 || scrnum >= dpy->nscreens) return NULL;
++
++	scr = &dpy->screens[scrnum];
++	if ((count = scr->ndepths) > 0) {
++		Depth *dp;
++		int i;
++
++		depths = (int*) Xmalloc (count * sizeof(int));
++		if (!depths) return NULL;
++		for (i = 0, dp = scr->depths; i < count; i++, dp++)
++		depths[i] = dp->depth;
++	} else {
++		/* a screen must have a depth */
++		return NULL;
++	}
++	*countp = count;
++	return depths;
++}
+diff -Nuarp nxlib-0.45.orig/Selection.c nxlib-0.45/Selection.c
+--- nxlib-0.45.orig/Selection.c	2003-07-03 05:29:28.000000000 +0900
++++ nxlib-0.45/Selection.c	2009-02-04 20:24:04.000000000 +0900
+@@ -1,8 +1,9 @@
+ /* Copyright 2003, Jordan Crouse (jordan@cosmicpenguin.net) */
+ 
+ #include "nxlib.h"
++#include <time.h>
+ 
+-/* Het another dummy storage area.  We hold onto the value and
++/* Yet another dummy storage area.  We hold onto the value and
+    return them when XGetSelectionOwner says so
+ 
+    It seems that selections live forever - I don't see any way to
+@@ -13,56 +14,67 @@ struct sstruct {
+ 	Atom selection;
+ 	Window owner;
+ 	Time time;
+-	struct ssstruct *next;
++	struct sstruct *next;
+ };
+ 
+ static struct sstruct *select_list = 0;
+ 
+-int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time t) {
+-	
++int
++XSetSelectionOwner(Display *display, Atom selection, Window owner, Time t)
++{
+ 	struct sstruct *select = select_list;
+ 	struct sstruct *prev = 0;
+ 	
+-	for( ; select; prev = select, select = select->next) 
++	for( ; select; prev = select, select = select->next) {
+ 		if (select->selection == selection) {
+ 			if (t > select->time) { 
+-				select->owner = owner;   /* Note:  SelectionClear event should get generated here */
++				/* Note:  SelectionClear event should get generated here */
++				select->owner = owner;
+ 				select->time = (t == CurrentTime) ? time(0) : t;
+ 			}
+-			
+ 			return 0;
+ 		}
+-	
+-	select = (struct sstruct *) malloc(sizeof(struct sstruct));
++	}
++	select = (struct sstruct *)Xmalloc(sizeof(struct sstruct));
+ 	select->selection = selection;
+ 	select->owner = owner;
+-	select->time = (t == CurrentTime) ? time(0) : t;
++	select->time = (t == CurrentTime)? time(0) : t;
+ 	select->next = 0;
+ 
+-	if (!prev) select_list = select;
++	if (!prev)
++		select_list = select;
+ 	else prev->next = select;
+ 
+ 	return 0;
+ }
+ 
+-static struct sstruct *find_selection(Atom selection) {
++static struct sstruct *
++find_selection(Atom selection)
++{
+ 	struct sstruct *select = select_list;
+ 	
+ 	for (; select; select = select->next) 
+-		if (select->selection == selection) return select;
++		if (select->selection == selection)
++			return select;
+ 	return 0;
+ }
+ 
+-Window XGetSelectionOwner(Display *display, Atom selection) {
++Window
++XGetSelectionOwner(Display *display, Atom selection)
++{
+ 	struct sstruct *select = find_selection(selection);
+-	return (select) ? select->owner : None;
+-}
+ 
+-/* Move selection to target.  There are lots of events that might be generated here, but for now we won't
+-   worry about those. 
+-*/
++	return (select)? select->owner : None;
++}
+ 
+-int XConvertSelection(Display *display, Atom selection, Atom target, Atom property, Window requestor, Time t) {
++/* 
++ * Move selection to target.  There are lots of events that might be
++ * generated here, but for now we won't worry about those. 
++ */
++int
++XConvertSelection(Display *display, Atom selection, Atom target, Atom property,
++	Window requestor, Time t)
++{
+ 	struct sstruct *select = find_selection(selection);
+ 	
+ 	select->selection = target;
+@@ -72,10 +84,5 @@ int XConvertSelection(Display *display,
+ 	   situation, or if there is no owner, then a SelectionNotify 
+ 	   to the requestor 
+ 	*/
+-
+ 	return 0;
+ }
+-
+-		
+-	
+-	
+diff -Nuarp nxlib-0.45.orig/SetAttributes.c nxlib-0.45/SetAttributes.c
+--- nxlib-0.45.orig/SetAttributes.c	2002-08-26 11:09:23.000000000 +0900
++++ nxlib-0.45/SetAttributes.c	2009-02-22 14:37:15.000000000 +0900
+@@ -1,19 +1,23 @@
+ #include "nxlib.h"
+ 
+-int
+-XChangeWindowAttributes(Display * display, Window w, unsigned long valuemask,
+-			XSetWindowAttributes * attributes)
++int XChangeWindowAttributes(Display *display, Window w,
++	unsigned long valuemask, XSetWindowAttributes *attributes)
+ {
+-printf("XChangeWindowAttributes: valuemask 0x%X\n", valuemask);
++	printf("XChangeWindowAttributes: valuemask 0x%X\n", (int)valuemask);
+ 
+-	if (valuemask & CWBackPixel)
++	if (valuemask & CWBackPixmap)	// 1
++		XSetWindowBackgroundPixmap(display, w, attributes->background_pixmap);
++	if (valuemask & CWBackPixel)	// 2
+ 		XSetWindowBackground(display, w, attributes->background_pixel);
+ 
+-	if (valuemask & CWBorderPixel)
++	if (valuemask & CWBorderPixmap)	// 4
++		XSetWindowBorderPixmap(display, w, attributes->border_pixmap);
++	if (valuemask & CWBorderPixel)	// 8
+ 		XSetWindowBorder(display, w, attributes->border_pixel);
+ 
+-	if (valuemask & CWEventMask)
+-		XSelectInput(display, w, attributes->event_mask);
++//http://karel.tsuda.ac.jp/lec/x/c1/
++//	if (valuemask & CWBitGravity)	// 0x10
++//		XSetWindowBorder(display, w, attributes->border_pixel);
+ 
+ 	if (valuemask & CWOverrideRedirect) {
+ 		GR_WM_PROPERTIES props;
+@@ -30,13 +34,22 @@ printf("XChangeWindowAttributes: valuema
+ 		GrSetWMProperties(w, &props);
+ 	}
+ 
++	//CWSaveUnder
++	if (valuemask & CWEventMask)
++		XSelectInput(display, w, attributes->event_mask);
++	//CWDontPropagate
++
++	if (valuemask & CWColormap)
++		XSetWindowColormap(display, w, attributes->colormap);
++	if (valuemask & CWCursor)
++		XDefineCursor(display, w, attributes->cursor);
++
+ 	// FIXME handle additional attributes
+ 	return 1;
+ }
+ 
+-int
+-XSetLineAttributes(Display * display, GC gc, unsigned int line_width,
+-		   int line_style, int cap_style, int join_style)
++int XSetLineAttributes(Display * display, GC gc,
++	unsigned int line_width, int line_style, int cap_style, int join_style)
+ {
+ 	unsigned long ls;
+ 
+@@ -48,7 +61,7 @@ XSetLineAttributes(Display * display, GC
+ 		break;
+ 	default:
+ 		ls = GR_LINE_SOLID;
+-		break;
++		//break;
+ 	}
+ 
+ 	if (line_width > 1)
+diff -Nuarp nxlib-0.45.orig/SetClip.c nxlib-0.45/SetClip.c
+--- nxlib-0.45.orig/SetClip.c	2003-05-18 13:06:08.000000000 +0900
++++ nxlib-0.45/SetClip.c	2009-02-04 20:24:04.000000000 +0900
+@@ -11,20 +11,23 @@ XSetClipOrigin(Display *display, GC gc,
+ int
+ XSetClipMask(Display *display, GC gc, Pixmap mask)
+ {
+-	GR_REGION_ID	r;
++	XGCValues *vp = (XGCValues *)gc->ext_data;
+ 	GR_WINDOW_INFO	info;
+ 
++	/* avoid memory leak by deleting current gc region before new alloc*/
++	if (vp->clip_mask != None)
++		GrDestroyRegion(vp->clip_mask);
++
+ 	if (mask == None) {
+ 		GrSetGCRegion(gc->gid, 0);
++		vp->clip_mask = None;
+ 		return 1;
+ 	}
+ 
+-printf("XSetClipMask %d\n", mask);
+ 	GrGetWindowInfo(mask, &info);
+-	r = GrNewRegionFromPixmap(mask, 0, 0, info.width, info.height);
+-	GrSetGCRegion(gc->gid, r);
++	vp->clip_mask = GrNewRegionFromPixmap(mask, 0, 0, info.width, info.height);
++	GrSetGCRegion(gc->gid, vp->clip_mask);
+ 
+-	/*GrDestroyRegion(r);*/	/* FIXME: LEAK: can't destroy region here...*/
+ 	return 1;
+ }
+ 
+@@ -33,12 +36,18 @@ XSetClipRectangles(Display *display, GC
+ 	XRectangle *rectangles, int n, int ordering)
+ {
+ 	GR_REGION_ID	r;
++	XGCValues *vp = (XGCValues *)gc->ext_data;
+ 
+ 	GrSetGCClipOrigin(gc->gid, clip_x_origin, clip_y_origin);
+ 
++	/* avoid memory leak by deleting current gc region before new alloc*/
++	if (vp->clip_mask != None)
++		GrDestroyRegion(vp->clip_mask);
++
+ 	if (n == 0) {
+ 		/* FIXME need to disable all output here...*/
+ 		printf("XSetClipRectangles called with n=0\n");
++		vp->clip_mask = None;	/* None for no output?*/
+ 		return 1;
+ 	}
+ 
+@@ -54,6 +63,7 @@ XSetClipRectangles(Display *display, GC
+ 		++rectangles;
+ 	}
+ 	GrSetGCRegion(gc->gid, r);
+-	/*GrDestroyRegion(r);*/	/* FIXME: LEAK: can't destroy region here...*/
++	vp->clip_mask = r;
++
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/SetFontPath.c nxlib-0.45/SetFontPath.c
+--- nxlib-0.45.orig/SetFontPath.c	2003-08-11 06:36:48.000000000 +0900
++++ nxlib-0.45/SetFontPath.c	2009-02-04 20:24:04.000000000 +0900
+@@ -1,57 +1,29 @@
+ #include "nxlib.h"
+-#include <string.h>
+ #include "Xatom.h"
++#include <string.h>
+ 
+-char **
++static char **
+ _nxGetFontDir(int *count)
+ {
+ 	int i;
+-
+-	int size;
+-	char **ret;
++	char **list;
+ 
+ 	if (!_nxfontcount)
+ 		_nxSetDefaultFontDir();
+ 
+-	size = _nxfontcount + 1;
+-	ret = (char **) Xcalloc(size, sizeof(char *));
++	list = (char **) Xcalloc(_nxfontcount+1, sizeof(char *));
+ 
+ 	for (i = 0; i < _nxfontcount; i++)
+-		ret[i] = strdup(_nxfontlist[i]);
+-	ret[_nxfontcount] = 0;
+-
++		list[i] = strdup(_nxfontlist[i]);
+ 	*count = _nxfontcount;
+-	return (ret);
+-}
+ 
+-void
+-_nxSetFontDir(char **directories, int ndirs)
+-{
+-	int i;
+-
+-	if (_nxfontlist) {
+-		for (i = 0; i < _nxfontcount; i++)
+-			Xfree(_nxfontlist[i]);
+-		Xfree(_nxfontlist);
+-	}
+-
+-	_nxfontlist = (char **) Xcalloc(ndirs, sizeof(char *));
+-	for (i = 0; i < ndirs; i++)
+-		_nxfontlist[i] = strdup(directories[i]);
+-
+-	_nxfontcount = ndirs;
++	return list;
+ }
+ 
+-void
+-_nxFreeFontDir(char **list)
++char **
++XGetFontPath(Display * display, int *npaths_return)
+ {
+-	int i;
+-
+-	if (list) {
+-		for (i = 0; list[i]; i++)
+-			Xfree(list[i]);
+-		Xfree(list);
+-	}
++	return _nxGetFontDir(npaths_return);
+ }
+ 
+ int
+@@ -61,31 +33,9 @@ XSetFontPath(Display * display, char **d
+ 	return 1;
+ }
+ 
+-char **
+-XGetFontPath(Display * display, int *npaths_return)
+-{
+-	return _nxGetFontDir(npaths_return);
+-}
+-
+ int
+ XFreeFontPath(char **list)
+ {
+ 	_nxFreeFontDir(list);
+ 	return 1;
+ }
+-
+-Bool
+-XGetFontProperty(XFontStruct * font, Atom atom, unsigned long *value_return)
+-{
+-printf("XGetFontProperty called\n");
+-	switch (atom) {
+-	case XA_FONT:			/* 18*/
+-	case XA_UNDERLINE_POSITION:	/* 51*/
+-	case XA_UNDERLINE_THICKNESS:	/* 52*/
+-		break;
+-	default:
+-		printf("XGetFontProperty: Unknown FontProperty Atom %d\n",
+-			(int)atom);
+-	}
+-	return 0;
+-}
+diff -Nuarp nxlib-0.45.orig/SetIFocus.c nxlib-0.45/SetIFocus.c
+--- nxlib-0.45.orig/SetIFocus.c	2002-08-17 06:26:19.000000000 +0900
++++ nxlib-0.45/SetIFocus.c	2009-02-13 17:13:55.000000000 +0900
+@@ -1,9 +1,17 @@
+ #include "nxlib.h"
+ 
+-int
+-XSetInputFocus(Display *dpy, Window focus, int revert_to, Time time)
++int XSetInputFocus(Display *dpy, Window focus, int revert_to, Time time)
+ {
+-printf("SetInputFocus %d\n", focus);
+ 	GrSetFocus(focus);
+ 	return 1;
+ }
++
++int XGetInputFocus(Display *dpy, Window *focus, int *revert_to)
++{
++	*focus = GrGetFocus();
++	printf("XGetInputFocus called [%d]\n", *focus);
++	if (*focus == 1) *revert_to = RevertToPointerRoot;
++	else if (*focus) *revert_to = RevertToParent;
++	else *revert_to = RevertToNone;
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/SetWMProps.c nxlib-0.45/SetWMProps.c
+--- nxlib-0.45.orig/SetWMProps.c	2003-09-12 10:48:33.000000000 +0900
++++ nxlib-0.45/SetWMProps.c	2009-03-15 15:53:19.000000000 +0900
+@@ -1,61 +1,88 @@
+ #include "nxlib.h"
+ #include <string.h>
+ #include "Xutil.h"
++#include "Xatom.h"
+ 
+-void
+-XSetWMName(Display * display, Window w, XTextProperty * name)
++void XSetTextProperty(Display *dpy, Window w, XTextProperty *tp, Atom property)
++{
++	printf("XSetTextProperty called [%s]\n", tp?tp->value:"(NULL)");
++	XChangeProperty(dpy, w, property, tp->encoding, tp->format,
++		PropModeReplace, tp->value, tp->nitems);
++}
++
++/*void XSetWMName(Display *dpy, Window w, XTextProperty *tp)
++{
++	XSetTextProperty(dpy, w, tp, XA_WM_NAME);
++}*/
++
++void XSetWMIconName(Display *dpy, Window w, XTextProperty *tp)
++{
++	XSetTextProperty(dpy, w, tp, XA_WM_ICON_NAME);
++}
++
++void XSetWMClientMachine(Display *dpy, Window w, XTextProperty *tp)
++{
++	XSetTextProperty(dpy, w, tp, XA_WM_CLIENT_MACHINE);
++}
++
++
++void XSetWMName(Display *display, Window w, XTextProperty *name)
+ {
+ 	GR_WM_PROPERTIES props;
+ 
+-	if (!name || !name->value)
+-		return;
++	if (!name || !name->value) return;
+ 
+ 	props.flags = GR_WM_FLAGS_TITLE;
+ 	props.title = name->value;
+ 	GrSetWMProperties(w, &props);
++
++	XSetTextProperty(display, w, name, XA_WM_NAME);	// Add
+ }
+ 
+-/* Not used */
+-void
+-XSetWMIconName(Display * display, Window w, XTextProperty * name)
++#define NumPropSizeElements 18		/* ICCCM version 1 */
++void XSetWMSizeHints(Display *dpy, Window w, XSizeHints *hints, Atom prop)
+ {
++	printf("XSetWMSizeHints called..\n");
++	XChangeProperty(dpy, w, prop, XA_WM_SIZE_HINTS, 32, PropModeReplace,
++		(unsigned char*)hints, NumPropSizeElements);
+ }
+ 
+ /* Not used */
+-void
+-XSetWMNormalHints(Display * display, Window w, XSizeHints * hints)
++void XSetWMNormalHints(Display *dpy, Window w, XSizeHints *hints)
+ {
++	//printf("XSetWMNormalHints called\n");
++	XSetWMSizeHints(dpy, w, hints, XA_WM_NORMAL_HINTS);
+ }
+ 
+ /* Not used */
+-int
+-XSetWMHints(Display * display, Window w, XWMHints * hints)
++#define NumPropWMHintsElements 9 /* number of elements in this structure */
++int XSetWMHints(Display *dpy, Window w, XWMHints *hints)
+ {
+-	return 1;
++	printf("XSetWMHints called..\n");
++	//return 1;
++	return XChangeProperty(dpy, w, XA_WM_HINTS, XA_WM_HINTS, 32,
++		PropModeReplace, (unsigned char*)hints, NumPropWMHintsElements);
+ }
+ 
+ /* Not used */
+-void
+-XSetWMClassHints(Display * display, Window w, XClassHint * hints)
++void XSetWMClassHints(Display *display, Window w, XClassHint *hints)
+ {
++	printf("XSetWMClassHints called\n");
+ }
+ 
+-XSizeHints *
+-XAllocSizeHints(void)
++XSizeHints *XAllocSizeHints(void)
+ {
+ 	return (XSizeHints *)Xcalloc(1, (unsigned)sizeof(XSizeHints));
+ }
+ 
+-XWMHints *
+-XAllocWMHints(void)
++XWMHints *XAllocWMHints(void)
+ {
+ 	return (XWMHints *)Xcalloc(1, (unsigned)sizeof(XWMHints));
+ }
+ 
+-void
+-XSetWMProperties(Display * display, Window w, XTextProperty * window_name,
+-	XTextProperty * icon_name, char **argv, int argc,
+-	XSizeHints * normal_hints, XWMHints * wm_hints, XClassHint *class_hints)
++void XSetWMProperties(Display *display, Window w, XTextProperty *window_name,
++	XTextProperty *icon_name, char **argv, int argc,
++	XSizeHints *normal_hints, XWMHints *wm_hints, XClassHint *class_hints)
+ {
+ 	if (window_name)
+ 		XSetWMName(display, w, window_name);
+@@ -69,10 +96,9 @@ XSetWMProperties(Display * display, Wind
+ 		XSetWMClassHints(display, w, class_hints);
+ }
+ 
+-void
+-XmbSetWMProperties(Display *dpy, Window w, _Xconst char *windowName,
+-	_Xconst char *iconName, char **argv, int argc, XSizeHints * sizeHints,
+-	XWMHints * wmHints, XClassHint * classHints)
++void XmbSetWMProperties(Display *dpy, Window w, _Xconst char *windowName,
++	_Xconst char *iconName, char **argv, int argc, XSizeHints *sizeHints,
++	XWMHints *wmHints, XClassHint *classHints)
+ {
+ 	XTextProperty wname, iname;
+ 	XTextProperty *wprop = NULL;
+@@ -81,12 +107,18 @@ XmbSetWMProperties(Display *dpy, Window
+ 	/* fake up XTextProperty struct members for XSetWMName*/
+ 	if (windowName) {
+ 		wname.value = (char *)windowName;
++		wname.encoding = XA_STRING;
++		wname.format = 8;
++		wname.nitems = strlen(windowName);
+ 		wprop = &wname;
+ 	}
+ 	if (iconName) {
+ 		iname.value = (char *)iconName;
++		iname.encoding = XA_STRING;
++		iname.format = 8;
++		iname.nitems = strlen(iconName);
+ 		iprop = &iname;
+ 	}
+-	XSetWMProperties(dpy, w, wprop, iprop, argv, argc, sizeHints, wmHints,
+-		classHints);
++	XSetWMProperties(dpy, w, wprop, iprop, argv, argc,
++		sizeHints, wmHints, classHints);
+ }
+diff -Nuarp nxlib-0.45.orig/SetWMProto.c nxlib-0.45/SetWMProto.c
+--- nxlib-0.45.orig/SetWMProto.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/SetWMProto.c	2009-02-08 17:08:55.000000000 +0900
+@@ -0,0 +1,45 @@
++#include "nxlib.h"
++#include "Xatom.h"
++
++// XSetWMProtocols sets the property
++//	WM_PROTOCOLS 	type: ATOM	format: 32
++Status XSetWMProtocols(Display *dpy, Window w, Atom *protocols, int count)
++{
++	Atom prop;
++
++	prop = XInternAtom(dpy, "WM_PROTOCOLS", False);
++	if (prop == None) return False;
++
++	XChangeProperty(dpy, w, prop, XA_ATOM, 32,
++			PropModeReplace, (unsigned char *)protocols, count);
++	return True;
++}
++
++//#include <stdio.h>
++Status XGetWMProtocols(Display *dpy, Window w, Atom **protocols, int *countReturn)
++{
++	Atom *data = NULL;
++	Atom actual_type;
++	Atom prop;
++	int actual_format;
++	unsigned long leftover, nitems;
++
++	prop =  XInternAtom(dpy, "WM_PROTOCOLS", False);
++	if (prop == None) return False;
++
++	/* get the property */
++	if (XGetWindowProperty(dpy, w, prop, 0L, 1000000L, False,
++		XA_ATOM, &actual_type, &actual_format,
++		&nitems, &leftover, (unsigned char **)&data)
++		!= Success)
++	return False;
++
++	if (actual_type != XA_ATOM || actual_format != 32) {
++		if (data) Xfree((char*)data);
++		return False;
++	}
++
++	*protocols = (Atom*)data;
++	*countReturn = (int)nitems;
++	return True;
++}
+diff -Nuarp nxlib-0.45.orig/Shape.c nxlib-0.45/Shape.c
+--- nxlib-0.45.orig/Shape.c	2003-08-11 06:38:39.000000000 +0900
++++ nxlib-0.45/Shape.c	2009-02-11 15:30:01.000000000 +0900
+@@ -1,6 +1,6 @@
+ #include "nxlib.h"
+ #include "Xutil.h"
+-#include "shape.h"	/* X11/extensions/shape.h*/
++#include "shape.h"	/* X11/extensions/shape.h */
+ 
+ void
+ XShapeCombineMask(Display *dpy, Window dest, int destKind, int xOff, int yOff,
+@@ -23,3 +23,23 @@ XShapeCombineMask(Display *dpy, Window d
+ 	GrSetWindowRegion(dest, mask, mask);
+ 	GrDestroyRegion(mask);
+ }
++
++// from /usr/include/X11/extensions/shapestr.h
++#define SHAPENAME "SHAPE"
++#define SHAPE_MAJOR_VERSION	1	/* current version numbers */
++#define SHAPE_MINOR_VERSION	1
++
++Bool XShapeQueryExtension(Display *dpy, int *event_base, int *error_base)
++{
++/*	*event_base = LASTEvent +1;
++	*error_base = 0;
++	return 1;*/
++	return XQueryExtension(dpy, SHAPENAME, NULL, event_base, error_base);
++}
++
++Status XShapeQueryVersion(Display *dpy, int *major, int *minor)
++{
++	*major = SHAPE_MAJOR_VERSION;
++	*minor = SHAPE_MINOR_VERSION;
++	return 1;
++}
+diff -Nuarp nxlib-0.45.orig/StrKeysym.c nxlib-0.45/StrKeysym.c
+--- nxlib-0.45.orig/StrKeysym.c	2003-08-11 06:50:45.000000000 +0900
++++ nxlib-0.45/StrKeysym.c	2009-03-18 16:23:16.000000000 +0900
+@@ -1,11 +1,10 @@
+-/* Portions Copyright 2003, Jordan Crouse (jordan@cosmicpenguin.net) */
+-
+ #include "nxlib.h"
+ #include <string.h>
+ #include "keysym.h"
+ #include "Xutil.h"
+ #include "keysymstr.h"
+ 
++#if 0
+ /* Standard keymapings for kernel values */
+ /* (from microwin/src/drivers/keymap_standard.h)*/
+ /* this table should be retrieved through Microwindows*/
+@@ -38,6 +37,146 @@ MWKEY_UNKNOWN,MWKEY_UNKNOWN,MWKEY_UNKNOW
+ MWKEY_LMETA, MWKEY_RMETA, MWKEY_MENU					/* 125*/
+ };
+ 
++#else
++/*
++ * Microwindows ttyscan.c compatible scancode conversion
++ * table.  Note this is NOT the same as the Linux kernel
++ * table due to the HACK XXX in ttyscan.c after getting
++ * the kernel scancode.  FIXME
++ */
++#define UNKNOWN	0
++static MWKEY mwscan_to_mwkey[128] = {
++	UNKNOWN,	/*  0*/
++	UNKNOWN,	/*  1*/
++	UNKNOWN,	/*  2*/
++	UNKNOWN,	/*  3*/
++	UNKNOWN,	/*  4*/
++	UNKNOWN,	/*  5*/
++	UNKNOWN,	/*  6*/
++	UNKNOWN,	/*  7*/
++	UNKNOWN,	/*  8*/
++	MWKEY_ESCAPE,	/*  9*/
++	'1',		/* 10*/
++	'2',		/* 11*/
++	'3',		/* 12*/
++	'4',		/* 13*/
++	'5',		/* 14*/
++	'6',		/* 15*/
++	'7',		/* 16*/
++	'8',		/* 17*/
++	'9',		/* 18*/
++	'0',		/* 19*/
++	'-',		/* 20*/
++	UNKNOWN,	/* 21*/
++	MWKEY_BACKSPACE,/* 22*/
++	MWKEY_TAB,	/* 23*/
++	'q',		/* 24*/
++	'w',		/* 25*/
++	'e',		/* 26*/
++	'r',		/* 27*/
++	't',		/* 28*/
++	'y',		/* 29*/
++	'u',		/* 30*/
++	'i',		/* 31*/
++	'o',		/* 32*/
++	'p',		/* 33*/
++	'[',		/* 34*/
++	']',		/* 35*/
++	MWKEY_ENTER,	/* 36*/
++	MWKEY_LCTRL,	/* 37*/
++	'a',		/* 38*/
++	's',		/* 39*/
++	'd',		/* 40*/
++	'f',		/* 41*/
++	'g',		/* 42*/
++	'h',		/* 43*/
++	'j',		/* 44*/
++	'k',		/* 45*/
++	'l',		/* 46*/
++	';',		/* 47*/
++	'\'',		/* 48*/
++	'`',		/* 49*/
++	MWKEY_LSHIFT,	/* 50*/
++	'\\',		/* 51*/
++	'z',		/* 52*/
++	'x',		/* 53*/
++	'c',		/* 54*/
++	'v',		/* 55*/
++	'b',		/* 56*/
++	'n',		/* 57*/
++	'm',		/* 58*/
++	',',		/* 59*/
++	'.',		/* 60*/
++	'/',		/* 61*/
++	MWKEY_RSHIFT,	/* 62*/
++	MWKEY_KP_MULTIPLY,/* 63*/
++	MWKEY_LALT,	/* 64*/
++	' ',		/* 65*/
++	UNKNOWN,	/* 66*/
++	MWKEY_F1,	/* 67*/
++	MWKEY_F2,	/* 68*/
++	MWKEY_F3,	/* 69*/
++	MWKEY_F4,	/* 70*/
++	MWKEY_F5,	/* 71*/
++	MWKEY_F6,	/* 72*/
++	MWKEY_F7,	/* 73*/
++	MWKEY_F8,	/* 74*/
++	MWKEY_F9,	/* 75*/
++	MWKEY_F10,	/* 76*/
++	UNKNOWN,	/* 77*/
++	UNKNOWN,	/* 78*/
++	MWKEY_KP7,	/* 79*/
++	MWKEY_KP8,	/* 80*/
++	MWKEY_KP9,	/* 81*/
++	MWKEY_KP_MINUS,	/* 82*/
++	MWKEY_KP4,	/* 83*/
++	MWKEY_KP5,	/* 84*/
++	MWKEY_KP6,	/* 85*/
++	MWKEY_KP_PLUS,	/* 86*/
++	MWKEY_KP1,	/* 87*/
++	MWKEY_KP2,	/* 88*/
++	MWKEY_KP3,	/* 89*/
++	MWKEY_KP0,	/* 90*/
++	MWKEY_KP_PERIOD,/* 91*/
++	UNKNOWN,	/* 92*/
++	UNKNOWN,	/* 93*/
++	UNKNOWN,	/* 94*/
++	MWKEY_F11,	/* 95*/
++	MWKEY_F12,	/* 96*/
++	MWKEY_HOME,	/* 97*/
++	MWKEY_UP,	/* 98*/
++	MWKEY_PAGEUP,	/* 99*/
++	MWKEY_LEFT,	/*100*/
++	UNKNOWN,	/*101*/
++	MWKEY_RIGHT,	/*102*/
++	MWKEY_END,	/*103*/
++	MWKEY_DOWN,	/*104*/
++	MWKEY_PAGEDOWN,	/*105*/
++	MWKEY_INSERT,	/*106*/
++	MWKEY_DELETE,	/*107*/
++	MWKEY_KP_ENTER,	/*108*/
++	MWKEY_RCTRL,	/*109*/
++	UNKNOWN,	/*110*/
++	MWKEY_PRINT,	/*111*/
++	MWKEY_KP_DIVIDE, /*112*/
++	MWKEY_RALT,	/*113*/
++	UNKNOWN,	/*114*/
++	UNKNOWN,	/*115*/
++	UNKNOWN,	/*116*/
++	UNKNOWN,	/*117*/
++	UNKNOWN,	/*118*/
++	UNKNOWN,	/*119*/
++	UNKNOWN,	/*120*/
++	UNKNOWN,	/*121*/
++	UNKNOWN,	/*122*/
++	UNKNOWN,	/*123*/
++	UNKNOWN,	/*124*/
++	UNKNOWN,	/*125*/
++	UNKNOWN,	/*126*/
++	UNKNOWN		/*127*/
++};
++#endif
++
+ static struct {
+ 	GR_KEY nxKey;
+ 	KeySym xKey;
+@@ -105,17 +244,17 @@ static struct {
+ 
+ 
+ /* translate keycode to KeySym, no control/shift processing*/
+-KeySym
+-XKeycodeToKeysym(Display *dpy, unsigned int kc, int index)
++KeySym XKeycodeToKeysym(Display *dpy, unsigned int kc, int index)
+ {
+ 	int	i;
+ 	MWKEY	mwkey;
+ 
+-	if (kc > 127)
+-		return NoSymbol;
++	printf("XKeycodeToKeysym called [key:%x]\n", kc);
++	if (kc > 127) return NoSymbol;
+ 
+ 	/* first convert scancode to mwkey*/
+ 	mwkey = mwscan_to_mwkey[kc];
++	//printf("-> [%x]\n", mwkey);
+ 
+ 	/* then possibly convert mwkey to X KeySym*/
+ 	for (i=0; mwkey_to_xkey[i].nxKey != 0xffff; i++) {
+@@ -128,25 +267,27 @@ XKeycodeToKeysym(Display *dpy, unsigned
+ }
+ 
+ /* translate event->keycode into KeySym, no control/shift processing*/
+-KeySym
+-XLookupKeysym(XKeyEvent *event, int index)
++KeySym XLookupKeysym(XKeyEvent *event, int index)
+ {
+ 	return XKeycodeToKeysym(event->display, event->keycode, index);
+ }
+ 
+ /* translate event->keycode into *keysym, control/shift processing*/
+-int
+-XLookupString(XKeyEvent *event, char *buffer, int nbytes, KeySym *keysym,
++int XLookupString(XKeyEvent *event, char *buffer, int nbytes, KeySym *keysym,
+ 	XComposeStatus *status)
+ {
+ 	KeySym k;
+ 
+ 	k = XLookupKeysym(event, 0);
++	//if (event->keycode > 127) k = NoSymbol;
++	//k = mwscan_to_mwkey[event->keycode];
+ 
+ 	/* translate Control/Shift*/
+ 	if ((event->state & ControlMask) && k < 256)
++		// for Ctrl-key
+ 		k &= 0x1f;
+ 	else if (event->state & ShiftMask) {
++		// for Shift-key
+ 		if (k >= 'a' && k <= 'z')
+ 			k = k-'a'+'A';
+ 		else switch (k) {
+@@ -172,20 +313,66 @@ XLookupString(XKeyEvent *event, char *bu
+ 		case '.': k = '>'; break;
+ 		case '/': k = '?'; break;
+ 		}
++	/*} else if (!(k >= 0x20 && k <= 0x7e)) {
++		switch (k) {
++		case MWKEY_BACKSPACE:	k = 8; break;
++		case MWKEY_TAB:		k = 9; break;
++		case MWKEY_ENTER:	k = 0xd; break;
++		case MWKEY_ESCAPE:	k = 0x1b; break;
++		case MWKEY_DELETE:	k = 0x7f; break;
++		//default:		k = 0;
++		}*/
++		/*if (keysym) *keysym = k;
++		if (nbytes > 0) buffer[0] = '\0';
++		return 0;*/
+ 	}
+ 
+-	*keysym = k;
+-	if (nbytes > 0)
+-		buffer[0] = '\0';
++	if (keysym) *keysym = k;
++//	if (nbytes > 0) buffer[0] = '\0';
++//	return 0;
++	if (nbytes > 0/* && k*/ /*&& (k >= 0x20 && k <= 0x7e)*/) {
++//		*status = XLookupBoth;
++		if (k >= 0x20 && k <= 0xff) {
++			buffer[0] = k;
++			//buffer[1] = 0;
++		} else {
++			switch (k) {
++			case XK_BackSpace:	buffer[0] = 8; break;
++			case XK_Tab:		buffer[0] = 9; break;
++			case XK_KP_Enter:
++			case XK_Return:		buffer[0] = 0xd; break;
++			case XK_Escape:		buffer[0] = 0x1b; break;
++			case XK_Delete:		buffer[0] = 0x7f; break;
++			case XK_KP_End:		buffer[0] = '1'; break;
++			case XK_KP_Down:	buffer[0] = '2'; break;
++			case XK_KP_Page_Down:	buffer[0] = '3'; break;
++			case XK_KP_Left:	buffer[0] = '4'; break;
++			//case XK_KP_Home:	buffer[0] = '5'; break;
++			case XK_KP_Right:	buffer[0] = '6'; break;
++			case XK_KP_Home:	buffer[0] = '7'; break;
++			case XK_KP_Up:		buffer[0] = '8'; break;
++			case XK_KP_Page_Up:	buffer[0] = '9'; break;
++			case XK_KP_Insert:	buffer[0] = '0'; break;
++			case XK_KP_Delete:	buffer[0] = '.'; break;
++			case XK_KP_Add:		buffer[0] = '+'; break;
++			case XK_KP_Subtract:	buffer[0] = '-'; break;
++			case XK_KP_Divide:	buffer[0] = '/'; break;
++			case XK_KP_Multiply:	buffer[0] = '*'; break;
++			default:		buffer[0] = 0; return 0;
++			}
++		}
++		printf("XLookupString [%x]\n", buffer[0]);
++		return 1;
++	}
+ 	return 0;
+ }
+ 
+ /* Freeking ugly! */
+-KeySym
+-XStringToKeysym(_Xconst char *string)
++KeySym XStringToKeysym(_Xconst char *string)
+ {
+ 	int i;
+ 
++	printf("XStringToKeysym called [%s]\n", string);
+ 	for (i=0; i < NX_KEYSYMSTR_COUNT; i++)
+ 		if (strcmp(nxKeyStrings[i].str, string) == 0)
+ 			return nxKeyStrings[i].keysym;
+@@ -193,167 +380,34 @@ XStringToKeysym(_Xconst char *string)
+ 	return NoSymbol;
+ }
+ 
+-/* translate KeySym to KeyCode*/
+-KeyCode
+-XKeysymToKeycode(Display *dpy, KeySym ks)
++char *XKeysymToString(KeySym ks)
+ {
+ 	int i;
+ 
+-	for (i=0; i<128; ++i)
+-		if (mwscan_to_mwkey[i] == ks)
+-			return i;
++	printf("XKeysymToString called [%x]\n", (int)ks);
++	for (i=0; i < NX_KEYSYMSTR_COUNT; i++)
++		if (nxKeyStrings[i].keysym == ks) return nxKeyStrings[i].str;
++
++	return NULL;
++}
++
++/* translate KeySym to KeyCode*/
++KeyCode XKeysymToKeycode(Display *dpy, KeySym ks)
++{
++	int i;
++	printf("XKeysymToKeycode called [%x]\n", (int)ks);
++	for (i=0; i<128; ++i) if (mwscan_to_mwkey[i] == ks) return i;
+ 	return NoSymbol;
+ }
+ 
+ /* Translate the keysym to upper case and lower case */
+-
+-void
+-XConvertCase(KeySym in, KeySym *upper, KeySym *lower)
++void XConvertCase(KeySym in, KeySym *upper, KeySym *lower)
+ {
+-	if (in & MWKEY_NONASCII_MASK) 
++	if (in & MWKEY_NONASCII_MASK)
+ 		*upper = *lower = in;
+ 	else {
+ 		*upper = (in >= 'a' && in <= 'z')? in-'a'+'A': in;
+ 		*lower = (in >= 'A' && in <= 'A')? in-'A'+'a': in;
+ 	}
++	printf("XConvertCase called [%x, u:%x, l:%x]\n", (int)in, (int)*upper, (int)*lower);
+ }
+-  
+-#if 0000
+-/*
+- * Microwindows ttyscan.c compatible scancode conversion
+- * table.  Note this is NOT the same as the Linux kernel
+- * table due to the HACK XXX in ttyscan.c after getting
+- * the kernel scancode.  FIXME
+- */
+-#define UNKNOWN	0
+-static MWKEY mwscan_to_mwkey[128] = {
+-	UNKNOWN,	/*  0*/
+-	UNKNOWN,	/*  1*/
+-	UNKNOWN,	/*  2*/
+-	UNKNOWN,	/*  3*/
+-	UNKNOWN,	/*  4*/
+-	UNKNOWN,	/*  5*/
+-	UNKNOWN,	/*  6*/
+-	UNKNOWN,	/*  7*/
+-	UNKNOWN,	/*  8*/
+-	MWKEY_ESCAPE,	/*  9*/
+-	'1',		/* 10*/
+-	'2',		/* 11*/
+-	'3',		/* 12*/
+-	'4',		/* 13*/
+-	'5',		/* 14*/
+-	'6',		/* 15*/
+-	'7',		/* 16*/
+-	'8',		/* 17*/
+-	'9',		/* 18*/
+-	'0',		/* 19*/
+-	'-',		/* 20*/
+-	UNKNOWN,	/* 21*/
+-	MWKEY_BACKSPACE,/* 22*/
+-	MWKEY_TAB,	/* 23*/
+-	'q',		/* 24*/
+-	'w',		/* 25*/
+-	'e',		/* 26*/
+-	'r',		/* 27*/
+-	't',		/* 28*/
+-	'y',		/* 29*/
+-	'u',		/* 30*/
+-	'i',		/* 31*/
+-	'o',		/* 32*/
+-	'p',		/* 33*/
+-	'[',		/* 34*/
+-	']',		/* 35*/
+-	MWKEY_ENTER,	/* 36*/
+-	MWKEY_LCTRL,	/* 37*/
+-	'a',		/* 38*/
+-	's',		/* 39*/
+-	'd',		/* 40*/
+-	'f',		/* 41*/
+-	'g',		/* 42*/
+-	'h',		/* 43*/
+-	'j',		/* 44*/
+-	'k',		/* 45*/
+-	'l',		/* 46*/
+-	';',		/* 47*/
+-	'\'',		/* 48*/
+-	'`',		/* 49*/
+-	MWKEY_LSHIFT,	/* 50*/
+-	'\\',		/* 51*/
+-	'z',		/* 52*/
+-	'x',		/* 53*/
+-	'c',		/* 54*/
+-	'v',		/* 55*/
+-	'b',		/* 56*/
+-	'n',		/* 57*/
+-	'm',		/* 58*/
+-	',',		/* 59*/
+-	'.',		/* 60*/
+-	'/',		/* 61*/
+-	MWKEY_RSHIFT,	/* 62*/
+-	MWKEY_KP_MULTIPLY,/* 63*/
+-	MWKEY_LALT,	/* 64*/
+-	' ',		/* 65*/
+-	UNKNOWN,	/* 66*/
+-	MWKEY_F1,	/* 67*/
+-	MWKEY_F2,	/* 68*/
+-	MWKEY_F3,	/* 69*/
+-	MWKEY_F4,	/* 70*/
+-	MWKEY_F5,	/* 71*/
+-	MWKEY_F6,	/* 72*/
+-	MWKEY_F7,	/* 73*/
+-	MWKEY_F8,	/* 74*/
+-	MWKEY_F9,	/* 75*/
+-	MWKEY_F10,	/* 76*/
+-	UNKNOWN,	/* 77*/
+-	UNKNOWN,	/* 78*/
+-	MWKEY_KP7,	/* 79*/
+-	MWKEY_KP8,	/* 80*/
+-	MWKEY_KP9,	/* 81*/
+-	MWKEY_KP_MINUS,	/* 82*/
+-	MWKEY_KP4,	/* 83*/
+-	MWKEY_KP5,	/* 84*/
+-	MWKEY_KP6,	/* 85*/
+-	MWKEY_KP_PLUS,	/* 86*/
+-	MWKEY_KP1,	/* 87*/
+-	MWKEY_KP2,	/* 88*/
+-	MWKEY_KP3,	/* 89*/
+-	MWKEY_KP0,	/* 90*/
+-	MWKEY_KP_PERIOD,/* 91*/
+-	UNKNOWN,	/* 92*/
+-	UNKNOWN,	/* 93*/
+-	UNKNOWN,	/* 94*/
+-	MWKEY_F11,	/* 95*/
+-	MWKEY_F12,	/* 96*/
+-	MWKEY_HOME,	/* 97*/
+-	MWKEY_UP,	/* 98*/
+-	MWKEY_PAGEUP,	/* 99*/
+-	MWKEY_LEFT,	/*100*/
+-	UNKNOWN,	/*101*/
+-	MWKEY_RIGHT,	/*102*/
+-	MWKEY_END,	/*103*/
+-	MWKEY_DOWN,	/*104*/
+-	MWKEY_PAGEDOWN,	/*105*/
+-	MWKEY_INSERT,	/*106*/
+-	MWKEY_DELETE,	/*107*/
+-	MWKEY_KP_ENTER,	/*108*/
+-	MWKEY_RCTRL,	/*109*/
+-	UNKNOWN,	/*110*/
+-	MWKEY_PRINT,	/*111*/
+-	MWKEY_KP_DIVIDE, /*112*/
+-	MWKEY_RALT,	/*113*/
+-	UNKNOWN,	/*114*/
+-	UNKNOWN,	/*115*/
+-	UNKNOWN,	/*116*/
+-	UNKNOWN,	/*117*/
+-	UNKNOWN,	/*118*/
+-	UNKNOWN,	/*119*/
+-	UNKNOWN,	/*120*/
+-	UNKNOWN,	/*121*/
+-	UNKNOWN,	/*122*/
+-	UNKNOWN,	/*123*/
+-	UNKNOWN,	/*124*/
+-	UNKNOWN,	/*125*/
+-	UNKNOWN,	/*126*/
+-	UNKNOWN		/*127*/
+-};
+-#endif
+diff -Nuarp nxlib-0.45.orig/StrToText.c nxlib-0.45/StrToText.c
+--- nxlib-0.45.orig/StrToText.c	2003-08-12 05:07:34.000000000 +0900
++++ nxlib-0.45/StrToText.c	2009-02-04 20:24:04.000000000 +0900
+@@ -88,16 +88,18 @@ XwcTextListToTextProperty(Display *displ
+ 	if (!count)
+ 		return Success;
+ 	
+-	strs = (char **) malloc(count * sizeof(char *));
+-	if (!strs) return XNoMemory;
++	strs = (char **)Xmalloc(count * sizeof(char *));
++	if (!strs)
++		return XNoMemory;
+ 	       
+ 	for(i = 0; i < count; i++) {
+ 		wchar_t *wstr = list[i];
+ 		char *ptr = 0;
+ 		int len = wcslen(wstr);
+ 
+-		ptr = strs[i] = (char *) calloc(wcslen(wstr) + 1, sizeof(char));
+-		if (!strs[i]) continue;
++		ptr = strs[i] = (char *)Xcalloc(wcslen(wstr) + 1, sizeof(char));
++		if (!strs[i])
++			continue;
+ 
+ 		for(l = 0; l < len; l++) {
+ 			int ch = wctob(*wstr++);
+@@ -108,11 +110,10 @@ XwcTextListToTextProperty(Display *displ
+ 	ret = XStringListToTextProperty((char **) strs, count, text_prop_return);
+ 
+ 	/* Free the converted functions */
+-
+ 	for(i = 0; i < count; i++) 
+-		if (strs[i]) free(strs[i]);
++		if (strs[i])Xfree(strs[i]);
+ 	
+-	free(strs);
++	Xfree(strs);
+ 	return ret;       
+ }
+ 
+@@ -127,28 +128,28 @@ XwcTextPropertyToTextList(Display* displ
+ 	int count = 0;
+ 
+ 	/* Nothing to encode */
+-
+ 	if (!text_prop->nitems) {
+ 		*count_return = 0;
+ 		*list_return = 0;
+ 		return Success;
+ 	}
+ 
+-
+ 	while(1) {
+ 		wchar_t *rptr;
+ 		char *vptr = value;
+ 		int l;
+ 
+-		if (!*value) break;
++		if (!*value)
++			break;
+ 
+ 		if (!ret) 
+-			ret = (wchar_t **) malloc((count + 1) * sizeof(wchar_t *));
++			ret = (wchar_t **)Xmalloc((count + 1) * sizeof(wchar_t *));
+ 		else
+-			ret = (wchar_t **) realloc(ret, (count + 1) * sizeof(wchar_t *));
++			ret = (wchar_t **)Xrealloc(ret, (count + 1) * sizeof(wchar_t *));
+ 
+-		if (!ret) return XNoMemory;
+-		rptr = ret[count] = (wchar_t *) calloc(sizeof(wchar_t), strlen(value) + 1);
++		if (!ret)
++			return XNoMemory;
++		rptr = ret[count] = (wchar_t *)Xcalloc(sizeof(wchar_t), strlen(value) + 1);
+ 
+ 		if (!ret[count]) 
+ 			goto next_string;
+@@ -159,11 +160,11 @@ XwcTextPropertyToTextList(Display* displ
+ 		*rptr++ = L'\0';
+ 		count++;
+ 
+-	next_string:
++next_string:
+ 		value += strlen(value) + 1;
+ 	}
+ 
+-	ret = (wchar_t **) realloc(ret, (count + 1) * sizeof(wchar_t *));
++	ret = (wchar_t **)Xrealloc(ret, (count + 1) * sizeof(wchar_t *));
+ 	ret[count] = 0;
+ 
+ 	*list_return = ret;
+@@ -175,12 +176,12 @@ XwcTextPropertyToTextList(Display* displ
+ void
+ XwcFreeStringList(wchar_t **list)
+ {
+-	int i = 0;
++	int i;
+ 
+ 	if (!list)
+ 		return;
+ 
+ 	for(i = 0; list[i]; i++)
+-		free(list[i]);
+-	free(list);
++		Xfree(list[i]);
++	Xfree(list);
+ }
+diff -Nuarp nxlib-0.45.orig/TODO nxlib-0.45/TODO
+--- nxlib-0.45.orig/TODO	2003-06-16 13:55:41.000000000 +0900
++++ nxlib-0.45/TODO	2009-02-04 20:24:04.000000000 +0900
+@@ -1,3 +1,7 @@
++fix GrSetGCUseBackground force TRUE in putTrueColorImage
++check putTrueColorImage could be called with XGetImage-created
++	MWPF_PIXELVAL, not hw format, yet match depth
++fix X/WhitePixel to align with bpp size, also Background in GC
+ clipping on oval windows on fltk forms
+ width/height vs radius in Arc draws buggy for all even widths
+ 	fltk valuators dial problems, arc/fill borders incorrect
+@@ -66,7 +70,6 @@ change to Query Truecolor or not for dis
+ think about GrReadArea return size based on MWPF_xxx
+ 	should it be based on bpp?  no.
+ 
+-XSetClipMask creates a region leak - GrDestroyGC doesn't deallocate resources
+ 
+ is Cursor black/white reversed? (X11 bits reverse meaning?)
+ 
+diff -Nuarp nxlib-0.45.orig/Text.c nxlib-0.45/Text.c
+--- nxlib-0.45.orig/Text.c	2002-09-23 12:23:25.000000000 +0900
++++ nxlib-0.45/Text.c	2009-02-04 20:28:10.000000000 +0900
+@@ -5,8 +5,11 @@ XDrawString(Display *dpy, Drawable d, GC
+ 	_Xconst char *string, int length)
+ {   
+ 	if (length > 0)
++	{
++		GrSetGCUseBackground(gc->gid, GR_FALSE);
+ 		GrText(d, gc->gid, x, y, (char *)string, length,
+ 		       GR_TFASCII|GR_TFBASELINE);
++	}
+ 	return 0;
+ }
+ 
+diff -Nuarp nxlib-0.45.orig/Text16.c nxlib-0.45/Text16.c
+--- nxlib-0.45.orig/Text16.c	2002-09-23 12:24:01.000000000 +0900
++++ nxlib-0.45/Text16.c	2009-03-08 22:28:25.000000000 +0900
+@@ -3,10 +3,10 @@
+ int
+ XDrawString16(Display *dpy, Drawable d, GC gc, int x, int y,
+ 	_Xconst XChar2b *string, int length)
+-{   
+-printf("XDrawString16 %d %x %x\n", length, string->byte1, string->byte2);
++{
++	printf("XDrawString16 %d %x %x\n", length, string->byte1, string->byte2);
+ 	if (length > 0)
+-		GrText(d, gc->gid, x, y, (void *)string, length, 
++		GrText(d, gc->gid, x, y, (void *)string, length,
+ 		       GR_TFXCHAR2B|GR_TFBASELINE);
+ 	return 0;
+ }
+@@ -17,10 +17,18 @@ XDrawImageString16(Display *dpy, Drawabl
+ {
+ 	if (length > 0) {
+ 		GrSetGCUseBackground(gc->gid, GR_TRUE);
+-		GrText(d, gc->gid, x, y, (void *)string, length, 
++		GrText(d, gc->gid, x, y, (void *)string, length,
+ 		       GR_TFXCHAR2B|GR_TFBASELINE);
+ 		GrSetGCUseBackground(gc->gid, GR_FALSE);
+ 	}
+ 	return 0;
+ }
+ 
++//http://xjman.dsl.gr.jp/X11R6/X11/CH08.html
++int XDrawText16(Display *dpy, Drawable d, GC gc, int x, int y, XTextItem16 *items, int nitems)
++{
++	printf("XDrawText16 called..\n");
++//	item = items;
++//	for (i=0; i < nitems; i++) {
++	return XDrawString16(dpy, d, gc, x, y, items->chars, items->nchars);
++}
+diff -Nuarp nxlib-0.45.orig/TextToStr.c nxlib-0.45/TextToStr.c
+--- nxlib-0.45.orig/TextToStr.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/TextToStr.c	2009-03-08 22:14:45.000000000 +0900
+@@ -0,0 +1,69 @@
++#include "nxlib.h"
++#include "Xutil.h"
++#include "Xatom.h"
++
++// XTextPropertyToStringList - set list and count to contain data stored in
++// null-separated STRING property.
++Status XTextPropertyToStringList(XTextProperty *tp, char ***list_r, int *count_r)
++{
++	char **list;			/* return value */
++	int nelements;			/* return value */
++	register char *cp;		/* temp variable */
++	char *start;			/* start of thing to copy */
++	int i, j;			/* iterator variables */
++	int datalen = (int) tp->nitems;	/* for convenience */
++
++	// make sure we understand how to do it
++	printf("XTextPropertyToStringList called..\n");
++	if (tp->encoding != XA_STRING ||  tp->format != 8) return False;
++
++	if (datalen == 0) {
++		*list_r = NULL;
++		*count_r = 0;
++		return True;
++	}
++
++	// walk the list to figure out how many elements there are
++	nelements = 1;			/* since null-separated */
++	for (cp = (char*)tp->value, i = datalen; i>0; cp++, i--) {
++		if (*cp == '\0') nelements++;
++	}
++
++	// allocate list and duplicate
++	list = (char**)Xmalloc(nelements * sizeof(char*));
++	if (!list) return False;
++
++	start = (char*)Xmalloc((datalen + 1) * sizeof(char));	/* for <NUL> */
++	if (!start) {
++		Xfree((char*)list);
++		return False;
++	}
++
++	// copy data
++	memcpy(start, (char*)tp->value, tp->nitems);
++	start[datalen] = '\0';
++
++	// walk down list setting value
++	for (cp = start, i = datalen + 1, j = 0; i>0; cp++, i--) {
++		if (*cp == '\0') {
++			list[j] = start;
++			start = (cp + 1);
++			j++;
++		}
++	}
++
++	// append final null pointer and then return data
++	*list_r = list;
++	*count_r = nelements;
++	return True;
++}
++
++void XFreeStringList(char **list)
++{
++	printf("XFreeStringList called..\n");
++	if (list) {
++		if (list[0]) Xfree(list[0]);
++		Xfree((char*)list);
++		list = NULL;
++	}
++}
+diff -Nuarp nxlib-0.45.orig/Threads.c nxlib-0.45/Threads.c
+--- nxlib-0.45.orig/Threads.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Threads.c	2009-02-13 11:07:43.000000000 +0900
+@@ -0,0 +1,19 @@
++#include "nxlib.h"
++
++// required for openoffice.org
++Status XInitThreads()
++{
++	printf("XInitThreads called...");
++	return 1;
++}
++
++// for xine
++void XLockDisplay(Display *display)
++{
++	LockDisplay(display);
++}
++
++void XUnlockDisplay(Display *display)
++{
++	UnlockDisplay(display);
++}
+diff -Nuarp nxlib-0.45.orig/UnmapWin.c nxlib-0.45/UnmapWin.c
+--- nxlib-0.45.orig/UnmapWin.c	2002-07-12 14:13:46.000000000 +0900
++++ nxlib-0.45/UnmapWin.c	2009-02-04 20:24:04.000000000 +0900
+@@ -3,7 +3,6 @@
+ int
+ XUnmapWindow (Display *dpy, Window w)
+ {
+-	printf("Unmapping window %d\n", w);
+ 	GrUnmapWindow(w);
+ 	return 1;
+ }
+@@ -11,7 +10,6 @@ XUnmapWindow (Display *dpy, Window w)
+ Status
+ XWithdrawWindow(Display * display, Window w, int screen_number)
+ {
+-	printf("Withdrawing window %d\n", w);
+ 	GrUnmapWindow(w);
+ 	return 1;
+ }
+diff -Nuarp nxlib-0.45.orig/Version nxlib-0.45/Version
+--- nxlib-0.45.orig/Version	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/Version	2009-02-04 20:24:04.000000000 +0900
+@@ -0,0 +1 @@
++0.46 CVS
+diff -Nuarp nxlib-0.45.orig/Window.c nxlib-0.45/Window.c
+--- nxlib-0.45.orig/Window.c	2003-04-10 07:35:12.000000000 +0900
++++ nxlib-0.45/Window.c	2009-02-04 20:24:04.000000000 +0900
+@@ -22,15 +22,18 @@ XCreateWindow(Display *dpy, Window paren
+ 	if (parent == 0)
+ 		parent = GR_ROOT_WINDOW_ID;
+ 
+-	if (valuemask & CWBackPixel)
+-		bkgnd = _nxColorvalFromPixelval(dpy, attributes->background_pixel);
++	if (class == InputOnly)
++		wid = GrNewInputWindow((GR_WINDOW_ID)parent, x, y, width, height);
++	else {
++		if (valuemask & CWBackPixel)
++			bkgnd = _nxColorvalFromPixelval(dpy, attributes->background_pixel);
+ 
+-	if (valuemask & CWBorderPixel)
+-		border = _nxColorvalFromPixelval(dpy, attributes->border_pixel);
+-
+-	wid = GrNewWindow((GR_WINDOW_ID)parent, x, y, width, height, borderWidth,
+-		bkgnd, border);
++		if (valuemask & CWBorderPixel)
++			border = _nxColorvalFromPixelval(dpy, attributes->border_pixel);
+ 
++		wid = GrNewWindow((GR_WINDOW_ID)parent, x, y, width, height, borderWidth,
++			bkgnd, border);
++	}
+ 	if (!wid)
+ 		return 0;
+ 
+@@ -44,8 +47,10 @@ XCreateWindow(Display *dpy, Window paren
+ 	}
+ 
+ 	if (valuemask & CWEventMask)
+-		XSelectInput( dpy, wid, attributes->event_mask);
++		XSelectInput(dpy, wid, attributes->event_mask);
+ 
++	if (valuemask & CWCursor)
++		XDefineCursor(dpy, wid, attributes->cursor);
+ 
+     // FIXME add XCreateWindow valuemask attributes
+     //if (valuemask & CWBackPixmap)
+@@ -68,8 +73,6 @@ XCreateWindow(Display *dpy, Window paren
+ 	//*value++ = attributes->do_not_propagate_mask;
+     //if (valuemask & CWColormap)
+ 	//*value++ = attributes->colormap;
+-    //if (valuemask & CWCursor)
+-	//*value++ = attributes->cursor;
+ 
+ 	return wid;
+ }
+diff -Nuarp nxlib-0.45.orig/WindowProperty.c nxlib-0.45/WindowProperty.c
+--- nxlib-0.45.orig/WindowProperty.c	2002-08-16 10:36:36.000000000 +0900
++++ nxlib-0.45/WindowProperty.c	2009-02-04 20:24:04.000000000 +0900
+@@ -1,19 +1,6 @@
+ #include <string.h>
+ #include "nxlib.h"
+ 
+-int
+-XGetWindowProperty(Display * dpy, Window win, Atom prop, long offset,
+-	long len, Bool bDel, Atom req, Atom * type, int *format,
+-	unsigned long *nitems, unsigned long *bytes, unsigned char **data)
+-{
+-	*type = None;
+-	*format = 0;
+-	*data = 0;
+-	*nitems = 0;
+-	*bytes = 0;
+-	return 1;		/* failure */
+-}
+-
+ Status
+ XGetWindowAttributes(Display * display, Window w, XWindowAttributes * ret)
+ {
+diff -Nuarp nxlib-0.45.orig/XKB.c nxlib-0.45/XKB.c
+--- nxlib-0.45.orig/XKB.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/XKB.c	2009-03-15 12:42:24.000000000 +0900
+@@ -0,0 +1,143 @@
++#include "nxlib.h"
++
++// required for Qt
++Bool XkbSetPerClientControls(Display *dpy, unsigned change, unsigned *values)
++{
++	printf("XkbSetPerClientControls called ???\n");
++	return 0;
++}
++
++// required for wine
++Bool XkbSetDetectableAutoRepeat(Display *dpy, Bool detectable, Bool *supported)
++{
++	printf("XkbSetDetectableAutoRepeat called ???\n");
++	return 0;
++}
++
++unsigned XkbKeysymToModifiers(Display *dpy, KeySym ks)
++{
++	//return XKeysymToModifiers(dpy, ks);
++	printf("XkbKeysymToModifiers called [%x]???\n", ks);
++	return 0;
++}
++
++Bool XkbUseExtension(Display *dpy, int *major, int *minor)
++{
++	printf("XkbUseExtension called...\n");
++	return 0;
++}
++
++#if 0
++struct _XKeytrans {
++	struct _XKeytrans *next;/* next on list */
++	char *string;		/* string to return when the time comes */
++	int len;		/* length of string (since NULL is legit)*/
++	KeySym key;		/* keysym rebound */
++	unsigned int state;	/* modifier state */
++	KeySym *modifiers;	/* modifier keysyms you want */
++	int mlen;		/* length of modifier list */
++};
++
++int XkbLookupKeyBinding(Display *dpy, KeySym sym, unsigned int mods,
++	char *buffer, int nbytes, int *extra_rtrn)
++{
++	struct _XKeytrans *p;
++
++	if (extra_rtrn) *extra_rtrn = 0;
++	for (p = dpy->key_bindings; p; p = p->next) {
++		if (((mods & AllMods) == p->state) && (sym == p->key)) {
++			int tmp = p->len;
++			if (tmp > nbytes) {
++				if (extra_rtrn) *extra_rtrn = (tmp-nbytes);
++				tmp = nbytes;
++			}
++			memcpy(buffer, p->string, tmp);
++			if (tmp < nbytes) buffer[tmp] = '\0';
++			return tmp;
++		}
++	}
++	return 0;
++}
++#endif
++
++int XkbTranslateKeySym(Display *dpy, KeySym *sym, unsigned int mods,
++	char *buf, int nbytes, int *extra)
++{
++	//char tmp[4];
++	char *p;
++
++	p = XKeysymToString(sym[0]);
++	nbytes = strlen(p);
++	memcpy(buf, p, nbytes);
++	printf("XkbTranslateKeySym called [%x/%s]...\n", *sym, p);
++	if (extra) *extra = 0;
++	/*if (!buf || !nbytes) {
++		buf = tmp;
++		nbytes = 4;
++	}*/
++	return nbytes;
++
++#if 0
++	XkbInfoPtr xkb;
++	XkbKSToMBFunc cvtr;
++	XPointer priv;
++	char tmp[4];
++	int n;
++
++	xkb = dpy->xkb_info;
++	if (!xkb->cvt.KSToMB) {
++		_XkbGetConverters(_XkbGetCharset(), &xkb->cvt);
++		_XkbGetConverters("ISO8859-1", &xkb->latin1cvt);
++	}
++
++	if (extra) *extra = 0;
++	if (!buf || !nbytes) {
++		buf = tmp;
++		nbytes = 4;
++	}
++
++	/* see if symbol rebound, if so, return that string. */
++	n = XkbLookupKeyBinding(dpy, *sym, mods, buf, nbytes, extra);
++	if (n) return n;
++	if (nbytes>0) buf[0] = '\0';
++
++	if (xkb->cvt.KSToUpper && (mods&LockMask)) {
++		*sym = (*xkb->cvt.KSToUpper)(*sym);
++	}
++	if (xkb->xlib_ctrls & XkbLC_ForceLatin1Lookup) {
++		cvtr = xkb->latin1cvt.KSToMB;
++		priv = xkb->latin1cvt.KSToMBPriv;
++	} else {
++		cvtr = xkb->cvt.KSToMB;
++		priv = xkb->cvt.KSToMBPriv;
++	}
++
++	n = (*cvtr)(priv, *sym, buf, nbytes, extra);
++
++	if ((!xkb->cvt.KSToUpper) && (mods&LockMask)) {
++		int i;
++		int change;
++		char ch;
++		for (i=change=0; i<n; i++) {
++			ch = toupper(buf[i]);
++			change = (change||(buf[i]!=ch));
++			buf[i] = ch;
++		}
++		if (change) {
++			if (n==1) *sym = (*xkb->cvt.MBToKS)(xkb->cvt.MBToKSPriv, buf, n, 0);
++			else *sym = NoSymbol;
++		}
++	}
++
++	if (mods&ControlMask) {
++		if (n==1) {
++			buf[0] = XkbToControl(buf[0]);
++			if (nbytes>1) buf[1] = '\0';
++			return 1;
++		}
++		if (nbytes>0) buf[0]= '\0';
++		return 0;
++	}
++	return n;
++#endif
++}
+diff -Nuarp nxlib-0.45.orig/XMisc.c nxlib-0.45/XMisc.c
+--- nxlib-0.45.orig/XMisc.c	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/XMisc.c	2009-02-04 20:24:04.000000000 +0900
+@@ -0,0 +1,130 @@
++#include "nxlib.h"
++#include "Xutil.h"
++#include "Xatom.h"
++#include <stdlib.h>
++#include <string.h>
++
++/******************************************************************************
++XMisc.c -  code fragments taken from xlib/XlibUtil.c
++(c) Andreas Foedrowitz  
++******************************************************************************/
++
++char *
++XDisplayString(Display * display)
++{
++	if (display->display_name)
++		return display->display_name;
++	return getenv("DISPLAY");
++}
++
++int
++XReadBitmapFile(Display * display, Drawable d, _Xconst char *filename,
++		unsigned int *width_return, unsigned int *height_return,
++		Pixmap * bitmap_return, int *x_hot_return, int *y_hot_return)
++{
++	unsigned char *data;
++
++	int result = XReadBitmapFileData(filename, width_return, height_return,
++			&data, x_hot_return, y_hot_return);
++	if (result == BitmapSuccess) {
++		*bitmap_return = XCreateBitmapFromData(display, d, (char *)data,
++					*width_return, *height_return);
++	}
++	if (data)
++		Xfree(data);
++	return result;
++}
++
++int
++XReadBitmapFileData(_Xconst char *filename, unsigned int *width_return,
++		    unsigned int *height_return, unsigned char **data_return,
++		    int *x_hot_return, int *y_hot_return)
++{
++	FILE *file = fopen(filename, "r");
++	*width_return = 0;
++	*height_return = 0;
++	*data_return = NULL;
++	*x_hot_return = 0;
++	*y_hot_return = 0;
++
++	if (file) {
++		const char *define = "#define";
++		char str[100];
++
++		fscanf(file, "%s", str);
++		if (!strcmp(str, define)) {
++			fscanf(file, "%s%d", str, width_return);
++			fscanf(file, "%s", str);
++			if (!strcmp(str, define)) {
++				fscanf(file, "%s%d", str, height_return);
++				fscanf(file, "%s", str);
++				if (!strcmp(str, define)) {
++					fscanf(file, "%s%d", str,
++					       x_hot_return);
++					fscanf(file, "%s", str);
++					if (!strcmp(str, define)) {
++						fscanf(file, "%s%d", str,
++						       y_hot_return);
++					}
++				}
++			}
++		}
++		if ((*width_return > 0) && (*height_return > 0)) {
++			int dataSize = ((*width_return + 7) / 8) * (*height_return);
++			int c, value, i, dataIndex = 0;
++
++			*data_return = (unsigned char *)Xmalloc(dataSize);
++			if (!*data_return) {
++				fclose(file);
++				return BitmapNoMemory;
++			}
++			while ((!feof(file)) && (dataIndex < dataSize)) {
++				c = fgetc(file);
++				if (c == 'x') {
++					value = 0;
++					for (i = 0; i < 2; i++) {
++						/*** read 2 hex nibbles ***/
++						c = fgetc(file);
++						value <<= 4;
++						if ((c >= '0') && (c <= '9'))
++							value |= c - '0';
++						else if ((c >= 'A')
++							 && (c <= 'F'))
++							value |= c - 'A' + 10;
++						else if ((c >= 'a')
++							 && (c <= 'f'))
++							value |= c - 'a' + 10;
++					}
++					(*data_return)[dataIndex++] =
++						(unsigned char) value;
++				}
++			}
++			fclose(file);
++			return BitmapSuccess;
++		} else {
++			fclose(file);
++			return BitmapFileInvalid;
++		}
++	}
++	return BitmapOpenFailed;
++}
++
++int
++XStoreBuffer(Display * display, _Xconst char *bytes, int nbytes, int buffer)
++{
++	if ((buffer >= 0) && (buffer <= 7)) {
++		return XChangeProperty(display,
++				       display->screens[display->
++							default_screen].root,
++				       (Atom) (XA_CUT_BUFFER0 + buffer),
++				       XA_STRING, 8, PropModeReplace,
++				       (unsigned char *) bytes, nbytes);
++	}
++	return 0;
++}
++
++int
++XStoreBytes(Display * display, _Xconst char *bytes, int nbytes)
++{
++	return XStoreBuffer(display, bytes, nbytes, 0);
++}
+diff -Nuarp nxlib-0.45.orig/Xlcint.h nxlib-0.45/Xlcint.h
+--- nxlib-0.45.orig/Xlcint.h	2003-08-11 06:31:41.000000000 +0900
++++ nxlib-0.45/Xlcint.h	2009-02-04 20:28:10.000000000 +0900
+@@ -71,7 +71,7 @@ from The Open Group.
+ #include "Xresource.h"
+ #include "Xutil.h"
+ /*#include "Xvarargs.h"*/
+-#include "varargs.h"
++#include "stdarg.h"
+ 
+ typedef Bool (*XFilterEventProc)(
+ #if NeedFunctionPrototypes
+diff -Nuarp nxlib-0.45.orig/Xresource.h nxlib-0.45/Xresource.h
+--- nxlib-0.45.orig/Xresource.h	2003-07-10 12:11:36.000000000 +0900
++++ nxlib-0.45/Xresource.h	2013-02-21 23:52:37.000000000 +0900
+@@ -51,9 +51,9 @@ SOFTWARE.
+ #ifndef _XRESOURCE_H_
+ #define _XRESOURCE_H_
+ 
+-#ifndef _XP_PRINT_SERVER_
+-#include <X11/Xlib.h>
+-#endif
++//#ifndef _XP_PRINT_SERVER_
++//#include <X11/Xlib.h>
++//#endif
+ 
+ /****************************************************************
+  ****************************************************************
+diff -Nuarp nxlib-0.45.orig/Xutil.h nxlib-0.45/Xutil.h
+--- nxlib-0.45.orig/Xutil.h	2003-08-11 06:45:24.000000000 +0900
++++ nxlib-0.45/Xutil.h	2009-02-05 23:18:08.000000000 +0900
+@@ -29,13 +29,13 @@ Copyright 1987 by Digital Equipment Corp
+ 
+                         All Rights Reserved
+ 
+-Permission to use, copy, modify, and distribute this software and its 
+-documentation for any purpose and without fee is hereby granted, 
++Permission to use, copy, modify, and distribute this software and its
++documentation for any purpose and without fee is hereby granted,
+ provided that the above copyright notice appear in all copies and that
+-both that copyright notice and this permission notice appear in 
++both that copyright notice and this permission notice appear in
+ supporting documentation, and that the name of Digital not be
+ used in advertising or publicity pertaining to distribution of the
+-software without specific, written prior permission.  
++software without specific, written prior permission.
+ 
+ DIGITAL DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE, INCLUDING
+ ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL
+@@ -54,7 +54,7 @@ SOFTWARE.
+ /* You must include <X11/Xlib.h> before including this file */
+ #include "Xlib.h"
+ 
+-/* 
++/*
+  * Bitmask returned by XParseGeometry().  Each bit tells if the corresponding
+  * value (x, y, width, height) was found in the parsed string.
+  */
+@@ -150,7 +150,7 @@ IconPositionHint|IconMaskHint|WindowGrou
+ 
+ 
+ /*
+- * new structure for manipulating TEXT properties; used with WM_NAME, 
++ * new structure for manipulating TEXT properties; used with WM_NAME,
+  * WM_ICON_NAME, WM_CLIENT_MACHINE, and WM_COMMAND.
+  */
+ typedef struct {
+@@ -235,16 +235,16 @@ typedef struct _XComposeStatus {
+    || ((KeySym)(keysym) == XK_Mode_switch) \
+    || ((KeySym)(keysym) == XK_Num_Lock))
+ /*
+- * opaque reference to Region data type 
++ * opaque reference to Region data type
+  */
+-typedef struct _XRegion *Region; 
++typedef struct _XRegion *Region;
+ 
+ /* Return values from XRectInRegion() */
+- 
++
+ #define RectangleOut 0
+ #define RectangleIn  1
+ #define RectanglePart 2
+- 
++
+ 
+ /*
+  * Information used by the visual utility routines to find desired visual
+@@ -460,7 +460,7 @@ extern Status XGetStandardColormap(
+     Display*		/* display */,
+     Window		/* w */,
+     XStandardColormap*	/* colormap_return */,
+-    Atom		/* property */			    
++    Atom		/* property */
+ #endif
+ );
+ 
+@@ -493,7 +493,7 @@ extern Status XGetWMClientMachine(
+ extern XWMHints *XGetWMHints(
+ #if NeedFunctionPrototypes
+     Display*		/* display */,
+-    Window		/* w */		      
++    Window		/* w */
+ #endif
+ );
+ 
+@@ -518,7 +518,7 @@ extern Status XGetWMNormalHints(
+     Display*		/* display */,
+     Window		/* w */,
+     XSizeHints*		/* hints_return */,
+-    long*		/* supplied_return */ 
++    long*		/* supplied_return */
+ #endif
+ );
+ 
+@@ -611,12 +611,13 @@ extern int XRectInRegion(
+ );
+ 
+ extern int XSaveContext(
+-#if NeedFunctionPrototypes
++//#if NeedFunctionPrototypes
+     Display*		/* display */,
+     XID			/* rid */,
+     XContext		/* context */,
+-    _Xconst char*	/* data */
+-#endif
++//    _Xconst char*	/* data */
++    XPointer
++//#endif
+ );
+ 
+ extern int XSetClassHint(
+@@ -632,7 +633,7 @@ extern int XSetIconSizes(
+     Display*		/* display */,
+     Window		/* w */,
+     XIconSize*		/* size_list */,
+-    int			/* count */    
++    int			/* count */
+ #endif
+ );
+ 
+@@ -899,7 +900,7 @@ extern int XUnionRegion(
+ );
+ 
+ extern int XWMGeometry(
+-#if NeedFunctionPrototypes
++//#if NeedFunctionPrototypes
+     Display*		/* display */,
+     int			/* screen_number */,
+     _Xconst char*	/* user_geometry */,
+@@ -911,7 +912,7 @@ extern int XWMGeometry(
+     int*		/* width_return */,
+     int*		/* height_return */,
+     int*		/* gravity_return */
+-#endif
++//#endif
+ );
+ 
+ extern int XXorRegion(
+diff -Nuarp nxlib-0.45.orig/dd nxlib-0.45/dd
+--- nxlib-0.45.orig/dd	2003-06-16 13:02:43.000000000 +0900
++++ nxlib-0.45/dd	1970-01-01 09:00:00.000000000 +0900
+@@ -1,2 +0,0 @@
+-
+-/usr2/microwin/src/bin/nano-X & /usr2/microwin/src/bin/nanowm & /usr2/microwin/src/bin/nxmag & ./testarc; kbd_mode -a; stty sane
+diff -Nuarp nxlib-0.45.orig/font.c nxlib-0.45/font.c
+--- nxlib-0.45.orig/font.c	2002-07-14 09:45:27.000000000 +0900
++++ nxlib-0.45/font.c	2009-02-04 20:24:04.000000000 +0900
+@@ -2,9 +2,17 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-char **_nxfontlist = 0;
++char **_nxfontlist = NULL;
+ int _nxfontcount = 0;
+ 
++/* default X11 font directory list, add directories if desired*/
++static char *NXDIRLIST[] = {
++	X11_FONT_DIR1,
++	X11_FONT_DIR2,
++	X11_FONT_DIR3,
++	0
++};
++
+ FILE *
+ _nxLoadFontDir(char *str)
+ {
+@@ -18,16 +26,35 @@ _nxLoadFontDir(char *str)
+ void
+ _nxSetDefaultFontDir(void)
+ {
++	int ndirs = (sizeof(NXDIRLIST) / sizeof(char *)) - 1;
++
++	_nxFreeFontDir(_nxfontlist);
++
++	_nxSetFontDir(NXDIRLIST, ndirs);
++}
++
++void
++_nxSetFontDir(char **directories, int ndirs)
++{
+ 	int i;
+ 
+-	if (_nxfontlist) {
+-		for (i = 0; i < _nxfontcount; i++)
+-			Xfree(_nxfontlist[i]);
+-		Xfree(_nxfontlist);
+-	}
++	_nxFreeFontDir(_nxfontlist);
+ 
+-	_nxfontlist = (char **) Xcalloc(2, sizeof(char *));
+-	_nxfontlist[0] = strdup(X11_FONT_DIR1);
+-	_nxfontlist[1] = strdup(X11_FONT_DIR2);
+-	_nxfontcount = 2;
++	_nxfontlist = (char **) Xcalloc(ndirs+1, sizeof(char *));
++	for (i = 0; i < ndirs; i++)
++		_nxfontlist[i] = strdup(directories[i]);
++
++	_nxfontcount = ndirs;
++}
++
++void
++_nxFreeFontDir(char **list)
++{
++	int i;
++
++	if (list) {
++		for (i = 0; list[i]; i++)
++			free(list[i]);
++		Xfree(list);
++	}
+ }
+diff -Nuarp nxlib-0.45.orig/fonts.dir nxlib-0.45/fonts.dir
+--- nxlib-0.45.orig/fonts.dir	1970-01-01 09:00:00.000000000 +0900
++++ nxlib-0.45/fonts.dir	2009-02-04 20:24:04.000000000 +0900
+@@ -0,0 +1,20 @@
++19
++6x13-ISO8859-1.pcf.gz fixed
++6x13-ISO8859-1.pcf.gz 6x13
++6x13B-ISO8859-1.pcf.gz 6x13bold
++6x13-ISO8859-1.pcf.gz -misc-fixed-medium-r-semicondensed--13-120-75-75-c-60-iso8859-1
++6x13B-ISO8859-1.pcf.gz -misc-fixed-bold-r-semicondensed--13-120-75-75-c-60-iso8859-1
++ariblk.ttf -monotype-arial black-medium-r-normal--0-0-0-0-p-0-iso8859-1
++arial.ttf -adobe-helvetica-medium-r-normal--0-0-0-0-p-0-iso8859-1
++arialb.ttf -adobe-helvetica-bold-r-normal--0-0-0-0-p-0-iso8859-1
++ariali.ttf -adobe-helvetica-medium-o-normal--0-0-0-0-p-0-iso8859-1
++arialz.ttf -adobe-helvetica-bold-o-normal--0-0-0-0-p-0-iso8859-1
++cour.ttf -adobe-courier-medium-r-normal--0-0-0-0-m-0-iso8859-1
++courb.ttf -adobe-courier-bold-r-normal--0-0-0-0-m-0-iso8859-1
++couri.ttf -adobe-courier-medium-o-normal--0-0-0-0-m-0-iso8859-1
++courz.ttf -adobe-courier-bold-o-normal--0-0-0-0-m-0-iso8859-1
++times.ttf -adobe-times-medium-r-normal--0-0-0-0-p-0-iso8859-1
++timesb.ttf -adobe-times-bold-r-normal--0-0-0-0-p-0-iso8859-1
++timesi.ttf -adobe-times-medium-i-normal--0-0-0-0-p-0-iso8859-1
++timesz.ttf -adobe-times-bold-i-normal--0-0-0-0-p-0-iso8859-1
++cursor.pcf.gz cursor
+diff -Nuarp nxlib-0.45.orig/maket1 nxlib-0.45/maket1
+--- nxlib-0.45.orig/maket1	2002-10-20 04:14:15.000000000 +0900
++++ nxlib-0.45/maket1	1970-01-01 09:00:00.000000000 +0900
+@@ -1 +0,0 @@
+-gcc t1.c -o t1 -L/usr/X11R6/lib -lX11
+diff -Nuarp nxlib-0.45.orig/maket2 nxlib-0.45/maket2
+--- nxlib-0.45.orig/maket2	2003-06-16 13:04:18.000000000 +0900
++++ nxlib-0.45/maket2	1970-01-01 09:00:00.000000000 +0900
+@@ -1 +0,0 @@
+-gcc testarc.c -o testarc -L/usr/X11R6/lib -lX11
+diff -Nuarp nxlib-0.45.orig/nxlib.h nxlib-0.45/nxlib.h
+--- nxlib-0.45.orig/nxlib.h	2003-08-11 06:43:25.000000000 +0900
++++ nxlib-0.45/nxlib.h	2009-02-04 20:24:04.000000000 +0900
+@@ -88,15 +88,9 @@ extern char **_nxfontlist;
+ extern int _nxfontcount;
+ FILE * _nxLoadFontDir(char *str);
+ void _nxSetDefaultFontDir(void);
+-
+-/* SetFontPath.c*/
+ void _nxSetFontDir(char **directories, int ndirs);
+-char** _nxGetFontDir(int *count);
+ void _nxFreeFontDir(char **list);
+ 
+-/* LoadFont.c*/
+-char *_nxFindX11Font(const char *in_font);
+-
+ /* ChProperty.c */
+ int _nxDelAllProperty(Window w);
+ 
+diff -Nuarp nxlib-0.45.orig/stub.c nxlib-0.45/stub.c
+--- nxlib-0.45.orig/stub.c	2003-09-12 10:49:30.000000000 +0900
++++ nxlib-0.45/stub.c	2009-03-17 14:51:50.000000000 +0900
+@@ -1,35 +1,36 @@
+ #include <stdio.h>
+ 
+-int XScreenResourceString() { printf("XScreenResourceString called\n"); return 0; } 
+-int XWMGeometry() { printf("XWMGeometry called\n"); return 0; } 
+-int XGetIconSizes() { printf("XGetIconSizes called\n"); return 0; } 
+-int XQueryBestCursor() { printf("XQueryBestCursor called\n"); return 0; } 
+-int XSetState() { printf("XSetState called\n"); return 0; } 
+-int XResourceManagerString() { printf("XResourceManagerString called\n"); return 0; } 
+-int XrmParseCommand() { printf("XrmParseCommand called\n"); return 0; } 
+-int XQueryKeymap() { printf("XQueryKeymap called\n"); return 0; } 
+-int XGetDefault() { printf("XGetDefault called\n"); return 0; } 
+-int XRecolorCursor() { printf("XRecolorCursor called\n"); return 0; } 
++int XScreenResourceString() { printf("XScreenResourceString called\n"); return 0; }
++// required for Xt
++//int XWMGeometry() { printf("XWMGeometry called\n"); return 0; }
++int XGetIconSizes() { printf("XGetIconSizes called\n"); return 0; }
++int XQueryBestCursor() { printf("XQueryBestCursor called\n"); return 0; }
++int XSetState() { printf("XSetState called\n"); return 0; }
++//int XResourceManagerString() { printf("XResourceManagerString called\n"); return 0; }
++int XrmParseCommand() { printf("XrmParseCommand called\n"); return 0; }
++int XQueryKeymap() { printf("XQueryKeymap called\n"); return 0; }
++int XGetDefault(void *d, char *program, char *option) { printf("XGetDefault %s %s\n", program, option); return 0; }
++int XRecolorCursor() { printf("XRecolorCursor called\n"); return 0; }
+ 
+ /* stubbed out calls, need implementations*/
+-int XCloseIM() { printf("XCloseIM called\n"); return 0; } 
+-int XListExtensions() { printf("XListExtensions called\n"); return 0; } 
++//int XCloseIM() { printf("XCloseIM called\n"); return 0; }
++int XListExtensions() { printf("XListExtensions called\n"); return 0; }
+ 
+ /* required for gtk+ 1.2.7*/
+-int XAutoRepeatOn() { printf("XAutoRepeatOn called\n"); return 0; } 
+-int XAutoRepeatOff() { printf("XAutoRepeatOff called\n"); return 0; } 
+-int XChangeActivePointerGrab() { printf("XChangeActivePointerGrab called\n"); return 0; } 
+-int XShrinkRegion() { printf("XShrinkRegion called\n"); return 0; } 
++int XAutoRepeatOn() { printf("XAutoRepeatOn called\n"); return 0; }
++int XAutoRepeatOff() { printf("XAutoRepeatOff called\n"); return 0; }
++int XChangeActivePointerGrab() { printf("XChangeActivePointerGrab called\n"); return 0; }
++int XShrinkRegion() { printf("XShrinkRegion called\n"); return 0; }
+ 
+ /* required for gtk+ 2.0.6*/
+-int XShapeCombineRectangles() { printf("XShapeCombineRectangles called\n"); return 0; } 
+-int XShapeGetRectangles() { printf("XShapeGetRectangles called\n"); return 0; } 
+-int XAddConnectionWatch() { printf("XAddConnectionWatch called\n"); return 0; } 
++int XShapeCombineRectangles() { printf("XShapeCombineRectangles called\n"); return 0; }
++int XShapeGetRectangles() { printf("XShapeGetRectangles called\n"); return 0; }
++int XAddConnectionWatch() { printf("XAddConnectionWatch called\n"); return 0; }
+ int XProcessInternalConnection() { printf("XProcessInternalConnection called\n"); return 0;}
+ int XCopyGC() { printf("XCopyGC called\n"); return 0;}
+-int XGetSubImage() { printf("XGetSubImage called\n"); return 0;}
++//int XGetSubImage() { printf("XGetSubImage called\n"); return 0;}
+ int XGetMotionEvents() { printf("XGetMotionEvents called\n"); return 0;}
+-int XQueryExtension() { printf("XQueryExtension called\n"); return 0; } 
++//int XQueryExtension() { printf("XQueryExtension called\n"); return 0; }
+ int XwcDrawString() { printf("XwcDrawString called\n"); return 0;}
+ 
+ int XwcTextExtents() { printf("XwcTextExtents called\n"); return 0;}
+@@ -37,114 +38,128 @@ int XwcTextEscapement() { printf("XwcTex
+ 
+ int XmbTextPropertyToTextList() { printf("XmbTextPropertyToTextList called\n"); return 0;}
+ int XmbTextEscapement() { printf("XmbTextEscapement called\n"); return 0;}
+-int XmbResetIC() { printf("XmbResetIC called\n"); return 0; } 
+-int XGetICValues() { printf("XGetICValues called\n"); return 0; } 
++int XmbResetIC() { printf("XmbResetIC called\n"); return 0; }
++int XGetICValues() { printf("XGetICValues called\n"); return 0; }
+ int XFontsOfFontSet() { printf("XFontsOfFontSet called\n"); return 0;}
+ int XBaseFontNameListOfFontSet() { printf("XBaseFontNameListOfFontSet called\n"); return 0;}
+-int XkbLibraryVersion() { printf("XkbLibraryVersion called\n"); return 0; } 
+-int XDisplayKeycodes() { printf("XDisplayKeycodes called\n"); return 0;}
+-int XGetKeyboardMapping() { printf("XGetKeyboardMapping called\n"); return 0;}
+-int XGetKeyboardControl() { printf("XGetKeyboardControl called\n"); return 0; } 
+-int XShmPutImage() { printf("XShmPutImage called\n"); return 0; } 
++int XkbLibraryVersion() { printf("XkbLibraryVersion called\n"); return 0; }
++//int XDisplayKeycodes() { printf("XDisplayKeycodes called\n"); return 0;}
++//int XGetKeyboardMapping() { printf("XGetKeyboardMapping called\n"); return 0;}
++int XGetKeyboardControl() { printf("XGetKeyboardControl called\n"); return 0; }
++int XShmPutImage() { printf("XShmPutImage called\n"); return 0; }
+ 
+ /* other required*/
+-int XAddExtension() { printf("XAddExtension called\n"); return 0; } 
++//int XAddExtension() { printf("XAddExtension called\n"); return 0; }
+ int XAllocColorCells() { printf("XAllocColorCells called\n"); return 0; }
+-int _XAllocScratch() { printf("_XAllocScratch called\n"); return 0; } 
+-int XAllowEvents() { printf("XAllowEvents called\n"); return 0; } 
++int _XAllocScratch() { printf("_XAllocScratch called\n"); return 0; }
++int XAllowEvents() { printf("XAllowEvents called\n"); return 0; }
+ 
+-int XCreateIC() { printf("XCreateIC called\n"); return 0; } 
+-int XDestroyIC() { printf("XDestroyIC called\n"); return 0; } 
+-int _XEatData() { printf("_XEatData called\n"); return 0; } 
+-int XESetCloseDisplay() { printf("XESetCloseDisplay called\n"); return 0; } 
+-int XESetCopyGC() { printf("XESetCopyGC called\n"); return 0; } 
+-int XESetCreateFont() { printf("XESetCreateFont called\n"); return 0; } 
+-int XESetCreateGC() { printf("XESetCreateGC called\n"); return 0; } 
+-int XESetError() { printf("XESetError called\n"); return 0; } 
+-int XESetErrorString() { printf("XESetErrorString called\n"); return 0; } 
+-int XESetEventToWire() { printf("XESetEventToWire called\n"); return 0; } 
+-int XESetFlushGC() { printf("XESetFlushGC called\n"); return 0; } 
+-int XESetFreeFont() { printf("XESetFreeFont called\n"); return 0; } 
+-int XESetFreeGC() { printf("XESetFreeGC called\n"); return 0; } 
+-int XESetWireToEvent() { printf("XESetWireToEvent called\n"); return 0; } 
+-int XExtentsOfFontSet() { printf("XExtentsOfFontSet called\n"); return 0; } 
++//int XCreateIC() { printf("XCreateIC called\n"); return 0; }
++int XDestroyIC() { printf("XDestroyIC called\n"); return 0; }
++int _XEatData() { printf("_XEatData called\n"); return 0; }
++//int XESetCloseDisplay() { printf("XESetCloseDisplay called\n"); return 0; }
++int XESetCopyGC() { printf("XESetCopyGC called\n"); return 0; }
++int XESetCreateFont() { printf("XESetCreateFont called\n"); return 0; }
++int XESetCreateGC() { printf("XESetCreateGC called\n"); return 0; }
++int XESetError() { printf("XESetError called\n"); return 0; }
++int XESetErrorString() { printf("XESetErrorString called\n"); return 0; }
++int XESetEventToWire() { printf("XESetEventToWire called\n"); return 0; }
++int XESetFlushGC() { printf("XESetFlushGC called\n"); return 0; }
++int XESetFreeFont() { printf("XESetFreeFont called\n"); return 0; }
++int XESetFreeGC() { printf("XESetFreeGC called\n"); return 0; }
++int XESetWireToEvent() { printf("XESetWireToEvent called\n"); return 0; }
++//int XExtentsOfFontSet() { printf("XExtentsOfFontSet called\n"); return 0; }
+ int XFetchName() { printf("XFetchName called\n"); return 0; }
+-int _XFlush() { printf("_XFlush called\n"); return 0; } 
+-int _XFlushGCCache() { printf("_XFlushGCCache called\n"); return 0; } 
+-int XFreeFontSet() { printf("XFreeFontSet called\n"); return 0; } 
+-int XFreeStringList() { printf("XFreeStringList called\n"); return 0; } 
+-int _XGetBitsPerPixel() { printf("_XGetBitsPerPixel called\n"); return 0; } 
+-int XGetGCValues() { printf("XGetGCVAlues called\n"); return 0; }
+-int XGetErrorDatabaseText() { printf("XGetErrorDatabaseText called\n"); return 0; } 
+-int XGetErrorText() { printf("XGetErrorText called\n"); return 0; } 
+-int XGetIMValues() { printf("XGetIMValues called\n"); return 0; } 
+-int _XGetScanlinePad() { printf("_XGetScanlinePad called\n"); return 0; } 
+-
+-int XGetWMHints() { printf("XGetWMHints called\n"); return 0; } 
+-int XGetWMNormalHints() { printf("XGetWMNormalHints called\n"); return 0; } 
+-int XGrabKeyboard() { printf("XGrabKeyboard called\n"); return 0; } 
+-int XGrabPointer() { printf("XGrabPointer called\n"); return 0; } 
+-int XGrabServer() { printf("XGrabServer called\n"); return 0; } 
+-int XIconifyWindow() { printf("XIconifyWindow called\n"); return 0; } 
+-int XInitExtension() { printf("XInitExtension called\n"); return 0; } 
+-int _XInitImageFuncPtrs() { printf("_XInitImageFuncPtrs called\n"); return 0; } 
+-int XKillClient() { printf("XKillClient called\n"); return 0; } 
+-int XMaxRequestSize() { printf("XMaxRequestSize called\n"); return 0; } 
+-int XmbDrawImageString() { printf("XmbDrawImageString called\n"); return 0; } 
+-int XmbDrawString() { printf("XmbDrawString called\n"); return 0; } 
+-int XmbLookupString() { printf("XmbLookupString called\n"); return 0; } 
+-int XmbTextExtents() { printf("XmbTextExtents called\n"); return 0; } 
+-
+-int XOpenIM() { printf("XOpenIM called\n"); return 0; } 
+-int XParseGeometry() { printf("XParseGeometry called\n"); return 0; } 
+-int _XRead() { printf("_XRead called\n"); return 0; } 
+-int _XReadPad() { printf("_XReadPad called\n"); return 0; } 
+-int XRefreshKeyboardMapping() { printf("XRefreshKeyboardMapping called\n"); return 0; } 
+-int XRegisterIMInstantiateCallback() { printf("XRegisterIMInstantiateCallback called\n"); return 0; } 
+-int _XReply() { printf("_XReply called\n"); return 0; } 
+-int XRestackWindows() { printf("XRestackWindows called\n"); return 0; } 
+-int _XSend() { printf("_XSend called\n"); return 0; } 
+-int XSendEvent() { printf("XSendEvent called\n"); return 0; } 
+-int XSetArcMode() { printf("XSetArcMode called\n"); return 0; } 
+-int XSetCloseDownMode() { printf("XSetCloseDownMode called\n"); return 0; } 
+-int XSetErrorHandler() { printf("XSetErrorHandler called\n"); return 0; } 
+-int XSetFillRule() { printf("XSetFillRule called\n"); return 0; } 
+-int XSetICFocus() { printf("XSetICFocus called\n"); return 0; } 
+-int XSetICValues() { printf("XSetICValues called\n"); return 0; } 
+-int XSetIMValues() { printf("XSetIMValues called\n"); return 0; } 
+-int _XSetLastRequestRead() { printf("_XSetLastRequestRead called\n"); return 0; } 
+-int XSetLocaleModifiers() { printf("XSetLocaleModifiers called\n"); return 0; } 
+-
+-int XSetStandardProperties() { printf("XSetStandardProperties called\n"); return 0; } 
+-int XSetNormalHints() { printf("XSetNormalHints called\n"); return 0; }
+-int XSetTransientForHint() { printf("XSetTransientForHint called\n"); return 0; } 
+-int XSetWMProtocols() { printf("XSetWMProtocols called\n"); return 0; } 
+-int XSupportsLocale() { printf("XSupportsLocale called\n"); return 1; } 
+-int XSynchronize() { printf("XSynchronize called\n"); return 0; } 
+-int XUngrabKeyboard() { printf("XUngrabKeyboard called\n"); return 0; } 
+-int XUngrabPointer() { printf("XUngrabPointer called\n"); return 0; } 
+-int XUngrabServer() { printf("XUngrabServer called\n"); return 0; } 
+-int XUnregisterIMInstantiateCallback() { printf("XUnregisterIMInstantiateCallback called\n"); return 0; } 
+-int XUnsetICFocus() { printf("XUnsetICFocus called\n"); return 0; } 
+-int XVaCreateNestedList() { printf("XVaCreateNestedList called\n"); return 0; } 
+-int _XVIDtoVisual() { printf("_XVIDtoVisual called\n"); return 0; } 
+-int XWarpPointer() { printf("XWarpPointer called\n"); return 0; } 
+-int XInstallColormap() { printf("XInstallColormap called\n"); return 0; } 
+-int XReconfigureWMWindow() { printf("XReconfigureWMWindow called\n"); return 0; } 
+-int XSetWindowColormap() { printf("XSetWindowColormap called\n"); return 0; } 
+-int XUninstallColormap() { printf("XUninstallColormap called\n"); return 0; } 
+-int XConfigureWindow() { printf("XConfigureWindow called\n"); return 0; } 
+-int XForceScreenSaver() { printf("XForceScreenSaver called\n"); return 0; } 
+-int XFreeModifiermap() { printf("XFreeModifiermap called\n"); return 0; } 
+-int XGetInputFocus() { printf("XGetInputFocus called\n"); return 0; } 
+-int XGetModifierMapping() { printf("XGetModifierMapping called\n"); return 0; } 
+-int XGetWMColormapWindows() { printf("XGetWMColormapWindows called\n"); return 0; } 
+-int XKeysymToString() { printf("XKeysymToString called\n"); return 0; } 
+-int XListHosts() { printf("XListHosts called\n"); return 0; } 
+-int XSetClassHint() { printf("XSetClassHint called\n"); return 0; } 
+-int XSetCommand() { printf("XSetCommand called\n"); return 0; } 
+-int XSetWindowBorderPixmap() { printf("XSetWindowBorderPixmap called\n"); return 0; } 
+-int XSetWMClientMachine() { printf("XSetWMClientMachine called\n"); return 0; } 
+-int XSetWMColormapWindows() { printf("XSetWMColormapWindows called\n"); return 0; } 
++int _XFlush() { printf("_XFlush called\n"); return 0; }
++int _XFlushGCCache() { printf("_XFlushGCCache called\n"); return 0; }
++int XFreeFontSet() { printf("XFreeFontSet called\n"); return 0; }
++//int XFreeStringList() { printf("XFreeStringList called\n"); return 0; }
++int _XGetBitsPerPixel() { printf("_XGetBitsPerPixel called\n"); return 0; }
++//int XGetGCValues() { printf("XGetGCVAlues called\n"); return 0; }
++int XGetErrorDatabaseText() { printf("XGetErrorDatabaseText called\n"); return 0; }
++int XGetErrorText() { printf("XGetErrorText called\n"); return 0; }
++int XGetIMValues() { printf("XGetIMValues called\n"); return 0; }
++int _XGetScanlinePad() { printf("_XGetScanlinePad called\n"); return 0; }
++
++//int XGetWMHints() { printf("XGetWMHints called\n"); return 0; }
++int XGetWMNormalHints() { printf("XGetWMNormalHints called\n"); return 0; }
++int XGrabKeyboard() { printf("XGrabKeyboard called\n"); return 0; }
++int XGrabPointer() { printf("XGrabPointer called\n"); return 0; }
++int XGrabServer() { printf("XGrabServer called\n"); return 0; }
++int XIconifyWindow() { printf("XIconifyWindow called\n"); return 0; }
++//int XInitExtension() { printf("XInitExtension called\n"); return 0; }
++int _XInitImageFuncPtrs() { printf("_XInitImageFuncPtrs called\n"); return 0; }
++int XKillClient() { printf("XKillClient called\n"); return 0; }
++int XMaxRequestSize() { printf("XMaxRequestSize called\n"); return 0; }
++int XmbDrawImageString() { printf("XmbDrawImageString called\n"); return 0; }
++int XmbDrawString() { printf("XmbDrawString called\n"); return 0; }
++//int XmbLookupString() { printf("XmbLookupString called\n"); return 0; }
++int XmbTextExtents() { printf("XmbTextExtents called\n"); return 0; }
++
++//int XOpenIM() { printf("XOpenIM called\n"); return 0; }
++int XParseGeometry() { printf("XParseGeometry called\n"); return 0; }
++int _XRead() { printf("_XRead called\n"); return 0; }
++int _XReadPad() { printf("_XReadPad called\n"); return 0; }
++int XRefreshKeyboardMapping() { printf("XRefreshKeyboardMapping called\n"); return 0; }
++int XRegisterIMInstantiateCallback() { printf("XRegisterIMInstantiateCallback called\n"); return 0; }
++int _XReply() { printf("_XReply called\n"); return 0; }
++int XRestackWindows() { printf("XRestackWindows called\n"); return 0; }
++int _XSend() { printf("_XSend called\n"); return 0; }
++int XSendEvent() { printf("XSendEvent called\n"); return 0; }
++int XSetArcMode() { printf("XSetArcMode called\n"); return 0; }
++int XSetCloseDownMode() { printf("XSetCloseDownMode called\n"); return 0; }
++//int XSetErrorHandler() { printf("XSetErrorHandler called\n"); return 0; }
++int XSetFillRule() { printf("XSetFillRule called\n"); return 0; }
++int XSetICFocus() { printf("XSetICFocus called\n"); return 0; }
++int XSetICValues() { printf("XSetICValues called\n"); return 0; }
++int XSetIMValues() { printf("XSetIMValues called\n"); return 0; }
++int _XSetLastRequestRead() { printf("_XSetLastRequestRead called\n"); return 0; }
++//int XSetLocaleModifiers() { printf("XSetLocaleModifiers called\n"); return 0; }
++
++int XSetStandardProperties() { printf("XSetStandardProperties called\n"); return 0; }
++//int XSetNormalHints() { printf("XSetNormalHints called\n"); return 0; }
++//int XSetTransientForHint() { printf("XSetTransientForHint called\n"); return 0; }
++//int XSetWMProtocols() { printf("XSetWMProtocols called\n"); return 0; }
++int XSupportsLocale() { printf("XSupportsLocale called\n"); return 1; }
++int XSynchronize() { printf("XSynchronize called\n"); return 0; }
++int XUngrabKeyboard() { printf("XUngrabKeyboard called\n"); return 0; }
++int XUngrabPointer() { printf("XUngrabPointer called\n"); return 0; }
++int XUngrabServer() { printf("XUngrabServer called\n"); return 0; }
++int XUnregisterIMInstantiateCallback() { printf("XUnregisterIMInstantiateCallback called\n"); return 0; }
++int XUnsetICFocus() { printf("XUnsetICFocus called\n"); return 0; }
++int XVaCreateNestedList() { printf("XVaCreateNestedList called\n"); return 0; }
++int _XVIDtoVisual() { printf("_XVIDtoVisual called\n"); return 0; }
++int XWarpPointer() { printf("XWarpPointer called\n"); return 0; }
++int XInstallColormap() { printf("XInstallColormap called\n"); return 0; }
++int XReconfigureWMWindow() { printf("XReconfigureWMWindow called\n"); return 0; }
++int XSetWindowColormap() { printf("XSetWindowColormap called\n"); return 0; }
++int XUninstallColormap() { printf("XUninstallColormap called\n"); return 0; }
++//int XConfigureWindow() { printf("XConfigureWindow called\n"); return 0; }
++int XForceScreenSaver() { printf("XForceScreenSaver called\n"); return 0; }
++//int XFreeModifiermap() { printf("XFreeModifiermap called\n"); return 0; }
++//int XGetInputFocus() { printf("XGetInputFocus called\n"); return 0; }
++//int XGetModifierMapping() { printf("XGetModifierMapping called\n"); return 0; }
++int XGetWMColormapWindows() { printf("XGetWMColormapWindows called\n"); return 0; }
++//int XKeysymToString() { printf("XKeysymToString called\n"); return 0; }
++int XListHosts() { printf("XListHosts called\n"); return 0; }
++//int XSetClassHint() { printf("XSetClassHint called\n"); return 0; }
++int XSetCommand() { printf("XSetCommand called\n"); return 0; }
++int XSetWindowBorderPixmap() { printf("XSetWindowBorderPixmap called\n"); return 0; }
++//int XSetWMClientMachine() { printf("XSetWMClientMachine called\n"); return 0; }
++int XSetWMColormapWindows() { printf("XSetWMColormapWindows called\n"); return 0; }
+ int XStoreColor() { printf("XStoreColor called\n"); return 0; }
+ int XStoreColors() { printf("XStoreColors called\n"); return 0; }
++
++// required for xine
++int XResetScreenSaver() { printf("XResetScreenSaver called\n"); return 0; }
++// required for wine
++int XGetScreenSaver() { printf("XGetScreenSaver called\n"); return 0; }
++int XSetScreenSaver() { printf("XSetScreenSaver called\n"); return 0; }
++// required for gmplayer
++int _XDefaultError(/*Display *dpy, XErrorEvent *event*/)
++{
++	//if (_XPrintDefaultError(dpy, event, stderr) == 0) return 0;
++	//exit(1);
++	printf("_XDefaultError called\n");
++	return 0;
++}
+diff -Nuarp nxlib-0.45.orig/t1.c nxlib-0.45/t1.c
+--- nxlib-0.45.orig/t1.c	2002-10-20 06:03:34.000000000 +0900
++++ nxlib-0.45/t1.c	1970-01-01 09:00:00.000000000 +0900
+@@ -1,61 +0,0 @@
+-#include <X11/X.h>
+-#include <X11/Xlib.h>
+-
+-#define FONT "-adobe-helvetica-medium-r-normal--11-80-100-100-p-56-iso8859-1" /*helvR08*/
+-void
+-printc(char *str, XCharStruct *cs)
+-{
+-	printf("%s\n", str);
+-	if (cs->rbearing - cs->lbearing > cs->width) printf("WIDTH\n");
+-	printf("  lbearing %d\n", cs->lbearing);
+-	printf("  rbearing %d\n", cs->rbearing);
+-	printf("  width %d\n", cs->width);
+-	printf("  ascent %d\n", cs->ascent);
+-	printf("  descent %d\n", cs->descent);
+-	printf("  attributes %d\n", cs->attributes);
+-}
+-
+-int
+-main(int ac, char **av)
+-{
+-	Display *d;
+-	XFontStruct *fs;
+-	char *font;
+-
+-	if (ac > 1)
+-		font = av[1];
+-	else font = FONT;
+-	d = XOpenDisplay(NULL);
+-	if (!d)
+-		exit(1);
+-	fs = XLoadQueryFont(d, font);
+-	if (fs) {
+-		int i, size;
+-
+-		printf("font %s\n", font);
+-		printf("fid 0x%x\n", fs->fid);
+-		printf("direction %d\n", fs->direction);
+-		printf("min_byte2 %d\n", fs->min_char_or_byte2);
+-		printf("max_byte2 %d\n", fs->max_char_or_byte2);
+-		printf("min_byte1 %d\n", fs->min_byte1);
+-		printf("max_byte1 %d\n", fs->max_byte1);
+-		printf("all_exist %d\n", fs->all_chars_exist);
+-		printf("default_char %d\n", fs->default_char);
+-		printf("n_props %d\n", fs->n_properties);
+-		printf("ascent %d\n", fs->ascent);
+-		printf("descent %d\n", fs->descent);
+-		printc("min bounds", &fs->min_bounds);
+-		printc("max bounds", &fs->max_bounds);
+-		size = (fs->max_byte1 - fs->min_byte1 + 1) *
+-			(fs->max_char_or_byte2 - fs->min_char_or_byte2 + 1);
+-		printf("size %d\n", size);
+-		for (i=0; i<size; ++i) {
+-			char buf[32];
+-			if (!fs->per_char)
+-				continue;
+-			sprintf(buf, "char %d (%d):", i, i+fs->min_char_or_byte2);
+-			printc(buf, &fs->per_char[i]);
+-		}
+-	}
+-	return 0;
+-}
+diff -Nuarp nxlib-0.45.orig/testarc.c nxlib-0.45/testarc.c
+--- nxlib-0.45.orig/testarc.c	2003-06-16 13:56:02.000000000 +0900
++++ nxlib-0.45/testarc.c	1970-01-01 09:00:00.000000000 +0900
+@@ -1,68 +0,0 @@
+-#include <X11/X.h>
+-#include <X11/Xlib.h>
+-/*
+- * Arc drawing demo for X11
+- */
+-
+-#define GREEN	getcolor("green")
+-#define BLACK	BlackPixel(d, 0)
+-
+-Display *d;
+-
+-static unsigned long
+-getcolor(char *name)
+-{
+-	XColor xc, xc2;
+-
+-	XAllocNamedColor(d, DefaultColormap(d, 0), name, &xc, &xc2);
+-	return xc.pixel;
+-}
+-
+-static void
+-draw(XEvent *ep)
+-{
+-	Window wid = ((XExposeEvent *)ep)->window;
+-	GC gc = XCreateGC(d, wid, 0, NULL);
+-	int x = 40;
+-	int y = 40;
+-	int w, h;
+-
+-	w = h = 8;
+-	XSetForeground(d, gc, BLACK);
+-	XDrawRectangle(d, wid, gc, x, y, w-1, h-1);
+-	XSetForeground(d, gc, GREEN);
+-	//XDrawArc(d, wid, gc, x, y, w-1, h-1, 0, 360*64);
+-	XFillArc(d, wid, gc, x, y, w, h, 0, 360*64);
+-
+-	XSetForeground(d, gc, BLACK);
+-	XDrawPoint(d, wid, gc, x+w/2, y+h/2);
+-
+-	XFreeGC(d, gc);
+-}
+-
+-int
+-main(int ac, char **av)
+-{
+-	XEvent ev;
+-	Window wid;
+-
+-	if ((d = XOpenDisplay(NULL)) == NULL)
+-		exit(1);
+-
+-	wid = XCreateSimpleWindow(d, RootWindow(d, 0),
+-		0, 0, 100, 100,
+-		0, BLACK, WhitePixel(d, 0));
+-
+-	XSelectInput(d, wid, ExposureMask);
+-	XMapWindow(d, wid);
+-
+-	while (1) {
+-		XNextEvent(d, &ev);
+-
+-		if (ev.type == Expose)
+-			draw(&ev);
+-	}
+-
+-	XCloseDisplay(d);
+-	return 0;
+-}
+diff -Nuarp nxlib-0.45.orig/xx nxlib-0.45/xx
+--- nxlib-0.45.orig/xx	2003-06-16 13:02:41.000000000 +0900
++++ nxlib-0.45/xx	1970-01-01 09:00:00.000000000 +0900
+@@ -1,2 +0,0 @@
+-
+-X & twm & ./testarc & xmag & 

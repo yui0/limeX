@@ -2,7 +2,7 @@
  * Copyright (c) 1999, 2002 Greg Haerr <greg@censoft.com>
  *
  * Nano-X Core Protocol Client Request Handling Routines
- */
+ */ 
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -85,7 +85,7 @@ void
 nxWriteSocket(char *buf, int todo)
 {
 	int written;
-	ACCESS_PER_THREAD_DATA();
+        ACCESS_PER_THREAD_DATA();
 
 	do {
 		written = write(nxSocket, buf, todo);
@@ -104,21 +104,18 @@ nxWriteSocket(char *buf, int todo)
 void
 nxFlushReq(long newsize, int reply_needed)
 {
-	ACCESS_PER_THREAD_DATA();
+        ACCESS_PER_THREAD_DATA();
 	LOCK(&nxGlobalLock);
 
 	/* handle one-time initialization case*/
-	if (reqbuf.buffer == NULL) {
+	if(reqbuf.buffer == NULL) {
 		nxAllocReqbuffer(newsize);
 		UNLOCK(&nxGlobalLock);
 		return;
 	}
 
-	// for Xt lib by Yuichiro Nakada
-	if (nxSocket<0) nxSocket = GrOpen();
-
 	/* flush buffer if required*/
-	if (reqbuf.bufptr > reqbuf.buffer) {
+	if(reqbuf.bufptr > reqbuf.buffer) {
 		char *	buf = reqbuf.buffer;
 		int	todo = reqbuf.bufptr - reqbuf.buffer;
 
@@ -160,7 +157,7 @@ nxFlushReq(long newsize, int reply_needed)
 			req.size = todo;
 			req.reply = reply_needed;
 
-			nxWriteSocket((char *)&req, sizeof(req));
+			nxWriteSocket((char *)&req,sizeof(req));
 
 			if ( reply_needed )
 				while ( read(nxSocket, &c, 1) != 1 )

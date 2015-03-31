@@ -1,16 +1,15 @@
 /*
- * Copyright (c) 1999, 2004 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2004, 2010 Greg Haerr <greg@censoft.com>
  *
  * Microwindows Screen Driver for RTEMS (uses Microframebuffer api)
  *
  * Portions used from Ben Pfaff's BOGL <pfaffben@debian.org>
- * 
- * Note: modify select_fb_driver() to add new framebuffer subdrivers
  */
 #define _GNU_SOURCE 1
 #include <assert.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -21,36 +20,25 @@
 #include "genfont.h"
 #include "genmem.h"
 #include "fb.h"
-#include <rtems/mw_fb.h>
-
-#ifndef FB_TYPE_VGA_PLANES
-#define FB_TYPE_VGA_PLANES 4
-#endif
+#include <rtems/fb.h>
 
 static PSD  fb_open(PSD psd);
 static void fb_close(PSD psd);
 static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
-static void gen_getscreeninfo(PSD psd,PMWSCREENINFO psi);
 
 SCREENDEVICE	scrdev = {
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL,
+	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0,
+	gen_fonts,
 	fb_open,
 	fb_close,
-	gen_getscreeninfo,
 	fb_setpalette,
-	NULL,			/* DrawPixel subdriver*/
-	NULL,			/* ReadPixel subdriver*/
-	NULL,			/* DrawHorzLine subdriver*/
-	NULL,			/* DrawVertLine subdriver*/
-	NULL,			/* FillRect subdriver*/
-	gen_fonts,
-	NULL,			/* Blit subdriver*/
-	NULL,			/* PreSelect*/
-	NULL,			/* DrawArea subdriver*/
-	NULL,			/* SetIOPermissions*/
+	gen_getscreeninfo,
 	gen_allocatememgc,
-	fb_mapmemgc,
-	gen_freememgc
+	gen_mapmemgc,
+	gen_freememgc,
+	gen_setportrait,
+	NULL,				/* Update*/
+	NULL				/* PreSelect*/
 };
 
 /* static variables*/
@@ -62,12 +50,8 @@ static short saved_blue[16];
 
 /* local functions*/
 static void	set_directcolor_palette(PSD psd);
-#if 0
-void ioctl_getpalette(int start, int len, short *red, short *green,
-		      short *blue);
-void ioctl_setpalette(int start, int len, short *red, short *green,
-		      short *blue);
-#endif
+//void ioctl_getpalette(int start, int len, short *red, short *green, short *blue);
+//void ioctl_setpalette(int start, int len, short *red, short *green, short *blue);
 
 /* init framebuffer*/
 static PSD
@@ -77,10 +61,11 @@ fb_open(PSD psd)
 	int	type, visual;
 	int	tty;
 	PSUBDRIVER subdriver;
-	struct fb_screeninfo fb_info;
+	struct fb_var_screeninfo fb_var;
+	struct fb_fix_screeninfo fb_fix;
 
 	assert(status < 2);
-  
+
 	/* locate and open framebuffer, get info*/
 	if(!(env = getenv("FRAMEBUFFER")))
 		env = "/dev/fb0";
@@ -89,38 +74,29 @@ fb_open(PSD psd)
 		EPRINTF("Error opening %s: %m\n", env);
 		return NULL;
 	}
-   
-	if( ufb_get_screen_info( fb, &fb_info ) )
-	{
-	        EPRINTF("Error getting screen info\n" );
+
+	if (ioctl(fb, FBIOGET_FSCREENINFO, &fb_fix) || ioctl(fb, FBIOGET_VSCREENINFO, &fb_var )) {
+		EPRINTF("Error getting screen info\n" );
 		return NULL;
 	}
 	/* setup screen device from framebuffer info*/
-	type = fb_info.type;
-	visual = fb_info.visual;
+	type = fb_fix.type;
+	visual = fb_fix.visual;
 
-	psd->xres = psd->xvirtres = fb_info.xres;
-	psd->yres = psd->yvirtres = fb_info.yres;
+	psd->portrait = MWPORTRAIT_NONE;
+	psd->xres = psd->xvirtres = fb_var.xres;
+	psd->yres = psd->yvirtres = fb_var.yres;
 
 	/* set planes from fb type*/
-	if (type == FB_TYPE_VGA_PLANES)
-		psd->planes = 4;
-	else if (type == FB_TYPE_PACKED_PIXELS)
+	if (type == FB_TYPE_PACKED_PIXELS)
 		psd->planes = 1;
 	else psd->planes = 0;	/* force error later*/
 
-	psd->bpp = fb_info.bits_per_pixel;
+	psd->bpp = fb_var.bits_per_pixel;
 	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
-
-	/* set linelen to byte length, possibly converted later*/
-	psd->linelen = fb_info.line_length;
-	psd->size = 0;		/* force subdriver init of size*/
-
-#if HAVEBLIT
-	psd->flags = PSF_SCREEN | PSF_HAVEBLIT;
-#else
+	psd->pitch = fb_fix.line_length;
+	psd->size = psd->yres * psd->pitch;
 	psd->flags = PSF_SCREEN;
-#endif
 
 	/* set pixel format*/
 	if(visual == FB_VISUAL_TRUECOLOR || visual == FB_VISUAL_DIRECTCOLOR) {
@@ -135,54 +111,45 @@ fb_open(PSD psd)
 			psd->pixtype = MWPF_TRUECOLOR888;
 			break;
 		case 32:
-			psd->pixtype = MWPF_TRUECOLOR0888;
+#if MWPIXEL_FORMAT == MWPF_TRUECOLORABGR
+			psd->pixtype = MWPF_TRUECOLOR8888;
+#else
+			psd->pixtype = MWPF_TRUECOLORABGR;
+#endif
 			break;
 		default:
-			EPRINTF(
-			"Unsupported %d color (%d bpp) truecolor framebuffer\n",
-				psd->ncolors, psd->bpp);
+			EPRINTF("Unsupported %d color (%d bpp) truecolor framebuffer\n", psd->ncolors, psd->bpp);
 			goto fail;
 		}
 	} else psd->pixtype = MWPF_PALETTE;
 
-	psd->size = fb_info.smem_len;
-
-	/* maps FB memory to user space */
-	if( ufb_mmap_to_user_space( fb, &psd->addr, 
-                              ( void *)fb_info.smem_start, fb_info.smem_len ) )
-	{
-	        EPRINTF("Error mapping FB memory to user space\n" );
-		goto fail;
-	}
-
-	/*DPRINTF("%dx%dx%d linelen %d type %d visual %d bpp %d\n", psd->xres,
-	 	psd->yres, psd->ncolors, psd->linelen, type, visual,
-		psd->bpp);*/
+	/* set standard data format from bpp and pixtype*/
+	psd->data_format = set_data_format(psd);
 
 	/* select a framebuffer subdriver based on planes and bpp*/
 	subdriver = select_fb_subdriver(psd);
 	if (!subdriver) {
-		EPRINTF("No driver for screen type %d visual %d bpp %d\n",
-			type, visual, psd->bpp);
+		EPRINTF("No driver for screen type %d visual %d bpp %d\n", type, visual, psd->bpp);
 		goto fail;
 	}
 
-	if( ufb_enter_graphics( fb, 0 ) )
-	{
-	        EPRINTF("Error entering graphics\n");
+	psd->size = (psd->size + getpagesize () - 1) / getpagesize () * getpagesize ();
+	psd->addr = fb_fix.smem_start;		/* maps FB memory to user space */
+
+	/*if( ufb_mmap_to_user_space( fb, &psd->addr, (void *)fb_info.smem_start, fb_info.smem_len)) {
+		EPRINTF("Error mapping FB memory to user space\n" );
+		goto fail;
+	}*/
+
+	/*exec.func_no = FB_FUNC_ENTER_GRAPHICS;
+    exec.param = 0;
+	if( ioctl(fb, FB_EXEC_FUNCTION , ( void *)&exec)) {
+		EPRINTF("Error entering graphics\n");
 		return NULL;
-	}
+	}*/
 
-	/*
-	 * set and initialize subdriver into screen driver
-	 * psd->size is calculated by subdriver init
-	 */
-	if(!set_subdriver(psd, subdriver, TRUE )) 
-	{
-		EPRINTF("Driver initialize failed type %d visual %d bpp %d\n",
-			type, visual, psd->bpp);
-		goto fail;
-	}
+	/* set subdriver into screen driver*/
+	set_subdriver(psd, subdriver);
 
 	/* save original palette*/
 	ioctl_getpalette(0, 16, saved_red, saved_green, saved_blue);
@@ -212,11 +179,14 @@ fb_close(PSD psd)
 	ioctl_setpalette(0, 16, saved_red, saved_green, saved_blue);
 
 	/* unmaps memory from user's space */
-	ufb_unmmap_from_user_space( fb, psd->addr );
+	/* this function previously returned 0
+	I will see later what I can do about it
+	ufb_unmmap_from_user_space( fb, psd->addr );*/
 
 	/* restore TEXT mode */
-	ufb_exit_graphics( fb );
-  
+	/*exec.func_no = FB_FUNC_EXIT_GRAPHICS;
+	ioctl( fb, FB_EXEC_FUNCTION, &exec);*/
+
 	/* close tty and framebuffer*/
 	close( fb );
 }
@@ -287,7 +257,7 @@ ioctl_getpalette(int start, int len, short *red, short *green, short *blue)
 	cmap.blue = blue;
 	cmap.transp = NULL;
 
-	ufb_get_palette( fb, &cmap );
+	ioctl( fb, FBIOGETCMAP, &cmap );
 }
 
 /* set framebuffer palette*/
@@ -303,33 +273,7 @@ ioctl_setpalette(int start, int len, short *red, short *green, short *blue)
 	cmap.blue = blue;
 	cmap.transp = NULL;
 
-	ufb_set_palette( fb, &cmap );
-}
-
-static void
-gen_getscreeninfo(PSD psd,PMWSCREENINFO psi)
-{
-	psi->rows = psd->yvirtres;
-	psi->cols = psd->xvirtres;
-	psi->planes = psd->planes;
-	psi->bpp = psd->bpp;
-	psi->ncolors = psd->ncolors;
-	psi->pixtype = psd->pixtype;
-	psi->fonts = NUMBER_FONTS;
-
-	if(psd->yvirtres > 480) {
-		/* SVGA 800x600*/
-		psi->xdpcm = 33;	/* assumes screen width of 24 cm*/
-		psi->ydpcm = 33;	/* assumes screen height of 18 cm*/
-	} else if(psd->yvirtres > 350) {
-		/* VGA 640x480*/
-		psi->xdpcm = 27;	/* assumes screen width of 24 cm*/
-		psi->ydpcm = 27;	/* assumes screen height of 18 cm*/
-	} else {
-		/* EGA 640x350*/
-		psi->xdpcm = 27;	/* assumes screen width of 24 cm*/
-		psi->ydpcm = 19;	/* assumes screen height of 18 cm*/
-	}
+	ioctl( fb, FBIOPUTCMAP, &cmap );
 }
 
 /* experimental palette animation*/

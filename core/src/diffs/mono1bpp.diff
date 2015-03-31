@@ -1,0 +1,734 @@
+diff --git a/src/ChangeLog b/src/ChangeLog
+index efbf972..9cfdf27 100644
+--- a/src/ChangeLog
++++ b/src/ChangeLog
+@@ -1,4 +1,14 @@
+-	* cleaned up MWIMAGEINFO, added 1bpp options to GdCreatePixmap
++8 Jan 2011
++	* added MWIF_MONOWORDLSB blit to fblin1 for PCF/core font drawing
++	* added MWIF_MONOBYTELSB blit to fblin1 for T1LIB font non-aliased drawing
++	* freetype/t1lib driver auto downgrade to non-antialias if blend blitter not present
++	* added fast 1bpp raster ops from Dan Bloomberg's leptonica library (www.leptonica.com)
++		all raster ops now supported
++	* added support for 1bpp (pseudo-palette) pixmaps (use MWIF_PAL1), demos/nanox/monobitmap.c
++		must set fg and possibly bg color and usebg when calling GrCopyArea with
++			palette (1,2,4,8 bpp) pixmap to truecolor (higher bpp) pixmap
++			for 1bpp pixmap conversion, fg/bg color used is bit 0 of MWCOLORVAL
++	* cleaned up MWIMAGEINFO, added MWIF_PAL1 1bpp option to GdCreatePixmap
+ 31 Dec 2010
+ 	* cleanup jpeg loader, forces pal8 in palette mode else pal8 or RGB888 from image
+ 	* remove sscanf from xpm and pnm loaders
+diff --git a/src/FIXME b/src/FIXME
+index 3fdb1a5..919cd50 100644
+--- a/src/FIXME
++++ b/src/FIXME
+@@ -1,10 +1,17 @@
+ consider removing GdStretchImage, test convblits available in different pixtypes
+ 	make sure that similar bpp's are supported
+ 
++merge GdFindConvBlit and GdFindFrameBlit
++consider rasterops for 2-32bpp pixmaps
++replace 1bpp non-usebg blit with PAINT (SRC|DST)
++	won't work if src image isn't padded to DWORD (FT2 and T1 are not)
++fblin1/rev.c blit (GdRasterOps) won't work in portrait modes
++	consider rotating pixmaps to hw format, or rotation conversion (slow)
++	rotated pixmaps may need back-rotation or consideration when convblit'd to higher bpp
++
+ how to handle child windows in buffered window scheme
+ resize buffered pixmap rather than erase to background color
+ allow bgpixmaps to work with buffered windows for pixmap init
+-fix chess blink by using buffered windows
+ 
+ GdBlit Frame->Pixmap fails, needs src rotate (and test)
+ GdStretchBlit Frame->Frame and Frame->Pixmap fails, needs src/dst rotate (and test)
+@@ -24,7 +31,8 @@ background pixmap clear issues for pixmaps w/alpha using src_over: stop blink by
+ 	may blink from extra clear background on non-compositing pixmaps
+ stipple needs to use convblit
+ need 1bpp GrNewPixmapEx options
+-16bpp convblits are endian-specific
++16bpp convblits are endian-specific (LE)
++MWIMAGE (short) words and blits are endian-specific (LE)
+ 
+ nxterm.sh buggy when overlapped blit
+ rewrite GdStretchImage to use convblit_stretch
+diff --git a/src/config b/src/config
+index a00993f..fd310f9 100644
+--- a/src/config
++++ b/src/config
+@@ -174,7 +174,7 @@ FREETYPE_FONT_DIR        = "fonts/truetype"
+ # T1 adobe type1 fonts - .pfb/.afm loadable thru t1lib
+ # t1lib.config must be setup and in T1LIB_FONT_DIR
+ ####################################################################
+-HAVE_T1LIB_SUPPORT       = N
++HAVE_T1LIB_SUPPORT       = Y
+ T1LIB_FONT_DIR           = "fonts/type1"
+ INCT1LIB                 = /usr/include
+ LIBT1LIB                 = /usr/lib/libt1.so
+diff --git a/src/demos/nanox/Makefile b/src/demos/nanox/Makefile
+index 2799c86..de134c7 100644
+--- a/src/demos/nanox/Makefile
++++ b/src/demos/nanox/Makefile
+@@ -38,7 +38,6 @@ LIBNAME =
+ ifeq ($(ARCH), ECOS)
+ TARGETS = $(MW_DIR_BIN)/landmine.o $(MW_DIR_BIN)/ntetris.o $(MW_DIR_BIN)/world.o
+ else
+-ifeq ($(ARCH), PSP)
+ TARGETS = \
+ 	$(MW_DIR_BIN)/demo \
+ 	$(MW_DIR_BIN)/move \
+@@ -49,6 +48,7 @@ TARGETS = \
+ 	$(MW_DIR_BIN)/ftdemo \
+ 	$(MW_DIR_BIN)/blitdemo \
+ 	$(MW_DIR_BIN)/composite \
++	$(MW_DIR_BIN)/monobitmap \
+ 	$(MW_DIR_BIN)/logfont \
+ 	$(MW_DIR_BIN)/getselection \
+ 	$(MW_DIR_BIN)/setselection \
+@@ -61,40 +61,20 @@ TARGETS = \
+ 	$(MW_DIR_BIN)/bmpdemo \
+ 	$(MW_DIR_BIN)/rgndemo 
+ 
+-else
+-TARGETS = \
+-	$(MW_DIR_BIN)/demo \
+-	$(MW_DIR_BIN)/move \
++ifneq ($(ARCH), PSP)
++TARGETS += \
+ 	$(MW_DIR_BIN)/landmine \
+ 	$(MW_DIR_BIN)/world \
+ 	$(MW_DIR_BIN)/nxclock \
+-	$(MW_DIR_BIN)/nxlsclients \
+-	$(MW_DIR_BIN)/nxev \
+ 	$(MW_DIR_BIN)/npanel \
+ 	$(MW_DIR_BIN)/demo2 \
+-	$(MW_DIR_BIN)/demo5 \
+ 	$(MW_DIR_BIN)/demo6 \
+-	$(MW_DIR_BIN)/ftdemo \
+-	$(MW_DIR_BIN)/blitdemo \
+-	$(MW_DIR_BIN)/composite \
+-	$(MW_DIR_BIN)/t1demo \
+-	$(MW_DIR_BIN)/logfont \
+ 	$(MW_DIR_BIN)/ntetris \
+-	$(MW_DIR_BIN)/getselection \
+-	$(MW_DIR_BIN)/setselection \
+-	$(MW_DIR_BIN)/dashdemo \
+-	$(MW_DIR_BIN)/pcfdemo \
+-	$(MW_DIR_BIN)/fontdemo \
+-	$(MW_DIR_BIN)/setportrait \
+-	$(MW_DIR_BIN)/arcdemo \
+-	$(MW_DIR_BIN)/polydemo \
+ 	$(MW_DIR_BIN)/snap_ppm \
+-	$(MW_DIR_BIN)/bmpdemo \
+-	$(MW_DIR_BIN)/rgndemo \
+ 	$(MW_DIR_BIN)/nsaver \
+ 	$(MW_DIR_BIN)/nxcal \
+ 	$(MW_DIR_BIN)/grabdemo
+-
++endif
+ ifneq ($(ARCH),RTEMS)
+ TARGETS += \
+ 	$(MW_DIR_BIN)/nterm \
+@@ -152,7 +132,6 @@ all: default $(TARGETS)
+ 
+ endif
+ endif
+-endif
+ 
+ ######################### Makefile.rules section #############################
+ 
+diff --git a/src/drivers/Objects.rules b/src/drivers/Objects.rules
+index ad5bdc8..d6bf2e5 100644
+--- a/src/drivers/Objects.rules
++++ b/src/drivers/Objects.rules
+@@ -27,7 +27,9 @@ else
+   MW_SUBDRIVER_OBJS += $(MW_DIR_OBJ)/drivers/fblin1rev.o $(MW_DIR_OBJ)/drivers/fblin2rev.o
+ endif
+ else
+-  MW_SUBDRIVER_OBJS += $(MW_DIR_OBJ)/drivers/fblin1.o $(MW_DIR_OBJ)/drivers/fblin2.o
++  MW_SUBDRIVER_OBJS += $(MW_DIR_OBJ)/drivers/fblin1.o
++  MW_SUBDRIVER_OBJS += $(MW_DIR_OBJ)/drivers/fblin2.o
++  MW_SUBDRIVER_OBJS += $(MW_DIR_OBJ)/drivers/rasterops.o
+ endif
+ 
+ ifeq ($(FBREVERSE), Y)
+diff --git a/src/drivers/fb.h b/src/drivers/fb.h
+index 9bc3cb7..283200f 100644
+--- a/src/drivers/fb.h
++++ b/src/drivers/fb.h
+@@ -259,3 +259,7 @@ void fbportrait_down_blit(PSD dstpsd, MWCOORD destx, MWCOORD desty, MWCOORD w, M
+ void fbportrait_down_convblit_blend_mask_alpha_byte(PSD dstpsd, PMWBLITPARMS gc);
+ void fbportrait_down_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc);
+ void fbportrait_down_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc);
++
++/* rasterops.c*/
++void GdRasterOp(PMWIMAGEHDR pixd, MWCOORD dx, MWCOORD dy, MWCOORD dw, MWCOORD dh, int op,
++			PMWIMAGEHDR pixs, MWCOORD sx, MWCOORD sy);
+diff --git a/src/drivers/fblin1.c b/src/drivers/fblin1.c
+index d65733c..f21f02b 100644
+--- a/src/drivers/fblin1.c
++++ b/src/drivers/fblin1.c
+@@ -1,7 +1,8 @@
+ /*
+  * Copyright (c) 1999-2001, 2010 Greg Haerr <greg@censoft.com>
+  *
+- * 1bpp Packed Linear Video Driver for Microwindows (MSB first bit order)
++ * 1bpp Packed Linear Video Driver for Microwindows
++ * Writes MWIF_MONOBYTEMSB data format (MSB first bit order)
+  */
+ /*#define NDEBUG*/
+ #include <assert.h>
+@@ -103,6 +104,18 @@ linear1_drawvertline(PSD psd, MWCOORD x, MWCOORD y1, MWCOORD y2, MWPIXELVAL c)
+ 	DRAWOFF;
+ }
+ 
++/* general frameblit, all base rops supported*/
++static void
++linear1_frameblit(PSD psd, PMWBLITPARMS gc)
++{
++	/* GdRasterOp doesn't work yet in portrait modes, requires normal src/dst*/
++	assert (psd->portrait == MWPORTRAIT_NONE);
++
++	GdRasterOp((PMWIMAGEHDR)psd, gc->dstx, gc->dsty, gc->width, gc->height, gc->op,
++		(PMWIMAGEHDR)gc->srcpsd, gc->srcx, gc->srcy);
++}
++
++#if 0000
+ /* srccopy bitblt, opcode is currently ignored*/
+ static void
+ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+@@ -144,6 +157,7 @@ linear1_blit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD w, MWCOORD h,
+ 	}
+ 	DRAWOFF;
+ }
++#endif
+ 
+ /*
+  * Routine to draw mono 1bpp MSBFirst bitmap to MSB 1bpp
+@@ -167,8 +181,8 @@ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ #if DEBUG
+ 	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
+ 	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
+-	assert (gc->width > 0);
+-	assert (gc->height > 0);
++	assert (w > 0);
++	assert (h > 0);
+ 	assert (gc->dstx+w <= psd->xres);
+ 	assert (gc->dsty+h <= psd->yres);
+ #endif
+@@ -206,18 +220,140 @@ linear1_convblit_copy_mask_mono_byte_msb(PSD psd, PMWBLITPARMS gc)
+ 	DRAWOFF;
+ }
+ 
++/*
++ * Routine to draw mono 1bpp LSBFirst bitmap to MSB 1bpp
++ * Bitmap is byte array.
++ *
++ * Used to draw T1LIB non-antialiased glyphs.
++ */
++static void
++linear1_convblit_copy_mask_mono_byte_lsb(PSD psd, PMWBLITPARMS gc)
++{
++	int		i;
++	int		dpitch = gc->dst_pitch;
++	int		spitch = gc->src_pitch;
++	/* src is LSB 1bpp, dst is MSB 1bpp*/
++	ADDR8 dst = ((ADDR8)gc->data_out) + (gc->dstx>>3) + gc->dsty * dpitch;
++	ADDR8 src = ((ADDR8)gc->data) + (gc->srcx>>3) + gc->srcy * spitch;
++	MWCOORD	h = gc->height;
++	MWCOORD	w = gc->width;
++	MWPIXELVAL fg = gc->fg_pixelval;
++	MWPIXELVAL bg = gc->bg_pixelval;
++#if DEBUG
++	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
++	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
++	assert (w > 0);
++	assert (h > 0);
++	assert (gc->dstx+w <= psd->xres);
++	assert (gc->dsty+h <= psd->yres);
++#endif
++	DRAWON;
++	while(--h >= 0) {
++		ADDR8	d = dst;
++		ADDR8	s = src;
++		MWCOORD	dx = gc->dstx;
++		MWCOORD	sx = gc->srcx;
++
++		if (gc->usebg) {
++			for(i=0; i<w; ++i) {
++				if ((*s >> (sx&7)) & 01)
++					*d = (*d & notmask[dx&7]) | (fg << (7-(dx&7)));
++				else
++					*d = (*d & notmask[dx&7]) | (bg << (7-(dx&7)));
++				if((++dx & 7) == 0)
++					++d;
++				if((++sx & 7) == 0)
++					++s;
++			}
++		} else {
++			for(i=0; i<w; ++i) {
++				if ((*s >> (sx&7)) & 01)
++					*d = (*d & notmask[dx&7]) | (fg << (7-(dx&7)));
++				if((++dx & 7) == 0)
++					++d;
++				if((++sx & 7) == 0)
++					++s;
++			}
++		}
++		dst += dpitch;
++		src += spitch;
++	}
++	DRAWOFF;
++}
++
++/*
++ * Routine to draw mono 1bpp MSBFirst bitmap to MSB 1bpp
++ * Bitmap is little endian word array.
++ *
++ * Used to draw PCF/core glyphs.
++ */
++static void
++linear1_convblit_copy_mask_mono_word_msb(PSD psd, PMWBLITPARMS gc)
++{
++	int		i;
++	int		dpitch = gc->dst_pitch;
++	int		spitch = gc->src_pitch;
++	/* src is word MSB 1bpp, dst is byte MSB 1bpp*/
++	ADDR8 dst = ((ADDR8)gc->data_out) + (gc->dstx>>3) + gc->dsty * dpitch;
++	ADDR8 src = ((ADDR8)gc->data) + ((gc->srcx>>4) << 1) + gc->srcy * spitch;
++	MWCOORD	h = gc->height;
++	MWCOORD	w = gc->width;
++	MWPIXELVAL fg = gc->fg_pixelval;
++	MWPIXELVAL bg = gc->bg_pixelval;
++#if DEBUG
++	assert (gc->dstx >= 0 && gc->dstx < psd->xres);
++	assert (gc->dsty >= 0 && gc->dsty < psd->yres);
++	assert (w > 0);
++	assert (h > 0);
++	assert (gc->dstx+w <= psd->xres);
++	assert (gc->dsty+h <= psd->yres);
++#endif
++	DRAWON;
++	while(--h >= 0) {
++		ADDR8	d = dst;
++		ADDR16	s = (ADDR16)src;
++		MWCOORD	dx = gc->dstx;
++		MWCOORD	sx = gc->srcx;
++
++		if (gc->usebg) {
++			for(i=0; i<w; ++i) {
++				if ((*s >> (15-(sx&15))) & 01)
++					*d = (*d & notmask[dx&7]) | (fg << (7-(dx&7)));
++				else
++					*d = (*d & notmask[dx&7]) | (bg << (7-(dx&7)));
++				if((++dx & 7) == 0)
++					++d;
++				if((++sx & 15) == 0)
++					++s;
++			}
++		} else {
++			for(i=0; i<w; ++i) {
++				if ((*s >> (15-(sx&15))) & 01)
++					*d = (*d & notmask[dx&7]) | (fg << (7-(dx&7)));
++				if((++dx & 7) == 0)
++					++d;
++				if((++sx & 15) == 0)
++					++s;
++			}
++		}
++		dst += dpitch;
++		src += spitch;
++	}
++	DRAWOFF;
++}
++
+ static SUBDRIVER fblinear1_none = {
+ 	linear1_drawpixel,
+ 	linear1_readpixel,
+ 	linear1_drawhorzline,
+ 	linear1_drawvertline,
+ 	gen_fillrect,
+-	linear1_blit,
+-	NULL,		/* FrameBlit*/
++	NULL,		/* fallback blit*/
++	linear1_frameblit,
+ 	NULL,		/* FrameStretchBlit*/
+ 	linear1_convblit_copy_mask_mono_byte_msb,
+-	NULL,		/* BlitCopyMaskMonoByteLSB*/
+-	NULL,		/* BlitCopyMaskMonoWordMSB*/
++	linear1_convblit_copy_mask_mono_byte_lsb,
++	linear1_convblit_copy_mask_mono_word_msb,
+ 	NULL,		/* BlitBlendMaskAlphaByte*/
+ 	NULL,		/* BlitCopyRGBA8888*/
+ 	NULL,		/* BlitSrcOverRGBA8888*/
+diff --git a/src/drivers/fblin1rev.c b/src/drivers/fblin1rev.c
+index 0c93703..3648a1c 100644
+--- a/src/drivers/fblin1rev.c
++++ b/src/drivers/fblin1rev.c
+@@ -1,7 +1,9 @@
+ /*
+  * Copyright (c) 1999, 2010 Greg Haerr <greg@censoft.com>
+  *
+- * 1bpp Packed Linear Video Driver for Microwindows (LSB first bit order)
++ * 1bpp Packed Linear Video Driver for Microwindows
++ * Writes MWIF_MONOBYTELSB data format (LSB first bit order)
++ *
+  * For Psion S5
+  */
+ /*#define NDEBUG*/
+diff --git a/src/drivers/genmem.c b/src/drivers/genmem.c
+index b47a0f5..9c3e913 100644
+--- a/src/drivers/genmem.c
++++ b/src/drivers/genmem.c
+@@ -47,7 +47,7 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ 		data_format = format;
+ 		pixtype = MWPF_TRUECOLOR8888;
+ 		break;
+-	case MWIF_PAL1:
++	/*case MWIF_PAL1:*/				/* MWIF_PAL1 is MWIF_MONOBYTEMSB*/
+ 	case MWIF_MONOBYTEMSB:			/* ft2 non-alias*/
+ 	case MWIF_MONOBYTELSB:			/* t1lib non-alias*/
+ 	case MWIF_MONOWORDMSB:			/* core mwcfont, pcf*/
+@@ -55,6 +55,11 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ 		data_format = format;
+ 		pixtype = MWPF_PALETTE;
+ 		break;
++	case MWIF_PAL2:
++		bpp = 2;
++		data_format = format;
++		pixtype = MWPF_PALETTE;
++		break;
+ 	case MWIF_PAL4:
+ 		bpp = 4;
+ 		data_format = format;
+diff --git a/src/engine/convblit_mask.c b/src/engine/convblit_mask.c
+index 6567195..58f75f3 100644
+--- a/src/engine/convblit_mask.c
++++ b/src/engine/convblit_mask.c
+@@ -1,4 +1,5 @@
+ #include <stdio.h>
++#include <assert.h>
+ /*
+  * Device-independent low level blit routines - 1bpp bitmap and 8bpp alpha mask input,
+  *		24/32bpp 8888 or 16bpp 565/555 output
+diff --git a/src/engine/devblit.c b/src/engine/devblit.c
+index 7afd250..ab6534f 100644
+--- a/src/engine/devblit.c
++++ b/src/engine/devblit.c
+@@ -123,6 +123,25 @@ BlitFallback(PSD psd, PMWBLITPARMS gc)
+ static MWBLITFUNC
+ GdFindFrameBlit(PSD psd, int src_data_format, int op)
+ {
++	/* try conversion blits if possible*/
++	switch (src_data_format) {
++	case MWIF_RGBA8888:
++		if (op == MWROP_SRC_OVER) {
++			if (psd->BlitSrcOverRGBA8888)
++				return psd->BlitSrcOverRGBA8888;
++		}
++		if (psd->BlitCopyRGBA8888)
++			return psd->BlitCopyRGBA8888;
++		break;
++
++	case MWIF_MONOBYTEMSB:
++		/* use conversion blit if destination not palette*/
++		//FIXME this won't work if this function merged with GdFindConvBlit
++		if (psd->BlitCopyMaskMonoByteMSB && psd->bpp >= 8)
++			return psd->BlitCopyMaskMonoByteMSB;
++		break;
++	}
++
+ 	/* try fallback blit if no frameblit*/
+ 	if (!psd->FrameBlit) {
+ 		if (!psd->BlitFallback)
+@@ -130,13 +149,6 @@ GdFindFrameBlit(PSD psd, int src_data_format, int op)
+ 		return BlitFallback;		/* wrapper function to reorder parameters*/
+ 	}
+ 
+-	/* try conversion blit if source is RGBA8888*/
+-	if (src_data_format == MWIF_RGBA8888) {
+-		if (op == MWROP_SRC_OVER)
+-			return psd->BlitSrcOverRGBA8888;
+-		return psd->BlitCopyRGBA8888;
+-	}
+-
+ 	/* BGRA->BGRA is handled properly with frameblit_xxxa in fblin32.c*/
+ 
+ 	/* use frameblit*/
+@@ -197,11 +209,13 @@ GdBlit(PSD dstpsd, MWCOORD dstx, MWCOORD dsty, MWCOORD width, MWCOORD height,
+ 	parms.srcx = srcx;
+ 	parms.srcy = srcy;
+ 	parms.src_pitch = srcpsd->pitch;
+-	//parms.fg_colorval = gr_foreground_rgb;	/* these are ignored in copy blits*/
+-	//parms.bg_colorval = gr_background_rgb;
+-	//parms.fg_pixelval = gr_foreground;
+-	//parms.bg_pixelval = gr_background;
+-	//parms.usebg = gr_usebg;
++
++	parms.fg_colorval = gr_foreground_rgb;	/* for mask convblit*/
++	parms.bg_colorval = gr_background_rgb;
++	parms.fg_pixelval = gr_foreground;		/* for palette mask convblit*/
++	parms.bg_pixelval = gr_background;
++	parms.usebg = gr_usebg;
++
+ 	parms.data = srcpsd->addr;
+ 	parms.dst_pitch = dstpsd->pitch;		/* usually set in GdConversionBlit*/
+ 	parms.data_out = dstpsd->addr;
+diff --git a/src/engine/devdraw.c b/src/engine/devdraw.c
+index 740e033..faf43d4 100644
+--- a/src/engine/devdraw.c
++++ b/src/engine/devdraw.c
+@@ -680,11 +680,11 @@ GdDrawImage(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+ 	parms.srcx = 0;
+ 	parms.srcy = 0;
+ 	parms.src_pitch = pimage->pitch;
+-	//parms.fg_colorval = gr_foreground_rgb;	/* these are ignored in copy blits*/
+-	//parms.bg_colorval = gr_background_rgb;
+-	//parms.fg_pixelval = gr_foreground;
+-	//parms.bg_pixelval = gr_background;
+-	//parms.usebg = gr_usebg;
++	parms.fg_colorval = gr_foreground_rgb;		/* for convblit*/
++	parms.bg_colorval = gr_background_rgb;
++	parms.fg_pixelval = gr_foreground;			/* for palette mask convblit*/
++	parms.bg_pixelval = gr_background;
++	parms.usebg = gr_usebg;
+ 	parms.data = pimage->imagebits;
+ 	parms.dst_pitch = psd->pitch;		/* usually set in GdConversionBlit*/
+ 	parms.data_out = psd->addr;
+@@ -1228,8 +1228,8 @@ GdBitmap(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height, const MWI
+ 	parms.src_pitch = ((width + 15) >> 4) << 1;	/* pad to WORD boundary*/
+ 	parms.fg_colorval = gr_foreground_rgb;
+ 	parms.bg_colorval = gr_background_rgb;
+-	//parms.fg_pixelval = gr_foreground;	/* not required for mono convblit*/
+-	//parms.bg_pixelval = gr_background;
++	parms.fg_pixelval = gr_foreground;			/* for palette mask convblit*/
++	parms.bg_pixelval = gr_background;
+ 	parms.usebg = gr_usebg;
+ 	parms.data = (char *)imagebits;
+ 	parms.dst_pitch = psd->pitch;			/* usually set in GdConversionBlit*/
+@@ -1248,6 +1248,7 @@ GdBitmapByPoint(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
+ 	MWIMAGEBITS bitvalue = 0;	/* bitmap word value */
+ 	int bitcount;			/* number of bits left in bitmap word */
+ 
++printf("Using slow GdBitmapByPoint\n");
+ 	if (width <= 0 || height <= 0)
+ 		return;
+ 
+@@ -1446,11 +1447,11 @@ GdArea(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height, void *pixel
+ 	parms.srcx = 0;
+ 	parms.srcy = 0;
+ 	parms.src_pitch = width * pixsize;
+-	//parms.fg_colorval = gr_foreground_rgb;	/* these are ignored in copy blits*/
+-	//parms.bg_colorval = gr_background_rgb;
+-	//parms.fg_pixelval = gr_foreground;
+-	//parms.bg_pixelval = gr_background;
+-	//parms.usebg = gr_usebg;
++	parms.fg_colorval = gr_foreground_rgb;		/* for convblit*/
++	parms.bg_colorval = gr_background_rgb;
++	parms.fg_pixelval = gr_foreground;			/* for palette mask convblit*/
++	parms.bg_pixelval = gr_background;
++	parms.usebg = gr_usebg;
+ 	parms.data = pixels;
+ 	parms.dst_pitch = psd->pitch;		/* usually set in GdConversionBlit*/
+ 	parms.data_out = psd->addr;
+diff --git a/src/engine/devfont.c b/src/engine/devfont.c
+index 6eca00a..d59a91d 100644
+--- a/src/engine/devfont.c
++++ b/src/engine/devfont.c
+@@ -463,8 +463,8 @@ gen_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
+ 	parms.data_format = MWIF_MONOWORDMSB;	/* data is 1bpp words, msb first*/
+ 	parms.fg_colorval = gr_foreground_rgb;
+ 	parms.bg_colorval = gr_background_rgb;
+-	//parms.fg_pixelval = gr_foreground;	/* not required for mono convblit*/
+-	//parms.bg_pixelval = gr_background;
++	parms.fg_pixelval = gr_foreground;		/* for palette mask convblit*/
++	parms.bg_pixelval = gr_background;
+ 	parms.usebg = gr_usebg;
+ 	parms.srcx = 0;
+ 	parms.srcy = 0;
+diff --git a/src/engine/devimage.c b/src/engine/devimage.c
+index b568613..90ee03a 100644
+--- a/src/engine/devimage.c
++++ b/src/engine/devimage.c
+@@ -363,13 +363,17 @@ PSD
+ GdConvertImageRGBA(PSD pmd)
+ {
+ 	PSD 		rgba;
+-	int			okformats = MWIF_PAL8;
+-//	int			okformats = MWIF_PAL8|MWIF_PAL4|MWIF_PAL1;
+ 	MWBLITPARMS parms;
+ 
+ 	/* check if image conversion supported*/
+-	if (!(pmd->data_format & okformats))
++	switch (pmd->data_format) {
++	case MWIF_PAL8:			/* 8bpp palette*/
++	//case MWIF_PAL4:
++	//case MWIF_PAL1:
++		break;
++	default:			/* not supported, return same image*/
+ 		return pmd;
++	}
+ DPRINTF("Converting %dbpp image to RGBA\n", pmd->bpp);
+ 
+ 	/* create RGBA pixmap*/
+diff --git a/src/engine/devopen.c b/src/engine/devopen.c
+index d70c73a..3ac70da 100644
+--- a/src/engine/devopen.c
++++ b/src/engine/devopen.c
+@@ -313,6 +313,10 @@ GdFindColor(PSD psd, MWCOLORVAL c)
+ 
+ 	/* case MWPF_PALETTE: must be running 1, 2, 4 or 8 bit palette*/
+ 
++	/* handle 1bpp pixmaps, not running in palette mode*/
++	if (psd->ncolors == 2 && scrdev.pixtype != MWPF_PALETTE)
++		return c & 1;
++
+ 	/* search palette for closest match*/
+ 	return GdFindNearestColor(gr_palette, (int)psd->ncolors, c);
+ }
+diff --git a/src/engine/font_freetype2.c b/src/engine/font_freetype2.c
+index 85f748b..97ac2a4 100644
+--- a/src/engine/font_freetype2.c
++++ b/src/engine/font_freetype2.c
+@@ -1150,12 +1150,27 @@ freetype2_drawtext(PMWFONT pfont, PSD psd, MWCOORD ax, MWCOORD ay,
+ 	int curchar;
+ 	int use_kerning;
+ 	int last_glyph_code = 0;	/* Used for kerning */
++	int drawantialias;
+ 	MWBLITPARMS parms;
+ 
+ 	assert(pf);
+ 	assert(text);
+ 	assert(psd); // note in STANDALONE case, 'app_t' is passed as psd, must not inspect pointer!
+ 
++	/* Don't use antialias settings if no alpha channel blitter*/
++	// FIXME - same code should be in gettextsize, but can't because no psd argument
++	drawantialias = (pf->fontattr & MWTF_ANTIALIAS) && psd->BlitBlendMaskAlphaByte;
++	/* following logic is also in setfontattr, repeated here because no psd argument*/
++#if HAVE_FREETYPE_2_CACHE
++#if HAVE_FREETYPE_VERSION_AFTER_OR_EQUAL(2,1,3)
++	pf->imagedesc.flags = FT_LOAD_DEFAULT;
++	if (!drawantialias)
++		pf->imagedesc.flags |= FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO;
++#else
++	pf->imagedesc.type = drawantialias? ftc_image_grays: ftc_image_mono;
++#endif
++#endif
++
+ #if HAVE_FREETYPE_2_CACHE
+ #if HAVE_FREETYPE_VERSION_AFTER_OR_EQUAL(2,3,9)
+ 	pf->scaler.face_id = pf->imagedesc.face_id;
+@@ -1190,14 +1205,14 @@ freetype2_drawtext(PMWFONT pfont, PSD psd, MWCOORD ax, MWCOORD ay,
+ 	/* Initialize blit parms we won't change*/
+ 	parms.fg_colorval = gr_foreground_rgb;		/* for convblit*/
+ 	parms.bg_colorval = gr_background_rgb;
+-	parms.fg_pixelval = gr_foreground;			/* for drawarea fallback*/
++	parms.fg_pixelval = gr_foreground;			/* for palette mask convblit*/
+ 	parms.bg_pixelval = gr_background;
+ 	parms.usebg = gr_usebg;
+ 	parms.srcx = 0;
+ 	parms.srcy = 0;
+ 
+-	// FIXME: don't use antialias settings if no alphacol driver (psd->flags & PSF_HAVEOP_ALPHACOL)
+-	if (pf->fontattr & MWTF_ANTIALIAS) {
++	/* Determine blitter and data format*/
++	if (drawantialias) {
+ 		parms.data_format = MWIF_ALPHABYTE;		/* data is 8bpp alpha channel*/
+ 		parms.op = MWROP_BLENDFGBG;				/* blend fg/bg with alpha channel -> dst*/
+ 	} else {
+diff --git a/src/engine/font_t1lib.c b/src/engine/font_t1lib.c
+index 59b0b3e..2fccb34 100644
+--- a/src/engine/font_t1lib.c
++++ b/src/engine/font_t1lib.c
+@@ -198,9 +198,13 @@ t1lib_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
+ {
+ 	PMWT1LIBFONT pf = (PMWT1LIBFONT)pfont;
+ 	GLYPH 		*glyph; 		/* glyph structure, memory handling by T1lib */
++	int			drawantialias;
+ 	MWBLITPARMS parms;
+ 
+-	if (pf->fontattr & MWTF_ANTIALIAS) {
++	/* Don't use antialias settings if no alpha channel blitter*/
++	drawantialias = (pf->fontattr & MWTF_ANTIALIAS) && psd->BlitBlendMaskAlphaByte;
++
++	if (drawantialias) {
+ 		parms.data_format = MWIF_ALPHABYTE;		/* data is 8bpp alpha channel*/
+ 		parms.op = MWROP_BLENDFGBG;				/* blend fg/bg with alpha channel -> dst*/
+ 
+@@ -226,7 +230,7 @@ t1lib_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
+ 
+ 		parms.fg_colorval = gr_foreground_rgb;		/* for convblit*/
+ 		parms.bg_colorval = gr_background_rgb;
+-		parms.fg_pixelval = gr_foreground;			/* for drawarea fallback*/
++		parms.fg_pixelval = gr_foreground;			/* for palette mask convblit*/
+ 		parms.bg_pixelval = gr_background;
+ 		parms.usebg = gr_usebg;
+ 		parms.srcx = 0;
+@@ -236,7 +240,7 @@ t1lib_drawtext(PMWFONT pfont, PSD psd, MWCOORD x, MWCOORD y,
+ 		parms.height = height;
+ 		parms.width = width;
+ 		parms.data = (char *)glyph->bits;
+-		if (pf->fontattr & MWTF_ANTIALIAS)
++		if (drawantialias)
+ 			parms.src_pitch = width;
+ 		else
+ 			parms.src_pitch = (width + 7) >> 3;	/* pad to BYTE boundary*/
+diff --git a/src/include/mwtypes.h b/src/include/mwtypes.h
+index 128d48f..74f0ca2 100644
+--- a/src/include/mwtypes.h
++++ b/src/include/mwtypes.h
+@@ -97,13 +97,14 @@
+ #define MWIF_MONO			0x00000040L
+ #define MWIF_HASALPHA		0x00000080L
+ #define MWIF_BYTEDATA		0x00000100L
+-#define MWIF_WORDDATA		0x00000200L
+-#define MWIF_DWORDDATA		0x00000400L
+-#define MWIF_MSBFIRST		0x00000800L
+-#define MWIF_LSBFIRST		0x00001000L
++#define MWIF_LEWORDDATA		0x00000200L		/* 16-bit little endian format (retrofit format)*/
++#define MWIF_BEQUADDATA		0x00000400L		/* 32-bit big endian format*/
++#define MWIF_MSBFIRST		0x00000800L		/* highest bit displayed leftmost*/
++#define MWIF_LSBFIRST		0x00001000L		/* lowest bit displayed leftmost*/
+ #define MWIF_MONOBYTEMSB	(MWIF_1BPP | MWIF_MONO | MWIF_BYTEDATA | MWIF_MSBFIRST)
+ #define MWIF_MONOBYTELSB	(MWIF_1BPP | MWIF_MONO | MWIF_BYTEDATA | MWIF_LSBFIRST)
+-#define MWIF_MONOWORDMSB	(MWIF_1BPP | MWIF_MONO | MWIF_WORDDATA | MWIF_MSBFIRST)
++#define MWIF_MONOWORDMSB	(MWIF_1BPP | MWIF_MONO | MWIF_LEWORDDATA | MWIF_MSBFIRST)
++#define MWIF_MONOQUADMSB	(MWIF_1BPP | MWIF_MONO | MWIF_BEQUADDATA | MWIF_MSBFIRST)
+ #define MWIF_ALPHABYTE		(MWIF_8BPP | MWIF_HASALPHA| MWIF_BYTEDATA)
+ 
+ /* framebuffer and image data formats - yet unsupported formats commented out*/
+@@ -122,11 +123,11 @@
+ //#define MWIF_BGR555_BE 0x000D0000L		/* 16bpp 5/5/5 BGR packed b.endian (new)*/
+ #define MWIF_RGB332		 0x000E0000L		/*  8bpp 3/3/2 RGB packed (old TRUECOLOR332)*/
+ #define MWIF_BGR233		 0x000F0000L		/*  8bpp 2/3/3 BGR packed (old TRUECOLOR233)*/
+-#define MWIF_PAL1		 0x00100000L		/*  1bpp palette (old MWPF_PALETTE)*/
++#define MWIF_PAL1		 MWIF_MONOBYTEMSB	/*  1bpp palette (old MWPF_PALETTE)*/
+ #define MWIF_PAL2		 0x00200000L		/*  2bpp palette (old MWPF_PALETTE)*/
+ #define MWIF_PAL4		 0x00400000L		/*  4bpp palette (old MWPF_PALETTE)*/
+ #define MWIF_PAL8		 0x00800000L		/*  8bpp palette (old MWPF_PALETTE)*/
+-#define MWIF_PALETTE	 0x00F00000L		/* requires palette*/
++//#define MWIF_PALETTE	 0x00F00000L		/* requires palette*/
+ 
+ /* Line modes */
+ #define MWLINE_SOLID      0
+@@ -142,17 +143,17 @@
+ /* Drawing modes (raster ops)*/
+ #define	MWROP_COPY			0	/* src*/
+ #define	MWROP_XOR			1	/* src ^ dst*/
+-#define	MWROP_OR			2	/* src | dst*/
+-#define	MWROP_AND			3	/* src & dst*/
++#define	MWROP_OR			2	/* src | dst (PAINT)*/
++#define	MWROP_AND			3	/* src & dst (MASK)*/
+ #define	MWROP_CLEAR			4	/* 0*/
+-#define	MWROP_SET			5	/* ~0, was MWROP_SETTO1*/
++#define	MWROP_SET			5	/* ~0*/
+ #define	MWROP_EQUIV			6	/* ~(src ^ dst)*/
+ #define	MWROP_NOR			7	/* ~(src | dst)*/
+ #define	MWROP_NAND			8	/* ~(src & dst)*/
+ #define	MWROP_INVERT		9	/* ~dst*/
+ #define	MWROP_COPYINVERTED	10	/* ~src*/
+ #define	MWROP_ORINVERTED	11	/* ~src | dst*/
+-#define	MWROP_ANDINVERTED	12	/* ~src & dst*/
++#define	MWROP_ANDINVERTED	12	/* ~src & dst (SUBTRACT)*/
+ #define MWROP_ORREVERSE		13	/* src | ~dst*/
+ #define	MWROP_ANDREVERSE	14	/* src & ~dst*/
+ #define	MWROP_NOOP			15	/* dst*/

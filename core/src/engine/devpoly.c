@@ -59,14 +59,14 @@ GdPoly(PSD psd, int count, MWPOINT *points)
   didline = FALSE;
 
   while (count-- > 1) {
-	if (didline && (gr_mode == MWMODE_XOR))
+	if (didline && (gr_mode == MWROP_XOR))
 		drawpoint(psd, points->x, points->y);
 	/* note: change to drawline*/
 	GdLine(psd, points[0].x, points[0].y, points[1].x, points[1].y, TRUE);
 	points++;
 	didline = TRUE;
   }
-  if (gr_mode == MWMODE_XOR) {
+  if (gr_mode == MWROP_XOR) {
 	  points--;
 	  if (points->x == firstx && points->y == firsty)
 		drawpoint(psd, points->x, points->y);
@@ -541,7 +541,7 @@ GdFillPoly(PSD psd, int count, MWPOINT *points)
 
 typedef struct {
 	int     x1, y1, x2, y2;
-#if HAVEFLOAT
+#if HAVE_FLOAT
 	double  x, m;
 #else
 	int     cx, fn, mn, d;
@@ -560,7 +560,7 @@ edge_cmp(const void *lvp, const void *rvp)
 		return lp->y1 - rp->y1;
 
 	/* if the current x values are different, sort on current x */
-#if HAVEFLOAT
+#if HAVE_FLOAT
 	if (lp->x < rp->x)
 		return -1;
 	else if (lp->x > rp->x)
@@ -619,7 +619,7 @@ GdFillPoly(PSD psd, int count, MWPOINT * pointtable)
 				swap(get[nge].x1, get[nge].x2);
 				swap(get[nge].y1, get[nge].y2);
 			}
-#if HAVEFLOAT
+#if HAVE_FLOAT
 			get[nge].x = get[nge].x1;
 			get[nge].m = get[nge].x2 - get[nge].x1;
 			get[nge].m /= get[nge].y2 - get[nge].y1;
@@ -651,7 +651,7 @@ GdFillPoly(PSD psd, int count, MWPOINT * pointtable)
 
 		/* using odd parity, render alternating line segments */
 		for (i = 1; i < nae; i += 2) {
-#if HAVEFLOAT
+#if HAVE_FLOAT
 			int     l = (int)aet[i - 1].x;
 			int     r = (int)aet[i].x;
 #else
@@ -659,7 +659,7 @@ GdFillPoly(PSD psd, int count, MWPOINT * pointtable)
 			int     r = (int)aet[i].cx;
 #endif
 			if (r > l)
-				drawrow(psd, l, r - 1, y);
+				drawrow(psd, l, r, y); /* draw line between l and r and not between l and (r-1) */
 		}
 
 		/* prepare for the next scan line */
@@ -671,7 +671,7 @@ GdFillPoly(PSD psd, int count, MWPOINT * pointtable)
 			if (aet[i].y2 == y)
 				aet[i--] = aet[--nae];
 			else {
-#if HAVEFLOAT
+#if HAVE_FLOAT
 				aet[i].x += aet[i].m;
 #else
 				aet[i].fn += aet[i].mn;

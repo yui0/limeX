@@ -13,6 +13,11 @@
 #define MWINCLUDECOLORS
 #include "nano-X.h"
 
+#if RTEMS || __ECOS
+#define  srandom  srand
+#define  random   rand
+#endif
+
 /* set up size of the grid */
 #define WIDTH_IN_TILES	4
 #define HEIGHT_IN_TILES	4
@@ -253,7 +258,7 @@ RandomiseTiles()
 			value[xpos][ypos] = 1 + xpos + (WIDTH_IN_TILES * ypos);
 		}
 	}
-
+return;
 	/* position of 'hole' */
 	xpos = WIDTH_IN_TILES - 1;
 	ypos = HEIGHT_IN_TILES - 1;

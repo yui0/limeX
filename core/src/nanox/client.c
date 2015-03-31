@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2000, 2002, 2003 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2002, 2003, 2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002, 2003 by Koninklijke Philips Electronics N.V.
  * Copyright (c) 1999, 2000 Alex Holden <alex@linuxhacker.org>
  * Copyright (c) 1991 David I. Bell
@@ -79,7 +79,7 @@
  */
 #define SHM_BLOCK_SIZE	4096
 
-#ifndef __ECOS
+#if !__ECOS
 /* exported global data */
 int 	   nxSocket = -1;	/* The network socket descriptor */
 LOCK_DECLARE(nxGlobalLock);	/* global lock for threads safety*/
@@ -203,7 +203,8 @@ CheckForClientData(GR_EVENT *evp)
 			event->data = NULL;
 			return;
 		}
-		if(!(event->data = malloc(event->datalen))) return;
+		if(!(event->data = malloc(event->datalen)))
+			return;
 		ReadBlock(event->data, event->datalen);
 	}
 }
@@ -261,7 +262,7 @@ static int
 TypedReadBlock(void *b, int n, int type)
 {
 	int r;
-
+   
 	r = CheckBlockType(type);
 	if (r != type)
 		return -1;
@@ -302,7 +303,7 @@ CheckErrorEvent(GR_EVENT *ep)
  *
  * @ingroup nanox_general
  */
-int
+int 
 GrOpen(void)
 {
 	size_t 		size;
@@ -328,7 +329,7 @@ GrOpen(void)
 #error "ADDR_FAM not defined to AF_NANO, AF_INET or AF_UNIX"
 #endif
 	ACCESS_PER_THREAD_DATA()
-
+	
 	/* check already open*/
 	if (nxSocket >= 0)
         	return nxSocket;
@@ -430,7 +431,7 @@ mySignalhandler(int sig)
  *
  * @ingroup nanox_general
  */
-void
+void 
 GrClose(void)
 {
 	ACCESS_PER_THREAD_DATA()
@@ -459,11 +460,11 @@ GrClose(void)
  *
  * @ingroup nanox_general
  */
-void
+void 
 GrFlush(void)
 {
 	nxFlushReq(0L,1);
-
+  
 #ifdef NOTUSED
 	GR_EVENT event;
 
@@ -486,7 +487,7 @@ GrFlush(void)
  *
  * @ingroup nanox_general
  */
-void
+void 
 GrDefaultErrorHandler(GR_EVENT *ep)
 {
 	if (ep->type == GR_EVENT_TYPE_ERROR) {
@@ -545,7 +546,7 @@ GrDelay(GR_TIMEOUT msecs)
  *
  * @ingroup nanox_general
  */
-void
+void 
 GrGetScreenInfo(GR_SCREEN_INFO *sip)
 {
 	LOCK(&nxGlobalLock);
@@ -588,7 +589,7 @@ GrGetSysColor(int index)
  *
  * @ingroup nanox_font
  */
-void
+void 
 GrGetFontInfo(GR_FONT_ID font, GR_FONT_INFO *fip)
 {
 	nxGetFontInfoReq *req;
@@ -670,7 +671,7 @@ GrGetGCTextSize(GR_GC_ID gc, void *str, int count, GR_TEXTFLAGS flags,
  *
  * @ingroup nanox_event
  */
-void
+void 
 GrRegisterInput(int fd)
 {
 	ACCESS_PER_THREAD_DATA()
@@ -680,7 +681,8 @@ GrRegisterInput(int fd)
 
 	LOCK(&nxGlobalLock);
 	FD_SET(fd, &regfdset);
-	if (fd >= regfdmax) regfdmax = fd + 1;
+	if (fd >= regfdmax)
+		regfdmax = fd + 1;
 	UNLOCK(&nxGlobalLock);
 }
 
@@ -906,7 +908,7 @@ GetNextQueuedEvent(GR_EVENT *ep)
  *
  * @ingroup nanox_event
  */
-void
+void 
 GrGetNextEvent(GR_EVENT *ep)
 {
 	GrGetNextEventTimeout(ep, 0L);
@@ -989,7 +991,11 @@ _GrGetNextEventTimeout(GR_EVENT *ep, GR_TIMEOUT timeout)
 		to.tv_usec = (timeout % 1000) * 1000;
 	}
 
-	if((e = select(setsize+1, &rfds, NULL, NULL, timeout ? &to : NULL))>0) {
+	UNLOCK(&nxGlobalLock);	/* give other threads a chance to run*/
+	e = select(setsize+1, &rfds, NULL, NULL, timeout ? &to : NULL);
+	LOCK(&nxGlobalLock);
+
+	if( e > 0) {
 		int fd;
 
 		if(FD_ISSET(nxSocket, &rfds)) {
@@ -1011,8 +1017,7 @@ _GrGetNextEventTimeout(GR_EVENT *ep, GR_TIMEOUT timeout)
 				break;
 			}
 		}
-	}
-	else if (e == 0) {
+	} else if (e == 0) {
 		/*
 		 * Timeout has occured. We currently return a timeout event
 		 * regardless of whether the client has selected for it.
@@ -1039,7 +1044,7 @@ _GrGetNextEventTimeout(GR_EVENT *ep, GR_TIMEOUT timeout)
  *
  * @ingroup nanox_event
  */
-int
+int 
 GrPeekEvent(GR_EVENT *ep)
 {
 	int ret;
@@ -1118,7 +1123,7 @@ GrPeekWaitEvent(GR_EVENT *ep)
  *
  * @ingroup nanox_event
  */
-void
+void 
 GrCheckNextEvent(GR_EVENT *ep)
 {
 	ACCESS_PER_THREAD_DATA()
@@ -1176,7 +1181,7 @@ DPRINTF("GetTypedEventCallback: wid %d mask %x update %d from %d type %d\n", wid
  * @param update  Update event subtype when event mask is GR_EVENT_MASK_UPDATE.
  * @param ep      Pointer to the GR_EVENT structure to return the event in.
  * @param block   Specifies whether or not to block, GR_TRUE blocks, GR_FALSE does not.
- * @return        GR_EVENT_TYPE if an event was returned, or GR_EVENT_TYPE_NONE
+ * @return        GR_EVENT_TYPE if an event was returned, or GR_EVENT_TYPE_NONE 
  *                if no events match.
  *
  * @ingroup nanox_event
@@ -1204,7 +1209,7 @@ GrGetTypedEvent(GR_WINDOW_ID wid, GR_EVENT_MASK mask, GR_UPDATE_TYPE update,
  * @param block   Specifies whether or not to block, GR_TRUE blocks, GR_FALSE does not.
  * @param matchfn Specifies the callback function called for matching.
  * @param arg     A programmer-specified argument passed to the callback function.
- * @return        GR_EVENT_TYPE if an event was returned, or GR_EVENT_TYPE_NONE
+ * @return        GR_EVENT_TYPE if an event was returned, or GR_EVENT_TYPE_NONE 
  *                if no events match.
  *
  * @ingroup nanox_event
@@ -1217,7 +1222,7 @@ GrGetTypedEventPred(GR_WINDOW_ID wid, GR_EVENT_MASK mask, GR_UPDATE_TYPE update,
 	GR_EVENT event;
 
 	ACCESS_PER_THREAD_DATA();
-
+  
 	LOCK(&nxGlobalLock);
 	/* First, suck up all events and place them into the event queue */
 	while(_GrPeekEvent(&event)) {
@@ -1254,7 +1259,7 @@ getevent:
 	ep->type = GR_EVENT_TYPE_NONE;
 	UNLOCK(&nxGlobalLock);
 	return GR_EVENT_TYPE_NONE;
-}
+} 
 
 /**
  * Select the event types which should be returned for the specified window.
@@ -1264,7 +1269,7 @@ getevent:
  *
  * @ingroup nanox_event
  */
-void
+void 
 GrSelectEvents(GR_WINDOW_ID wid, GR_EVENT_MASK eventmask)
 {
 	nxSelectEventsReq *req;
@@ -1314,14 +1319,15 @@ GrNewWindow(GR_WINDOW_ID parent, GR_COORD x, GR_COORD y, GR_SIZE width,
 	UNLOCK(&nxGlobalLock);
 	return wid;
 }
-
-
+   
+   
 /**
  * Create a new server side pixmap.  This is an offscreen drawing area which
  * can be copied into a window using a GrCopyArea call.
  *
  * @param width  The width of the pixmap.
  * @param height The height of the pixmap.
+ * @param format The MWIF image format for the pixmap.
  * @param pixels Currently unused in client/server mode.
  * @return       The ID of the newly created pixmap.
  *
@@ -1330,16 +1336,17 @@ GrNewWindow(GR_WINDOW_ID parent, GR_COORD x, GR_COORD y, GR_SIZE width,
  * @ingroup nanox_window
  */
 GR_WINDOW_ID
-GrNewPixmap(GR_SIZE width, GR_SIZE height, void *pixels)
+GrNewPixmapEx(GR_SIZE width, GR_SIZE height, int format, void *pixels)
 {
-	nxNewPixmapReq *req;
+	nxNewPixmapExReq *req;
 	GR_WINDOW_ID 	wid;
 
 	LOCK(&nxGlobalLock);
-	req = AllocReq(NewPixmap);
+	req = AllocReq(NewPixmapEx);
 	req->width = width;
 	req->height = height;
-	if(TypedReadBlock(&wid, sizeof(wid), GrNumNewPixmap) == -1)
+	req->format = format;
+	if(TypedReadBlock(&wid, sizeof(wid), GrNumNewPixmapEx) == -1)
 		wid = 0;
 	UNLOCK(&nxGlobalLock);
 	return wid;
@@ -1388,7 +1395,7 @@ GrNewInputWindow(GR_WINDOW_ID parent, GR_COORD x, GR_COORD y, GR_SIZE width,
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrDestroyWindow(GR_WINDOW_ID wid)
 {
 	nxDestroyWindowReq *req;
@@ -1407,7 +1414,7 @@ GrDestroyWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrGetWindowInfo(GR_WINDOW_ID wid, GR_WINDOW_INFO *infoptr)
 {
 	nxGetWindowInfoReq *req;
@@ -1427,7 +1434,7 @@ GrGetWindowInfo(GR_WINDOW_ID wid, GR_WINDOW_INFO *infoptr)
  *
  * @ingroup nanox_draw
  */
-GR_GC_ID
+GR_GC_ID 
 GrNewGC(void)
 {
 	GR_GC_ID    gc;
@@ -1449,7 +1456,7 @@ GrNewGC(void)
  *
  * @ingroup nanox_draw
  */
-GR_GC_ID
+GR_GC_ID 
 GrCopyGC(GR_GC_ID gc)
 {
 	nxCopyGCReq *req;
@@ -1490,7 +1497,7 @@ GrDestroyGC(GR_GC_ID gc)
  *
  * @ingroup nanox_region
  */
-GR_REGION_ID
+GR_REGION_ID 
 GrNewRegion(void)
 {
 	GR_REGION_ID    region;
@@ -1521,17 +1528,6 @@ GrDestroyRegion(GR_REGION_ID region)
 	UNLOCK(&nxGlobalLock);
 }
 
-void GrSetRectRegionIndirect(GR_REGION_ID region, GR_RECT *rect)
-{
-	nxSetRectRegionIndirectReq *req;
-
-	LOCK(&nxGlobalLock);
-	req = AllocReq(SetRectRegionIndirect);
-	if (rect) memcpy(&req->rect, rect, sizeof(*rect));
-	req->regionid = region;
-	UNLOCK(&nxGlobalLock);
-}
-
 /**
  * Makes a union of the specified region and the specified rectangle.
  * Places the result back in the source region.
@@ -1547,10 +1543,10 @@ GrUnionRectWithRegion(GR_REGION_ID region, GR_RECT *rect)
 	nxUnionRectWithRegionReq *req;
 
 	LOCK(&nxGlobalLock);
-	req = AllocReq(UnionRectWithRegion);
-	if (rect)
-		memcpy(&req->rect, rect, sizeof(*rect));
-	req->regionid = region;
+ 	req = AllocReq(UnionRectWithRegion);
+ 	if(rect)
+ 		memcpy(&req->rect, rect, sizeof(*rect));
+ 	req->regionid = region;
 	UNLOCK(&nxGlobalLock);
 }
 
@@ -1667,7 +1663,7 @@ void
 GrSetGCRegion(GR_GC_ID gc, GR_REGION_ID region)
 {
 	nxSetGCRegionReq *req;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(SetGCRegion);
 	req->gcid = gc;
@@ -1685,7 +1681,7 @@ GrSetGCRegion(GR_GC_ID gc, GR_REGION_ID region)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCClipOrigin(GR_GC_ID gc, int xoff, int yoff)
 {
 	nxSetGCClipOriginReq *req;
@@ -1699,7 +1695,7 @@ GrSetGCClipOrigin(GR_GC_ID gc, int xoff, int yoff)
 }
 
 /**
- * Controls if GR_EVENT_TYPE_EXPOSURE events are sent as a
+ * Controls if GR_EVENT_TYPE_EXPOSURE events are sent as a 
  * result of GrCopyArea using the specified graphics context.
  *
  * @param gc       The ID of the graphics context
@@ -1707,7 +1703,7 @@ GrSetGCClipOrigin(GR_GC_ID gc, int xoff, int yoff)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCGraphicsExposure(GR_GC_ID gc, GR_BOOL exposure)
 {
 	nxSetGCGraphicsExposureReq *req;
@@ -1769,7 +1765,7 @@ GrRectInRegion(GR_REGION_ID region, GR_COORD x, GR_COORD y, GR_COORD w,
 {
 	nxRectInRegionReq *req;
 	unsigned short	   ret_value;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(RectInRegion);
 	req->regionid = region;
@@ -1797,7 +1793,7 @@ GrEmptyRegion(GR_REGION_ID region)
 {
 	nxEmptyRegionReq *req;
 	GR_BOOL 	  ret_value;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(EmptyRegion);
 	req->regionid = region;
@@ -1823,7 +1819,7 @@ GrEqualRegion(GR_REGION_ID rgn1, GR_REGION_ID rgn2)
 {
 	nxEqualRegionReq *req;
 	GR_BOOL 	  ret_value;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(EqualRegion);
 	req->region1 = rgn1;
@@ -1848,7 +1844,7 @@ void
 GrOffsetRegion(GR_REGION_ID region, GR_SIZE dx, GR_SIZE dy)
 {
 	nxOffsetRegionReq *req;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(OffsetRegion);
 	req->region = region;
@@ -1860,7 +1856,7 @@ GrOffsetRegion(GR_REGION_ID region, GR_SIZE dx, GR_SIZE dy)
 /**
  * Fills in the specified rectangle structure with a bounding box that would
  * completely enclose the specified region, and also returns the type of the
- * specified region.
+ * specified region. 
  *
  * @param region The ID of the region to get the bounding box of
  * @param rect   Pointer to a rectangle structure
@@ -1875,7 +1871,7 @@ GrGetRegionBox(GR_REGION_ID region, GR_RECT *rect)
 {
 	nxGetRegionBoxReq *req;
 	unsigned short	   ret_value;
-
+	
 	if (!rect)
 		return GR_FALSE;
 
@@ -1902,21 +1898,21 @@ GrGetRegionBox(GR_REGION_ID region, GR_RECT *rect)
  *
  * @ingroup nanox_region
  */
-GR_REGION_ID
+GR_REGION_ID 
 GrNewPolygonRegion(int mode, GR_COUNT count, GR_POINT *points)
 {
 	nxNewPolygonRegionReq	*req;
-	long			size;
+	int32_t			size;
 	GR_REGION_ID		region;
 
 	if(count == 0)
 		return GrNewRegion();
-
+	
 	if(points == NULL)
 		return 0;
 
 	LOCK(&nxGlobalLock);
-	size = (long)count * sizeof(GR_POINT);
+	size = (int32_t)count * sizeof(GR_POINT);
 	req = AllocReqExtra(NewPolygonRegion, size);
 	req->mode = mode;
 	/* FIXME: unportable method, depends on sizeof(int) in GR_POINT*/
@@ -1939,7 +1935,7 @@ GrNewPolygonRegion(int mode, GR_COUNT count, GR_POINT *points)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrMapWindow(GR_WINDOW_ID wid)
 {
 	nxMapWindowReq *req;
@@ -1958,11 +1954,11 @@ GrMapWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrUnmapWindow(GR_WINDOW_ID wid)
 {
 	nxUnmapWindowReq *req;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(UnmapWindow);
 	req->windowid = wid;
@@ -1977,7 +1973,7 @@ GrUnmapWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrRaiseWindow(GR_WINDOW_ID wid)
 {
 	nxRaiseWindowReq *req;
@@ -1996,7 +1992,7 @@ GrRaiseWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrLowerWindow(GR_WINDOW_ID wid)
 {
 	nxLowerWindowReq *req;
@@ -2017,7 +2013,7 @@ GrLowerWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrMoveWindow(GR_WINDOW_ID wid, GR_COORD x, GR_COORD y)
 {
 	nxMoveWindowReq *req;
@@ -2039,7 +2035,7 @@ GrMoveWindow(GR_WINDOW_ID wid, GR_COORD x, GR_COORD y)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrResizeWindow(GR_WINDOW_ID wid, GR_SIZE width, GR_SIZE height)
 {
 	nxResizeWindowReq *req;
@@ -2064,7 +2060,7 @@ GrResizeWindow(GR_WINDOW_ID wid, GR_SIZE width, GR_SIZE height)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrReparentWindow(GR_WINDOW_ID wid, GR_WINDOW_ID pwid, GR_COORD x, GR_COORD y)
 {
 	nxReparentWindowReq *req;
@@ -2080,21 +2076,24 @@ GrReparentWindow(GR_WINDOW_ID wid, GR_WINDOW_ID pwid, GR_COORD x, GR_COORD y)
 
 /**
  * Clears the specified window by to its background color or pixmap.
- * If exposeflag is non zero, an exposure event is generated for
+ * If exposeflag is 1, an exposure event is generated for
  * the window after it has been cleared.
+ * For buffered windows, mark drawing finalized and draw if
+ * exposeflag is 2.
  *
  * @param wid        Window ID.
  * @param x          X co-ordinate of rectangle to clear.
  * @param y          Y co-ordinate of rectangle to clear.
  * @param width      Width of rectangle to clear.
  * @param height     Height of rectangle to clear.
- * @param exposeflag A flag indicating whether to also generate an exposure event.
+ * @param exposeflag A flag indicating to also generate an exposure event if 1,
+ *					 or to finalize drawing for buffered windows if 2.
  *
  * @ingroup nanox_draw
  */
 void
 GrClearArea(GR_WINDOW_ID wid, GR_COORD x, GR_COORD y, GR_SIZE width,
-	GR_SIZE height, GR_BOOL exposeflag)
+	GR_SIZE height, int exposeflag)
 {
 	nxClearAreaReq *req;
 
@@ -2136,7 +2135,7 @@ GrGetFocus(void)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrSetFocus(GR_WINDOW_ID wid)
 {
 	nxSetFocusReq *req;
@@ -2227,7 +2226,7 @@ GrNewCursor(GR_SIZE width, GR_SIZE height, GR_COORD hotx, GR_COORD hoty,
  *
  * @ingroup nanox_cursor
  */
-void
+void 
 GrMoveCursor(GR_COORD x, GR_COORD y)
 {
 	nxMoveCursorReq *req;
@@ -2248,7 +2247,7 @@ GrMoveCursor(GR_COORD x, GR_COORD y)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCForeground(GR_GC_ID gc, GR_COLOR foreground)
 {
 	nxSetGCForegroundReq *req;
@@ -2269,7 +2268,7 @@ GrSetGCForeground(GR_GC_ID gc, GR_COLOR foreground)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCBackground(GR_GC_ID gc, GR_COLOR background)
 {
 	nxSetGCBackgroundReq *req;
@@ -2334,7 +2333,7 @@ GrSetGCBackgroundPixelVal(GR_GC_ID gc, GR_PIXELVAL background)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCMode(GR_GC_ID gc, int mode)
 {
 	nxSetGCModeReq *req;
@@ -2347,14 +2346,14 @@ GrSetGCMode(GR_GC_ID gc, int mode)
 }
 
 /**
- * Changes the line style to either SOLID or ON OFF DASHED
+ * Changes the line style to either SOLID or ON OFF DASHED 
  *
  * @param gc  the ID of the graphics context to set the drawing mode of
  * @param linestyle   The new style of the line
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCLineAttributes(GR_GC_ID gc, int linestyle)
 {
 	nxSetGCLineAttributesReq *req;
@@ -2377,7 +2376,7 @@ GrSetGCLineAttributes(GR_GC_ID gc, int linestyle)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCDash(GR_GC_ID gc, char *dashes, int count)
 {
 	nxSetGCDashReq *req;
@@ -2502,7 +2501,7 @@ GrSetGCTSOffset(GR_GC_ID gc, int xoff, int yoff)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrSetGCUseBackground(GR_GC_ID gc, GR_BOOL flag)
 {
 	nxSetGCUseBackgroundReq *req;
@@ -2525,13 +2524,14 @@ GrSetGCUseBackground(GR_GC_ID gc, GR_BOOL flag)
  *
  * @param name  string containing the name of a built in font to look for
  * @param height  the desired height of the font
+ * @param width  the desired width of the font
  * @param plogfont  pointer to a LOGFONT structure
  * @return a font ID number which can be used to refer to the font
  *
  * @ingroup nanox_font
  */
 GR_FONT_ID
-GrCreateFont(GR_CHAR *name, GR_COORD height, GR_LOGFONT *plogfont)
+GrCreateFontEx(const char *name, GR_COORD height, GR_COORD width, GR_LOGFONT *plogfont)
 {
 	GR_FONT_ID	fontid;
 
@@ -2548,16 +2548,17 @@ GrCreateFont(GR_CHAR *name, GR_COORD height, GR_LOGFONT *plogfont)
 	}
 	else
 	{
-		nxCreateFontReq *req;
+		nxCreateFontExReq *req;
 
 		if (!name)
 			name = "";
 
-		req = AllocReqExtra(CreateFont, strlen(name) + 1);
+		req = AllocReqExtra(CreateFontEx, strlen(name) + 1);
 		req->height = height;
+		req->width = width;
 		strcpy((char *)GetReqData(req), name);
 
-		if (TypedReadBlock(&fontid, sizeof(fontid), GrNumCreateFont) == -1)
+		if (TypedReadBlock(&fontid, sizeof(fontid), GrNumCreateFontEx) == -1)
 			fontid = 0;
 	}
 
@@ -2567,14 +2568,14 @@ GrCreateFont(GR_CHAR *name, GR_COORD height, GR_LOGFONT *plogfont)
 
 /**
  * Returns an array of strings containing the names of available fonts and an
- * integer that specifies the number of strings returned.
+ * integer that specifies the number of strings returned. 
  *
  * @param fonts  pointer used to return an array of font names.
  * @param numfonts  pointer used to return the number of names found.
  *
  * @ingroup nanox_font
  */
-void
+void 
 GrGetFontList(GR_FONTLIST ***fonts, int *numfonts)
 {
 	nxGetFontListReq *req;
@@ -2587,7 +2588,7 @@ GrGetFontList(GR_FONTLIST ***fonts, int *numfonts)
 
 	if (TypedReadBlock(&num, sizeof(int), GrNumGetFontList) == -1)
 		num = 0;
-
+	
 	*numfonts = num;
 
 	if(num == -1)
@@ -2595,7 +2596,7 @@ GrGetFontList(GR_FONTLIST ***fonts, int *numfonts)
 
 	flist = (GR_FONTLIST**)malloc(num * sizeof(GR_FONTLIST*));
 
-	for(i = 0; i < num; i++)
+	for(i = 0; i < num; i++) 
 		flist[i] = (GR_FONTLIST*)malloc(sizeof(GR_FONTLIST*));
 
 	for(i = 0; i < num; i++) {
@@ -2608,7 +2609,7 @@ GrGetFontList(GR_FONTLIST ***fonts, int *numfonts)
 		tmpstr = (char*)malloc(len * sizeof(char));
 		ReadBlock(tmpstr, len * sizeof(char));
 		flist[i]->mwname = tmpstr;
-
+		
 	}
 
 	*fonts = flist;
@@ -2633,9 +2634,9 @@ GrFreeFontList(GR_FONTLIST ***fonts, int numfonts)
 	for (i = 0; i < numfonts; i++) {
 		g = list[i];
 		if(g) {
-			if(g->mwname)
+			if(g->mwname) 
 				free(g->mwname);
-			if(g->ttname)
+			if(g->ttname) 
 				free(g->ttname);
 			free(g);
 		}
@@ -2649,19 +2650,21 @@ GrFreeFontList(GR_FONTLIST ***fonts, int numfonts)
  * Changes the size of the specified font to the specified size.
  *
  * @param fontid  the ID number of the font to change the size of
- * @param size  the size to change the font to
+ * @param height	height to scale font to
+ * @param width		width to scale font to
  *
  * @ingroup nanox_font
  */
 void
-GrSetFontSize(GR_FONT_ID fontid, GR_COORD size)
+GrSetFontSizeEx(GR_FONT_ID fontid, GR_SIZE height, GR_SIZE width)
 {
-	nxSetFontSizeReq *req;
+	nxSetFontSizeExReq *req;
 
 	LOCK(&nxGlobalLock);
-	req = AllocReq(SetFontSize);
+	req = AllocReq(SetFontSizeEx);
 	req->fontid = fontid;
-	req->fontsize = size;
+	req->height = height;
+	req->width = width;
 	UNLOCK(&nxGlobalLock);
 }
 
@@ -2762,7 +2765,7 @@ GrSetGCFont(GR_GC_ID gc, GR_FONT_ID font)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrLine(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x1, GR_COORD y1, GR_COORD x2,
 	GR_COORD y2)
 {
@@ -2792,7 +2795,7 @@ GrLine(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x1, GR_COORD y1, GR_COORD x2,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrRect(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 	GR_SIZE height)
 {
@@ -2822,7 +2825,7 @@ GrRect(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrFillRect(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	GR_SIZE width, GR_SIZE height)
 {
@@ -2852,7 +2855,7 @@ GrFillRect(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrEllipse(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE rx,
 	GR_SIZE ry)
 {
@@ -2882,7 +2885,7 @@ GrEllipse(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE rx,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrFillEllipse(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	GR_SIZE rx, GR_SIZE ry)
 {
@@ -2919,7 +2922,7 @@ GrFillEllipse(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  *
  * @ingroup nanox_draw
  */
-void
+void	
 GrArc(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	GR_SIZE rx, GR_SIZE ry, GR_COORD ax, GR_COORD ay,
 	GR_COORD bx, GR_COORD by, int type)
@@ -2998,20 +3001,20 @@ GrArcAngle(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrBitmap(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 	GR_SIZE height, GR_BITMAP *imagebits)
 {
 	nxBitmapReq *req;
 	GR_SIZE	chunk_y    = height;
-	long	bitmapsize = (long)GR_BITMAP_SIZE(width, height) * sizeof(GR_BITMAP);
+	int32_t	bitmapsize = (int32_t)GR_BITMAP_SIZE(width, height) * sizeof(GR_BITMAP);
 
 	if (bitmapsize > MAXREQUESTSZ) {
-		chunk_y = (GR_SIZE)(((long)height * MAXREQUESTSZ) / bitmapsize);
+		chunk_y = (GR_SIZE)(((int32_t)height * MAXREQUESTSZ) / bitmapsize);
 		/* needs to be one line less than max */
 		if (chunk_y)
 			chunk_y--;
-		bitmapsize = (long)GR_BITMAP_SIZE(width, chunk_y) * sizeof(GR_BITMAP);
+		bitmapsize = (int32_t)GR_BITMAP_SIZE(width, chunk_y) * sizeof(GR_BITMAP);
 		}
 
 	LOCK(&nxGlobalLock);
@@ -3019,7 +3022,7 @@ GrBitmap(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 	while(height > 0) {
 		if(chunk_y > height) {
 			chunk_y = height;
-			bitmapsize = (long)GR_BITMAP_SIZE(width, chunk_y) * sizeof(GR_BITMAP);
+			bitmapsize = (int32_t)GR_BITMAP_SIZE(width, chunk_y) * sizeof(GR_BITMAP);
 		}
 		req = AllocReqExtra(Bitmap, bitmapsize);
 		req->drawid = id;
@@ -3057,7 +3060,7 @@ GrDrawImageBits(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	int		      imagesize, blocksize;
 	int		      palsize, rest, step;
 	char                  *addr;
-	char		      *bits;
+	unsigned char		*bits;
 
 	imagesize = pimage->pitch * pimage->height;
 	palsize = pimage->palsize * sizeof(MWPALENTRY);
@@ -3081,13 +3084,13 @@ GrDrawImageBits(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 		req->x = x;
 		req->y = y;
 		/* fill MWIMAGEHDR items passed externally*/
+		req->flags = pimage->flags;
 		req->width = pimage->width;
 		req->height = step;
 		req->planes = pimage->planes;
 		req->bpp = pimage->bpp;
+		req->data_format = pimage->data_format;
 		req->pitch = pimage->pitch;
-		req->bytesperpixel = pimage->bytesperpixel;
-		req->compression = pimage->compression;
 		req->palsize = pimage->palsize;
 		req->transcolor = pimage->transcolor;
 		addr = GetReqData(req);
@@ -3101,7 +3104,7 @@ GrDrawImageBits(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	}
 }
 
-#if MW_FEATURE_IMAGES && defined(HAVE_FILEIO)
+#if MW_FEATURE_IMAGES && HAVE_FILEIO
 /**
  * Loads the specified image file and draws it at the specified position
  * on the specified drawable using the specified graphics context. The
@@ -3112,7 +3115,7 @@ GrDrawImageBits(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  * include GIF, JPEG, Windows BMP, PNG, XPM, and both ascii and binary
  * variants of PBM, PGM, and PPM. However the image types supported by a
  * particular server depend on which image types were enabled in the server
- * configuration at build time.
+ * configuration at build time. 
  *
  * @param id  the ID of the drawable to draw the image onto
  * @param gc  the ID of the graphics context to use when drawing the image
@@ -3143,9 +3146,7 @@ GrDrawImageFromFile(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	memcpy(GetReqData(req), path, strlen(path)+1);
 	UNLOCK(&nxGlobalLock);
 }
-#endif /* MW_FEATURE_IMAGES && defined(HAVE_FILEIO) */
 
-#if MW_FEATURE_IMAGES && defined(HAVE_FILEIO)
 /**
  * Loads the specified image file into a newly created server image buffer
  * and returns the ID of the buffer. The image type is automatically detected
@@ -3153,7 +3154,7 @@ GrDrawImageFromFile(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  * irrelevant). The currently supported image types include GIF, JPEG, Windows
  * BMP, PNG, XPM, and both ascii and binary variants of PBM, PGM, and PPM.
  * However the image types supported by a particular server depend on which
- * image types were enabled in the server configuration at build time.
+ * image types were enabled in the server configuration at build time. 
  *
  * @param path  string containing the filename of the image to load
  * @param flags  flags specific to the particular image loader
@@ -3178,10 +3179,10 @@ GrLoadImageFromFile(char *path, int flags)
 	UNLOCK(&nxGlobalLock);
 	return imageid;
 }
-#endif /* MW_FEATURE_IMAGES && defined(HAVE_FILEIO) */
+#endif /* MW_FEATURE_IMAGES && HAVE_FILEIO*/
 
 #if MW_FEATURE_IMAGES
-/**
+/*
  * Draws the image from the specified image buffer at the specified position
  * on the specified drawable using the specified graphics context. The
  * width and height values specify the size of the image to draw- if the
@@ -3196,24 +3197,9 @@ GrLoadImageFromFile(char *path, int flags)
  * @param imageid  the ID of the image buffer containing the image to display
  *
  * @ingroup nanox_image
- */
-void
-GrDrawImageToFit(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
-	GR_SIZE width, GR_SIZE height, GR_IMAGE_ID imageid)
-{
-	nxDrawImageToFitReq *req;
-
-	LOCK(&nxGlobalLock);
-	req = AllocReq(DrawImageToFit);
-	req->drawid = id;
-	req->gcid = gc;
-	req->x = x;
-	req->y = y;
-	req->width = width;
-	req->height = height;
-	req->imageid = imageid;
-	UNLOCK(&nxGlobalLock);
-}
+ * void GrDrawImageToFit(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
+ *			GR_SIZE width, GR_SIZE height, GR_IMAGE_ID imageid);
+ */ 
 
 /**
  * Draws specified part of the image from the specified image buffer at the specified position
@@ -3229,12 +3215,12 @@ GrDrawImageToFit(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  * @param height  the maximum image height
  * @param sx  the X coordinate at the source pixmap to draw from
  * @param sy  the Y coordinate at the source pixmap to draw from
- * @param swidth  the maximum source image width
+ * @param swidth  the maximum source image width.  If 0, draw the whole image.
  * @param sheight  the maximum source image height
  * @param imageid  the ID of the image buffer containing the image to display
  *
  * @ingroup nanox_image
- */
+ */ 
 void
 GrDrawImagePartToFit(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD dx, GR_COORD dy,
 	GR_SIZE dwidth, GR_SIZE dheight, GR_COORD sx, GR_COORD sy,
@@ -3258,13 +3244,10 @@ GrDrawImagePartToFit(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD dx, GR_COORD dy,
 
 }
 
-#endif /* MW_FEATURE_IMAGES */
-
-#if MW_FEATURE_IMAGES
 /**
- * Destroys the specified image buffer and reclaims the memory used by it.
+ * Destroys the specified image/pixmap and reclaims the memory used by it.
  *
- * @param id  ID of the image buffer to free
+ * @param id  ID of the image or pixmap to free
  *
  * @ingroup nanox_image
  */
@@ -3278,14 +3261,12 @@ GrFreeImage(GR_IMAGE_ID id)
 	req->id = id;
 	UNLOCK(&nxGlobalLock);
 }
-#endif /* MW_FEATURE_IMAGES */
 
-#if MW_FEATURE_IMAGES
 /**
  * Fills in the specified image information structure with the details of the
- * specified image buffer.
+ * specified pixmap.
  *
- * @param id  ID of an image buffer
+ * @param id  ID of a pixmap
  * @param iip  pointer to a GR_IMAGE_INFO structure
  *
  * @ingroup nanox_image
@@ -3438,9 +3419,7 @@ GrDrawImageFromBuffer(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 #endif /* MW_FEATURE_IMAGES */
 
 
-/*
- * FIXME ... what does this comment relate to?
- *
+/**
  * Draw a rectangular area in the specified drawable using the specified
  * graphics context.  This differs from rectangle drawing in that the
  * color values for each pixel in the rectangle are specified.
@@ -3451,22 +3430,22 @@ GrDrawImageFromBuffer(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  * The pixels are packed according to pixtype:
  *
  * pixtype		array of
- * MWPF_RGB		MWCOLORVAL (unsigned long)
- * MWPF_PIXELVAL	MWPIXELVAL (compile-time dependent)
+ * MWPF_RGB		MWCOLORVAL (uint32_t)
+ * MWPF_PIXELVAL	MWPIXELVALHW (compile-time dependent)
  * MWPF_PALETTE		unsigned char
- * MWPF_TRUECOLOR0888	unsigned long
+ * MWPF_TRUECOLOR8888	uint32_t
+ * MWPF_TRUECOLORABGR	uint32_t
  * MWPF_TRUECOLOR888	packed struct {char r,char g,char b} (24 bits)
  * MWPF_TRUECOLOR565	unsigned short
  * MWPF_TRUECOLOR555	unsigned short
  * MWPF_TRUECOLOR332	unsigned char
  * MWPF_TRUECOLOR233	unsigned char
  * MWPF_HWPIXELVAL	one of the above values (run-time dependent)
- */
-/**
+ *
  * Draws the specified pixel array of the specified size and format onto the
  * specified drawable using the specified graphics context at the specified
  * position. Note that colour conversion is currently only performed when using
- * the GR_PF_RGB format, which is an unsigned long containing RGBX data.
+ * the GR_PF_RGB format, which is an uint32_t containing RGBX data.
  *
  * @param id  the ID of the drawable to draw the area onto
  * @param gc  the ID of the graphics context to use when drawing the area
@@ -3479,13 +3458,13 @@ GrDrawImageFromBuffer(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 	GR_SIZE height, void *pixels, int pixtype)
 {
 	nxAreaReq *req;
-	long       size;
-	long       chunk_y;
+	int32_t       size;
+	int32_t       chunk_y;
 	int        pixsize;
 	int	   type;
 	static int hwpixtype = 0;
@@ -3509,15 +3488,16 @@ GrArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 		pixsize = sizeof(MWCOLORVAL);
 		break;
 	case MWPF_PIXELVAL:
-		pixsize = sizeof(MWPIXELVAL);
+		pixsize = sizeof(MWPIXELVALHW);
 		break;
 	case MWPF_PALETTE:
 	case MWPF_TRUECOLOR233:
 	case MWPF_TRUECOLOR332:
 		pixsize = sizeof(unsigned char);
 		break;
-	case MWPF_TRUECOLOR0888:
-		pixsize = sizeof(unsigned long);
+	case MWPF_TRUECOLOR8888:
+	case MWPF_TRUECOLORABGR:
+		pixsize = sizeof(uint32_t);
 		break;
 	case MWPF_TRUECOLOR888:
 		pixsize = 3;
@@ -3534,10 +3514,10 @@ GrArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 	/* Break request into MAXREQUESTSZ size packets*/
 	while(height > 0) {
 		chunk_y = (MAXREQUESTSZ - sizeof(nxAreaReq)) /
-			((long)width * pixsize);
+			((int32_t)width * pixsize);
 		if(chunk_y > height)
 			chunk_y = height;
-		size = chunk_y * ((long)width * pixsize);
+		size = chunk_y * ((int32_t)width * pixsize);
 		req = AllocReqExtra(Area, size);
 		req->drawid = id;
 		req->gcid = gc;
@@ -3575,7 +3555,7 @@ GrArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, GR_SIZE width,
 void
 GrCopyArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
 	GR_SIZE width, GR_SIZE height, GR_DRAW_ID srcid,
-	GR_COORD srcx, GR_COORD srcy, unsigned long op)
+	GR_COORD srcx, GR_COORD srcy, int op)
 {
 	nxCopyAreaReq *req;
 
@@ -3593,7 +3573,7 @@ GrCopyArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
         req->op = op;
 	UNLOCK(&nxGlobalLock);
 }
-
+   
 /**
  * Reads the pixel data of the specified size from the specified position on
  * the specified drawable into the specified pixel array. If the drawable is
@@ -3611,12 +3591,12 @@ GrCopyArea(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrReadArea(GR_DRAW_ID id,GR_COORD x,GR_COORD y,GR_SIZE width,
 	GR_SIZE height, GR_PIXELVAL *pixels)
 {
 	nxReadAreaReq *req;
-	long           size;
+	int32_t           size;
 
 	LOCK(&nxGlobalLock);
 	req = AllocReq(ReadArea);
@@ -3625,7 +3605,7 @@ GrReadArea(GR_DRAW_ID id,GR_COORD x,GR_COORD y,GR_SIZE width,
 	req->y = y;
 	req->width = width;
 	req->height = height;
-	size = (long)width * height * sizeof(MWPIXELVAL);
+	size = (int32_t)width * height * sizeof(MWPIXELVALHW);
 	TypedReadBlock(pixels, size, GrNumReadArea);
 	UNLOCK(&nxGlobalLock);
 }
@@ -3641,7 +3621,7 @@ GrReadArea(GR_DRAW_ID id,GR_COORD x,GR_COORD y,GR_SIZE width,
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrPoint(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y)
 {
 	nxPointReq *req;
@@ -3670,14 +3650,14 @@ void
 GrPoints(GR_DRAW_ID id, GR_GC_ID gc, GR_COUNT count, GR_POINT *pointtable)
 {
 	nxPointsReq *req;
-	long	size;
+	int32_t	size;
 
-	size = (long)count * sizeof(GR_POINT);
+	size = (int32_t)count * sizeof(GR_POINT);
 	LOCK(&nxGlobalLock);
 	req = AllocReqExtra(Points, size);
 	req->drawid = id;
 	req->gcid = gc;
-	memcpy(GetReqData(req), pointtable, size);
+	memcpy(GetReqData(req), (void *)pointtable, size);
 	UNLOCK(&nxGlobalLock);
 }
 
@@ -3694,14 +3674,14 @@ GrPoints(GR_DRAW_ID id, GR_GC_ID gc, GR_COUNT count, GR_POINT *pointtable)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrPoly(GR_DRAW_ID id, GR_GC_ID gc, GR_COUNT count, GR_POINT *pointtable)
 {
 	nxPolyReq *req;
-	long       size;
+	int32_t       size;
 
 	LOCK(&nxGlobalLock);
-	size = (long)count * sizeof(GR_POINT);
+	size = (int32_t)count * sizeof(GR_POINT);
 	req = AllocReqExtra(Poly, size);
 	req->drawid = id;
 	req->gcid = gc;
@@ -3722,14 +3702,14 @@ GrPoly(GR_DRAW_ID id, GR_GC_ID gc, GR_COUNT count, GR_POINT *pointtable)
  *
  * @ingroup nanox_draw
  */
-void
+void 
 GrFillPoly(GR_DRAW_ID id, GR_GC_ID gc, GR_COUNT count,GR_POINT *pointtable)
 {
 	nxFillPolyReq *req;
-	long           size;
+	int32_t           size;
 
 	LOCK(&nxGlobalLock);
-	size = (long)count * sizeof(GR_POINT);
+	size = (int32_t)count * sizeof(GR_POINT);
 	req = AllocReqExtra(FillPoly, size);
 	req->drawid = id;
 	req->gcid = gc;
@@ -3752,7 +3732,7 @@ GrFillPoly(GR_DRAW_ID id, GR_GC_ID gc, GR_COUNT count,GR_POINT *pointtable)
  *
  * @ingroup nanox_font
  */
-void
+void 
 GrText(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y, void *str,
 	GR_COUNT count, GR_TEXTFLAGS flags)
 {
@@ -4047,7 +4027,7 @@ GrGetWMProperties(GR_WINDOW_ID wid, GR_WM_PROPERTIES *props)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrCloseWindow(GR_WINDOW_ID wid)
 {
 	nxCloseWindowReq *req;
@@ -4067,7 +4047,7 @@ GrCloseWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_window
  */
-void
+void 
 GrKillWindow(GR_WINDOW_ID wid)
 {
 	nxKillWindowReq *req;
@@ -4088,7 +4068,7 @@ GrKillWindow(GR_WINDOW_ID wid)
  *
  * @ingroup nanox_misc
  */
-void
+void 
 GrSetScreenSaverTimeout(GR_TIMEOUT timeout)
 {
 	nxSetScreenSaverTimeoutReq *req;
@@ -4118,7 +4098,7 @@ GrSetScreenSaverTimeout(GR_TIMEOUT timeout)
  * @ingroup nanox_selection
  */
 void
-GrSetSelectionOwner(GR_WINDOW_ID wid, GR_CHAR *typelist)
+GrSetSelectionOwner(GR_WINDOW_ID wid, const char *typelist)
 {
 	nxSetSelectionOwnerReq *req;
 	char *p;
@@ -4148,13 +4128,13 @@ GrSetSelectionOwner(GR_WINDOW_ID wid, GR_CHAR *typelist)
  * If the allocation fails, it will be set to a NULL pointer, so remember to
  * check the value of it before using it.
  *
- * @param typelist  pointer used to return the list of available mime types
+ * @param typelist  pointer used to return the list of available mime types 
  * @return the ID of the window which currently owns the selection, or 0
  *
  * @ingroup nanox_selection
  */
 GR_WINDOW_ID
-GrGetSelectionOwner(GR_CHAR **typelist)
+GrGetSelectionOwner(char **typelist)
 {
 	nxGetSelectionOwnerReq *req;
 	UINT16 textlen;
@@ -4467,11 +4447,11 @@ GrSetPortraitMode(int portraitmode)
  * @param mwin    Window the mouse is current in
  * @param x       Current X pos of mouse (from root)
  * @param y       Current Y pos of mouse (from root)
- * @param bmask   Current button mask
+ * @param bmask   Current button mask 
  *
  * @ingroup nanox_misc
  */
-void
+void 
 GrQueryPointer(GR_WINDOW_ID *mwin, GR_COORD *x, GR_COORD *y, GR_BUTTON *bmask)
 {
 	nxQueryPointerReq *req;
@@ -4492,7 +4472,7 @@ GrQueryPointer(GR_WINDOW_ID *mwin, GR_COORD *x, GR_COORD *y, GR_BUTTON *bmask)
  *
  * @ingroup nanox_event
  */
-int
+int 
 GrQueueLength(void)
 {
 	int count = 0;
@@ -4622,7 +4602,7 @@ GrStretchArea(GR_DRAW_ID dstid, GR_GC_ID gc,
 	      GR_DRAW_ID srcid,
 	      GR_COORD sx1, GR_COORD sy1,
 	      GR_COORD sx2, GR_COORD sy2,
-	      unsigned long op)
+	      int op)
 {
 	nxStretchAreaReq *req;
 
@@ -4653,7 +4633,7 @@ GrStretchArea(GR_DRAW_ID dstid, GR_GC_ID gc,
  * specified window whenever the specified key is pressed or released.
  *
  * A key can have any number of reservations of type #GR_GRAB_HOTKEY,
- * but at most one reservation of another type.  This means that
+ * but at most one reservation of another type.  This means that 
  * grabs of type #GR_GRAB_HOTKEY always succeed, but grabs of
  * any other type will fail if the key is already grabbed in any
  * fashion except #GR_GRAB_HOTKEY.
@@ -4666,7 +4646,7 @@ GrStretchArea(GR_DRAW_ID dstid, GR_GC_ID gc,
  * @param key  MWKEY value.
  * @param type The type of reservation to make.  Valid values are
  *             #GR_GRAB_HOTKEY_EXCLUSIVE,
- *             #GR_GRAB_HOTKEY,
+ *             #GR_GRAB_HOTKEY, 
  *             #GR_GRAB_EXCLUSIVE and
  *             #GR_GRAB_EXCLUSIVE_MOUSE.
  * @return     #GR_TRUE on success, #GR_FALSE on error.
@@ -4681,7 +4661,7 @@ GrGrabKey(GR_WINDOW_ID id, GR_KEY key, int type)
 
 	if ((unsigned)type > GR_GRAB_MAX)
 		return GR_FALSE;
-
+	
 	LOCK(&nxGlobalLock);
 	req = AllocReq(GrabKey);
 	req->wid = id;
@@ -4718,7 +4698,7 @@ GrUngrabKey(GR_WINDOW_ID id, GR_KEY key)
 }
 
 /**
- * This passes transform data to the mouse input engine.
+ * This passes transform data to the mouse input engine. 
  *
  * @param trans A GR_TRANSFORM structure that contains the transform data
  *              for the filter, or NULL to disable.
@@ -4786,7 +4766,7 @@ GrSetTransform(GR_TRANSFORM *trans)
  */
 GR_FONT_ID
 GrCreateFontFromBuffer(const void *buffer, unsigned length,
-		       const char *format, GR_COORD height)
+	const char *format, GR_COORD height, GR_COORD width)
 {
 	GR_FONT_ID result;
 	nxCreateFontFromBufferReq *req;
@@ -4804,16 +4784,16 @@ GrCreateFontFromBuffer(const void *buffer, unsigned length,
 
 	req = AllocReq(CreateFontFromBuffer);
 	req->height = height;
+	req->width = width;
 	req->buffer_id = bufid;
 
 	if (format == NULL)
 		format = "";
 
-	strncpy(req->format, format, sizeof(req->format) - 1);
+	strncpy((char *)req->format, format, sizeof(req->format) - 1);
 	req->format[sizeof(req->format) - 1] = '\0';
 
-	if (TypedReadBlock
-	    (&result, sizeof(result), GrNumCreateFontFromBuffer) == -1)
+	if (TypedReadBlock(&result, sizeof(result), GrNumCreateFontFromBuffer) == -1)
 		result = 0;
 
 	UNLOCK(&nxGlobalLock);
@@ -4832,7 +4812,7 @@ GrCreateFontFromBuffer(const void *buffer, unsigned length,
  * @ingroup nanox_font
  */
 GR_FONT_ID
-GrCopyFont(GR_FONT_ID fontid, GR_COORD height)
+GrCopyFont(GR_FONT_ID fontid, GR_COORD height, GR_COORD width)
 {
 	GR_FONT_ID result;
 	nxCopyFontReq *req;
@@ -4841,6 +4821,7 @@ GrCopyFont(GR_FONT_ID fontid, GR_COORD height)
 	req = AllocReq(CopyFont);
 	req->fontid = fontid;
 	req->height = height;
+	req->width = width;
 
 	if (TypedReadBlock(&result, sizeof(result), GrNumCopyFont) == -1)
 		result = 0;

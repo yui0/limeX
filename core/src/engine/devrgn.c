@@ -40,13 +40,13 @@ Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
 
 			All Rights Reserved
 
-Permission to use, copy, modify, and distribute this software and its
-documentation for any purpose and without fee is hereby granted,
+Permission to use, copy, modify, and distribute this software and its 
+documentation for any purpose and without fee is hereby granted, 
 provided that the above copyright notice appear in all copies and that
-both that copyright notice and this permission notice appear in
+both that copyright notice and this permission notice appear in 
 supporting documentation, and that the name of Digital not be
 used in advertising or publicity pertaining to distribution of the
-software without specific, written prior permission.
+software without specific, written prior permission.  
 
 DIGITAL DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE, INCLUDING
 ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL
@@ -158,7 +158,7 @@ GdPtInRegion(MWCLIPREGION *rgn, MWCOORD x, MWCOORD y)
  * @param rect Rectangle to check.
  * @return MWRECT_PARTIN, MWRECT_ALLIN, or MWRECT_OUT.
  */
-int
+int 
 GdRectInRegion(MWCLIPREGION *rgn, const MWRECT *rect)
 {
     MWRECT *	pCurRect;
@@ -175,7 +175,7 @@ GdRectInRegion(MWCLIPREGION *rgn, const MWRECT *rect)
     rx = rect->left;
     ry = rect->top;
 
-    /*
+    /* 
      * can stop when both partOut and partIn are TRUE,
      * or we reach rect->bottom
      */
@@ -224,7 +224,7 @@ GdRectInRegion(MWCLIPREGION *rgn, const MWRECT *rect)
 	}
     }
 
-    return(partIn ? ((ry < rect->bottom) ? MWRECT_PARTIN : MWRECT_ALLIN) :
+    return(partIn ? ((ry < rect->bottom) ? MWRECT_PARTIN : MWRECT_ALLIN) : 
 		MWRECT_OUT);
 }
 
@@ -315,7 +315,7 @@ GdEmptyRegion(MWCLIPREGION *rgn)
  * @return A new region.
  */
 MWCLIPREGION *
-GdAllocRegion(void)
+GdAllocRegion(void)    
 {
     MWCLIPREGION *rgn;
 
@@ -396,7 +396,7 @@ GdSetRectRegion(MWCLIPREGION *rgn, MWCOORD left, MWCOORD top, MWCOORD right,
  * @param rgn A region.
  * @param prc Rectangle defining the region.
  */
-inline void
+void
 GdSetRectRegionIndirect(MWCLIPREGION *rgn, MWRECT *prc)
 {
 	GdSetRectRegion(rgn, prc->left, prc->top, prc->right, prc->bottom);
@@ -509,7 +509,7 @@ void
 GdCopyRegion(MWCLIPREGION *dst, MWCLIPREGION *src)
 {
     if (dst != src) /*  don't want to copy to itself */
-    {
+    {  
 	if (dst->size < src->numRects)
 	{
 	    if (! (dst->rects = GdRealloc( dst->rects, dst->numRects * sizeof(MWRECT), src->numRects * sizeof(MWRECT))))
@@ -621,7 +621,7 @@ REGION_Coalesce (
     {
 	pCurRect++;
     }
-
+    
     if (pCurRect != pRegEnd)
     {
 	/*
@@ -638,7 +638,7 @@ REGION_Coalesce (
 	curStart = pRegEnd - pReg->rects;
 	pRegEnd = pReg->rects + pReg->numRects;
     }
-
+	
     if ((curNumRects == prevNumRects) && (curNumRects != 0)) {
 	pCurRect -= curNumRects;
 	/*
@@ -706,7 +706,7 @@ REGION_Coalesce (
 		    *pPrevRect++ = *pCurRect++;
 		} while (pCurRect != pRegEnd);
 	    }
-
+	    
 	}
     }
     return (curStart);
@@ -761,7 +761,7 @@ REGION_RegionOp(
     MWRECT *r2BandEnd;                  /* End of current band in r2 */
     MWCOORD top;                          /* Top of non-overlapping band */
     MWCOORD bot;                          /* Bottom of non-overlapping band */
-
+    
     /*
      * Initialization:
      *  set r1, r2, r1End and r2End appropriately, preserve the important
@@ -773,12 +773,12 @@ REGION_RegionOp(
     r2 = reg2->rects;
     r1End = r1 + reg1->numRects;
     r2End = r2 + reg2->numRects;
-
+    
 
     /*
-     * newReg may be one of the src regions so we can't empty it. We keep a
+     * newReg may be one of the src regions so we can't empty it. We keep a 
      * note of its rects pointer (so that we can free them later), preserve its
-     * extents and simply set numRects to zero.
+     * extents and simply set numRects to zero. 
      */
 
     oldRects = newReg->rects;
@@ -798,7 +798,7 @@ REGION_RegionOp(
 	newReg->size = 0;
 	return;
     }
-
+    
     /*
      * Initialize ybot and ytop.
      * In the upcoming loop, ybot and ytop serve different functions depending
@@ -816,7 +816,7 @@ REGION_RegionOp(
 	ybot = reg1->extents.top;
     else
 	ybot = reg2->extents.top;
-
+    
     /*
      * prevBand serves to mark the start of the previous band so rectangles
      * can be coalesced into larger rectangles. qv. miCoalesce, above.
@@ -827,7 +827,7 @@ REGION_RegionOp(
      * array of rectangles.
      */
     prevBand = 0;
-
+    
     do
     {
 	curBand = newReg->numRects;
@@ -844,13 +844,13 @@ REGION_RegionOp(
 	{
 	    r1BandEnd++;
 	}
-
+	
 	r2BandEnd = r2;
 	while ((r2BandEnd != r2End) && (r2BandEnd->top == r2->top))
 	{
 	    r2BandEnd++;
 	}
-
+	
 	/*
 	 * First handle the band that doesn't intersect, if any.
 	 *
@@ -910,7 +910,7 @@ REGION_RegionOp(
 	    (* overlapFunc) (newReg, r1, r1BandEnd, r2, r2BandEnd, ytop, ybot);
 
 	}
-
+	
 	if (newReg->numRects != curBand)
 	{
 	    prevBand = REGION_Coalesce (newReg, prevBand, curBand);
@@ -1091,7 +1091,7 @@ GdIntersectRegion(MWCLIPREGION *newReg, MWCLIPREGION *reg1, MWCLIPREGION *reg2)
 	newReg->numRects = 0;
     else
 	REGION_RegionOp (newReg, reg1, reg2,  REGION_IntersectO, NULL, NULL);
-
+    
     /*
      * Can't alter newReg's extents before we call miRegionOp because
      * it might be one of the source regions and miRegionOp depends
@@ -1162,7 +1162,7 @@ REGION_UnionO(MWCLIPREGION *pReg, MWRECT *r1, MWRECT *r1End,
 	MWRECT *r2, MWRECT *r2End, MWCOORD top, MWCOORD bottom)
 {
     MWRECT *pNextRect;
-
+    
     pNextRect = &pReg->rects[pReg->numRects];
 
 #define MERGERECT(r) \
@@ -1187,7 +1187,7 @@ REGION_UnionO(MWCLIPREGION *pReg, MWRECT *r1, MWRECT *r1End,
 	pNextRect += 1;  \
     }  \
     r++;
-
+    
     while ((r1 != r1End) && (r2 != r2End))
     {
 	if (r1->left < r2->left)
@@ -1199,7 +1199,7 @@ REGION_UnionO(MWCLIPREGION *pReg, MWRECT *r1, MWRECT *r1End,
 	    MERGERECT(r2);
 	}
     }
-
+    
     if (r1 != r1End)
     {
 	do
@@ -1249,7 +1249,7 @@ GdUnionRegion(MWCLIPREGION *newReg, MWCLIPREGION *reg1, MWCLIPREGION *reg2)
     /*
      * Region 1 completely subsumes region 2
      */
-    if ((reg1->numRects == 1) &&
+    if ((reg1->numRects == 1) && 
 	(reg1->extents.left <= reg2->extents.left) &&
 	(reg1->extents.top <= reg2->extents.top) &&
 	(reg1->extents.right >= reg2->extents.right) &&
@@ -1263,7 +1263,7 @@ GdUnionRegion(MWCLIPREGION *newReg, MWCLIPREGION *reg1, MWCLIPREGION *reg2)
     /*
      * Region 2 completely subsumes region 1
      */
-    if ((reg2->numRects == 1) &&
+    if ((reg2->numRects == 1) && 
 	(reg2->extents.left <= reg1->extents.left) &&
 	(reg2->extents.top <= reg1->extents.top) &&
 	(reg2->extents.right >= reg1->extents.right) &&
@@ -1274,7 +1274,7 @@ GdUnionRegion(MWCLIPREGION *newReg, MWCLIPREGION *reg1, MWCLIPREGION *reg2)
 	return;
     }
 
-	REGION_RegionOp (newReg, reg1, reg2, REGION_UnionO,
+	REGION_RegionOp (newReg, reg1, reg2, REGION_UnionO, 
 		REGION_UnionNonO, REGION_UnionNonO);
 
     newReg->extents.left = MWMIN(reg1->extents.left, reg2->extents.left);
@@ -1306,9 +1306,9 @@ REGION_SubtractNonO1(MWCLIPREGION *pReg, MWRECT *r, MWRECT *rEnd,
 	MWCOORD top, MWCOORD bottom)
 {
     MWRECT *pNextRect;
-
+	
     pNextRect = &pReg->rects[pReg->numRects];
-
+	
     while (r != rEnd)
     {
 	MEMCHECK(pReg, pNextRect, pReg->rects);
@@ -1342,7 +1342,7 @@ REGION_SubtractO(MWCLIPREGION *pReg, MWRECT *r1, MWRECT *r1End,
 {
     MWRECT *pNextRect;
     MWCOORD left;
-
+    
     left = r1->left;
     pNextRect = &pReg->rects[pReg->numRects];
 
@@ -1450,7 +1450,7 @@ REGION_SubtractO(MWCLIPREGION *pReg, MWRECT *r1, MWRECT *r1End,
 	}
     }
 }
-
+	
 /**
  * Finds the difference of two regions (regM - regS) - i.e. the
  * places which are in regM but not regS.
@@ -1469,8 +1469,8 @@ GdSubtractRegion(MWCLIPREGION *regD, MWCLIPREGION *regM, MWCLIPREGION *regS )
 	GdCopyRegion(regD, regM);
 	return;
     }
-
-    REGION_RegionOp (regD, regM, regS, REGION_SubtractO,
+ 
+    REGION_RegionOp (regD, regM, regS, REGION_SubtractO, 
 		REGION_SubtractNonO1, NULL);
 
     /*

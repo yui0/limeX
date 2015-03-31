@@ -1,5 +1,5 @@
 /*
- * winres.c
+ * Copyright (c) 2010 Greg Haerr <greg@censoft.com>
  *
  * Microwindows Resource functions
  *
@@ -17,6 +17,7 @@
 #include "winres.h"
 #include "windlg.h"
 #include "device.h"
+#include "../drivers/genmem.h"
 
 #define MAX_MRU_RESOURCES	32
 
@@ -24,8 +25,9 @@
 static HRSRC mruResources = NULL;
 static int mruResCount = 0;
 
+static PMWIMAGEHDR resDecodeBitmap(unsigned char *buffer, int size);
 
-void
+static void
 mwAddResource(HRSRC hRes)
 {
 	hRes->next = mruResources;
@@ -60,7 +62,7 @@ mwAddResource(HRSRC hRes)
 
 
 //  Compare resource types
-int
+static int
 mwResCompare(LPCTSTR res1, LPCTSTR res2)
 {
 	if ((HIWORD(res1) == 0xFFFF) || (HIWORD(res2) == 0xFFFF))
@@ -70,7 +72,7 @@ mwResCompare(LPCTSTR res1, LPCTSTR res2)
 }
 
 
-HRSRC
+static HRSRC
 mwFindMruResource(LPCTSTR resName, LPCTSTR resType)
 {
 	HRSRC obj = mruResources;
@@ -139,7 +141,7 @@ mwCreateInstance(int argc, char *argv[])
 void
 mwFreeInstance(HINSTANCE hInst)
 {
-	free((void *) ((PMWAPPINSTANCE) hInst)->szExecCommand);
+	if (((PMWAPPINSTANCE) hInst)->fResources) fclose (((PMWAPPINSTANCE) hInst)->fResources);
 	free((void *) ((PMWAPPINSTANCE) hInst)->szResFilename);
 	free((void *) ((PMWAPPINSTANCE) hInst));
 }
@@ -156,15 +158,6 @@ mwFreeInstance(HINSTANCE hInst)
 /*
  *  File access functions
  */
-static BYTE
-resReadByte(FILE * f, BOOL * pEof)
-{
-	int ch = fgetc(f);
-	if (ch == EOF)
-		*pEof = TRUE;
-	return (BYTE) ch;
-}
-
 static WORD
 resReadWord(FILE * f, BOOL * pEof)
 {
@@ -183,6 +176,16 @@ resReadDWord(FILE * f, BOOL * pEof)
 	if (!fread(&dw, 4, 1, f))
 		*pEof = TRUE;
 	return dw;
+}
+
+#if LATER
+static BYTE
+resReadByte(FILE * f, BOOL * pEof)
+{
+	int ch = fgetc(f);
+	if (ch == EOF)
+		*pEof = TRUE;
+	return (BYTE) ch;
 }
 
 static void
@@ -234,6 +237,7 @@ resReadText(FILE * f, BOOL * pEof)
 
 	return txt;
 }
+#endif /* LATER*/
 
 /*
  *  Check if type (numeric or text) are the same
@@ -279,8 +283,7 @@ mwIsSameType(FILE * f, LPCTSTR id, BOOL * pEof)
  *  If found, the file is positioned at the beginning of the resource.
  */
 FILE *
-mwFindResource(HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName,
-	       PMWRESOURCEHEADER pResHead)
+mwFindResource(HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName, PMWRESOURCEHEADER pResHead)
 {
 	FILE *f;
 	PMWAPPINSTANCE pInst = (PMWAPPINSTANCE) hInst;
@@ -293,8 +296,7 @@ mwFindResource(HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName,
 	do {
 		f = pInst->fResources;
 		if (f == NULL) {
-			EPRINTF("Error opening resource file: %s\n",
-				pInst->szResFilename);
+			EPRINTF("Error opening resource file: %s\n", pInst->szResFilename);
 			break;
 		}
 
@@ -310,17 +312,14 @@ mwFindResource(HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName,
 			bType = mwIsSameType(f, resType, &bEof);
 			bName = mwIsSameType(f, resName, &bEof);
 			if (bType && bName) {
-				pResHead->DataVersion =
-					resReadDWord(f, &bEof);
+				pResHead->DataVersion = resReadDWord(f, &bEof);
 				pResHead->MemoryFlags = resReadWord(f, &bEof);
 				pResHead->LanguageId = resReadWord(f, &bEof);
 				pResHead->Version = resReadDWord(f, &bEof);
-				pResHead->Characteristics =
-					resReadDWord(f, &bEof);
+				pResHead->Characteristics = resReadDWord(f, &bEof);
 				if (bEof)
 					break;
-				fseek(f, pos + pResHead->HeaderSize,
-				      SEEK_SET);
+				fseek(f, pos + pResHead->HeaderSize, SEEK_SET);
 				return f;
 			}
 
@@ -328,7 +327,8 @@ mwFindResource(HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName,
 			//  align to dword
 			while ((pos & 3) != 0)
 				pos++;
-			fseek(f, pos, SEEK_SET);
+			if (fseek(f, pos, SEEK_SET))
+				break;
 		}
 	} while (0);
 
@@ -377,8 +377,7 @@ resAllocText(WORD ** pw)
  *  get dynamic extra information from a dlg item template
  */
 PMWDLGITEMTEMPLATE
-resGetDlgItemTemplExtra(PMWDLGITEMTEMPLATE pItem,
-			PMWDLGITEMTEMPLEXTRA pItemExtra)
+resGetDlgItemTemplExtra(PMWDLGITEMTEMPLATE pItem, PMWDLGITEMTEMPLEXTRA pItemExtra)
 {
 	LPWORD pw = (LPWORD) pItem->extraData;
 
@@ -438,8 +437,7 @@ resGetDlgTemplExtra(PMWDLGTEMPLATE pDlg, PMWDLGTEMPLEXTRA pDlgExtra)
 	pItem = resFirstDlgItem(pDlg);
 	for (i = 0; i < pDlg->cdit; i++) {
 		pDlgExtra->pItems[i] = pItem;
-		pItem = resGetDlgItemTemplExtra(pItem,
-						pDlgExtra->pItemsExtra + i);
+		pItem = resGetDlgItemTemplExtra(pItem, pDlgExtra->pItemsExtra + i);
 	}
 }
 
@@ -494,7 +492,7 @@ resFirstDlgItem(PMWDLGTEMPLATE pDlg)
 		RES_SKIP_WSTRING(pw);	// skip font name
 	}
 	//  dword align
-	if ((((unsigned long) pw) & 2) != 0)
+	if ((((uint32_t) pw) & 2) != 0)
 		pw++;
 	return (PMWDLGITEMTEMPLATE) pw;
 }
@@ -512,7 +510,7 @@ resNextDlgItem(PMWDLGITEMTEMPLATE pItem)
 	RES_SKIP_WSTRING(pw);
 	pw += 1 + ((*pw) >> 1);
 	//  dword align
-	if ((((unsigned long) pw) & 2) != 0)
+	if ((((uint32_t) pw) & 2) != 0)
 		pw++;
 	return (PMWDLGITEMTEMPLATE) pw;
 }
@@ -579,8 +577,7 @@ LoadResource(HMODULE hModule, HRSRC hRes)
 		return NULL;
 
 	fseek(hRes->f, hRes->fPos, SEEK_SET);
-	if (fread(hRes->pData, 1, hRes->head.DataSize, hRes->f) <
-	    hRes->head.DataSize) {
+	if (fread(hRes->pData, 1, hRes->head.DataSize, hRes->f) < hRes->head.DataSize) {
 		free(hRes->pData);
 		return NULL;
 	}
@@ -641,8 +638,7 @@ LoadString(HINSTANCE hInstance, UINT uid, LPTSTR lpBuffer, int nMaxBuff)
 	nMaxBuff--;
 	ptr = lpBuffer;
 
-	f = mwFindResource(hInstance, RT_STRING, MAKEINTRESOURCE(blkId),
-			   &resHead);
+	f = mwFindResource(hInstance, RT_STRING, MAKEINTRESOURCE(blkId), &resHead);
 	if (f) {
 		i = (blkId - 1) * 16;
 		bEof = FALSE;
@@ -661,4 +657,52 @@ LoadString(HINSTANCE hInstance, UINT uid, LPTSTR lpBuffer, int nMaxBuff)
 	}
 
 	return retV;
+}
+
+/*
+ *  Load a bitmap from resource file.
+ */
+PMWIMAGEHDR
+resLoadBitmap(HINSTANCE hInst, LPCTSTR resName)
+{
+	HGLOBAL hResBmp;
+	HRSRC hRes;
+	PMWIMAGEHDR pimage = NULL;
+	unsigned char *buffer;
+	int size;
+
+	hRes = FindResource(hInst, resName, RT_BITMAP);
+	if (!hRes)
+		return NULL;
+
+	size = SizeofResource(hInst, hRes);
+	hResBmp = LoadResource(hInst, hRes);
+	buffer = LockResource(hResBmp);
+	if (buffer) {
+		pimage = resDecodeBitmap(buffer, size);
+		UnlockResource(hResBmp);
+	}
+	FreeResource(hResBmp);
+	return pimage;
+}
+
+static PMWIMAGEHDR
+resDecodeBitmap(unsigned char *buffer, int size)
+{
+	PSD			pmd;
+	buffer_t stream;
+
+	GdImageBufferInit(&stream, buffer, size);
+	pmd = GdDecodeBMP(&stream, FALSE);	/* don't read file hdr*/
+
+	return (PMWIMAGEHDR)pmd;		//FIXME uses shared header for now
+}
+
+/*
+ *  Free memory allocated with resLoadBitmap.
+ */
+void
+resFreeBitmap(PMWIMAGEHDR pimage)
+{
+	GdFreePixmap((PSD)pimage);		// FIXME uses shared header
 }

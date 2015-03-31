@@ -39,8 +39,12 @@ OBJS := \
 	$(MW_DIR_OBJ)/demos/vnc/vncviewer/sockets.o \
 	$(MW_DIR_OBJ)/demos/vnc/vncviewer/vncviewer.o \
 	$(MW_DIR_OBJ)/demos/vnc/vncviewer/nanox.o
-	
+
+ifeq ($(ARCH), RTEMS)
+all: default #$(MW_DIR_BIN)/vnc
+else
 all: default $(MW_DIR_BIN)/vnc
+endif
 
 endif
 endif

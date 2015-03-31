@@ -206,7 +206,7 @@ void pbarOnDraw (HWND hwnd, HDC hdc, PROGRESSDATA* pData, BOOL fVertical,
 	    cr = GetSysColor(COLOR_BTNSHADOW);
 	FillBox (hdc, x + ((w - maxw)>>1), y + ((h - charh) > 1), maxw,
 		charh - 1, cr);
-	FillBox (hdc, x, y, (int)((long)w*d/100L), h, BLUE);
+	FillBox (hdc, x, y, (int)((LONG)w*d/100L), h, BLUE);
         SetTextColor (hdc, WHITE);
         SetBkMode (hdc, TRANSPARENT);
         sprintf (szText, "%d%%", d);
@@ -250,10 +250,8 @@ ProgressBarCtrlProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     switch (message)
     {
         case WM_CREATE:
-            if (!(pData = malloc (sizeof (PROGRESSDATA)))) {
-                fprintf(stderr, "Create progress bar control failure!\n");
+            if (!(pData = malloc (sizeof (PROGRESSDATA))))
                 return -1;
-            }
             
 #if TEST
             pData->nMax     = 1000;

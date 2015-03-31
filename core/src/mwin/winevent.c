@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2000, 2005 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2005, 2010 Greg Haerr <greg@censoft.com>
  * Copyright (c) 1991 David I. Bell
  *
  * Graphics server event routines for windows.
@@ -19,14 +19,6 @@
 
 static LPFN_KEYBTRANSLATE mwPtrKeyboardTranslator = NULL;
 
-#if !(DOS_TURBOC | DOS_QUICKC | _MINIX | VXWORKS)
-/*static*/ int
-abs(int n)
-{
-	return n >= 0? n: -n;
-}
-#endif
-
 /*
  * Update mouse status and issue events on it if necessary.
  * This function doesn't block, but is normally only called when
@@ -45,7 +37,7 @@ MwCheckMouseEvent(void)
 	if(mousestatus < 0) {
 		/*MwError(GR_ERROR_MOUSE_ERROR, 0);*/
 		return FALSE;
-	} else if(mousestatus) {	/* Deliver events as appropriate: */
+	} else if(mousestatus) {	/* Deliver events as appropriate: */	
 		MwHandleMouseStatus(rootx, rooty, newbuttons);
 		return TRUE;
 	}
@@ -72,21 +64,27 @@ MwCheckKeyboardEvent(void)
 			MwTerminate();
 		/*MwError(GR_ERROR_KEYBOARD_ERROR, 0);*/
 		return FALSE;
-	} else if(keystatus) {		/* Deliver events as appropriate: */
+	} else if(keystatus) {		/* Deliver events as appropriate: */	
 		switch (mwkey) {
 		case MWKEY_QUIT:
-			MwTerminate();
-			/* no return*/
+#if DEBUG
+			if (modifiers & MWKMOD_CTRL)
+				GdCaptureScreen(NULL, "screen.bmp");
+			else
+#endif
+				MwTerminate();
+			break;
 		case MWKEY_REDRAW:
 			MwRedrawScreen();
 			break;
 		case MWKEY_PRINT:
+#if DEBUG
 			if (keystatus == 1)
-				GdCaptureScreen("screen.bmp");
+				GdCaptureScreen(NULL, "screen.bmp");
+#endif
 			break;
 		}
-		MwDeliverKeyboardEvent(mwkey, modifiers, scancode,
-			keystatus==1? TRUE: FALSE);
+		MwDeliverKeyboardEvent(mwkey, modifiers, scancode, keystatus==1? TRUE: FALSE);
 		return TRUE;
 	}
 	return FALSE;
@@ -139,7 +137,7 @@ MwHandleMouseStatus(MWCOORD newx, MWCOORD newy, int newbuttons)
  * Translate and deliver hardware mouse message to proper window.
  */
 void
-MwTranslateMouseMessage(HWND hwnd,UINT msg,int hittest)
+MwTranslateMouseMessage(HWND hwnd,UINT msg,int hittest,int buttons)
 {
 	POINT		pt;
 	DWORD		tick;
@@ -176,7 +174,7 @@ MwTranslateMouseMessage(HWND hwnd,UINT msg,int hittest)
 		pt.x = cursorx;
 		pt.y = cursory;
 		ScreenToClient(hwnd, &pt);
-		PostMessage(hwnd, msg, 0, MAKELONG(pt.x, pt.y));
+		PostMessage(hwnd, msg, buttons, MAKELONG(pt.x, pt.y));
 	}
 }
 
@@ -185,7 +183,7 @@ MwTranslateMouseMessage(HWND hwnd,UINT msg,int hittest)
  */
 int mwCurrentButtons;
 
-void
+void 
 MwDeliverMouseEvent(int buttons, int changebuttons, MWKEYMOD modifiers)
 {
 	HWND	hwnd, top;
@@ -209,21 +207,21 @@ MwDeliverMouseEvent(int buttons, int changebuttons, MWKEYMOD modifiers)
 	hittest = SendMessage(hwnd, WM_NCHITTEST, 0, MAKELONG(cursorx,cursory));
 
 	if(!changebuttons)
-		MwTranslateMouseMessage(hwnd, WM_MOUSEMOVE, hittest);
+		MwTranslateMouseMessage(hwnd, WM_MOUSEMOVE, hittest, buttons);
 
 	if(changebuttons & MWBUTTON_L) {
 		msg = (buttons&MWBUTTON_L)? WM_LBUTTONDOWN: WM_LBUTTONUP;
-		MwTranslateMouseMessage(hwnd, msg, hittest);
+		MwTranslateMouseMessage(hwnd, msg, hittest, buttons);
 	}
 
 	if(changebuttons & MWBUTTON_M) {
 		msg = (buttons&MWBUTTON_M)? WM_MBUTTONDOWN: WM_MBUTTONUP;
-		MwTranslateMouseMessage(hwnd, msg, hittest);
+		MwTranslateMouseMessage(hwnd, msg, hittest, buttons);
 	}
 
 	if(changebuttons & MWBUTTON_R) {
 		msg = (buttons&MWBUTTON_R)? WM_RBUTTONDOWN: WM_RBUTTONUP;
-		MwTranslateMouseMessage(hwnd, msg, hittest);
+		MwTranslateMouseMessage(hwnd, msg, hittest, buttons);
 	}
 }
 
@@ -331,7 +329,7 @@ MwDeliverKeyboardEvent(MWKEY keyvalue, MWKEYMOD modifiers, MWSCANCODE scancode,
 	case MWKEY_KP_ENTER:
 		VK_Code = VK_RETURN;
 		break;
-
+	
 	/* Function keys */
 	case MWKEY_F1:
 		VK_Code = VK_F1;
@@ -398,6 +396,15 @@ MwDeliverKeyboardEvent(MWKEY keyvalue, MWKEYMOD modifiers, MWSCANCODE scancode,
 	case MWKEY_RALT:
 		VK_Code = VK_MENU;
 		break;
+	case MWKEY_LMETA:
+		VK_Code = VK_F1;	// Smartphone 2003 compliance
+		break;
+	case MWKEY_RMETA:
+		VK_Code = VK_F2;	// Smartphone 2003 compliance
+		break;
+	case MWKEY_ACCEPT:
+		VK_Code = VK_RETURN;// Smartphone 2003 compliance
+		break;
 
 	/* Misc function keys*/
 	case MWKEY_PRINT:
@@ -422,8 +429,6 @@ MwDeliverKeyboardEvent(MWKEY keyvalue, MWKEYMOD modifiers, MWSCANCODE scancode,
 	case MWKEY_BREAK
 	case MWKEY_QUIT:
 	case MWKEY_REDRAW:
-	case MWKEY_LMETA:
-	case MWKEY_RMETA:
 	case MWKEY_ALTGR:
 	/* Handheld function keys*/
 	case MWKEY_RECORD:
@@ -432,7 +437,6 @@ MwDeliverKeyboardEvent(MWKEY keyvalue, MWKEYMOD modifiers, MWSCANCODE scancode,
 	case MWKEY_BRIGHTNESS:
 	case MWKEY_SELECTUP:
 	case MWKEY_SELECTDOWN:
-	case MWKEY_ACCEPT:
 	case MWKEY_CANCEL:
 	case MWKEY_APP1:
 	case MWKEY_APP2:
@@ -448,14 +452,16 @@ MwDeliverKeyboardEvent(MWKEY keyvalue, MWKEYMOD modifiers, MWSCANCODE scancode,
 	    VK_Code = keyvalue;
 	else
 	    lParam |= (1 << 24);	/* set control bit in lParam*/
-
+		
 	if (mwPtrKeyboardTranslator)
 		mwPtrKeyboardTranslator(&VK_Code, &lParam, &pressed);
 
-	if (pressed)
-		PostMessage(focuswp, WM_KEYDOWN, VK_Code, lParam);
-	else
-		PostMessage(focuswp, WM_KEYUP, VK_Code, lParam);
+	if (!MwDeliverHotkey (VK_Code, pressed)) {
+		if (pressed)
+			PostMessage(focuswp, WM_KEYDOWN, VK_Code, lParam);
+		else
+			PostMessage(focuswp, WM_KEYUP, VK_Code, lParam);
+	}
 }
 
 /*

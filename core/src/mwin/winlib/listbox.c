@@ -52,6 +52,7 @@
 ** Gabriele Brugnoni 2003/09/16 Italy       Implemented WM_SETFONT  Finished
 ** Gabriele Brugnoni 2003/09/16 Italy       Implemented LBS_USETABSTOPS  Finished
 ** Gabriele Brugnoni 2003/09/29 Italy       Implemented WS_OWNERDRAW FIX and VAR
+** Ludwig Ertl		2010/05/14	Austria		Implemented WM_CTLCOLORLISTBOX	Partially finished
 **
 ** TODO:
 ** 1. Multiple columns support.
@@ -151,7 +152,7 @@ MwRegisterListboxControl(HINSTANCE hInstance)
 #if 0
 	static BITMAP sg_bmpCheckMark;
 	if (!LoadSystemBitmap(&sg_bmpCheckMark, "checkmark")) {
-		fprintf(stderr, "Load ListBox Check Mark Bitmap failure!\n");
+		DPRINTF( "Load ListBox Check Mark Bitmap failure!\n");
 		return FALSE;
 	}
 #endif
@@ -207,10 +208,12 @@ lbAskMeasureItem(HWND hwnd, int id, int *ph)
 {
 	MEASUREITEMSTRUCT ms;
 	BOOL res;
+	PLISTBOXDATA pData = (PLISTBOXDATA) hwnd->userdata;
 
 	ms.CtlType = ODT_LISTBOX;
 	ms.CtlID = GetDlgCtrlID(hwnd);
 	ms.itemID = id;
+	ms.itemHeight = pData->itemHeight;
 	if (id >= 0)
 		ms.itemData = SendMessage(hwnd, LB_GETITEMDATA, id, 0);
 	res = SendMessage(GetParent(hwnd), WM_MEASUREITEM, ms.CtlType,
@@ -237,16 +240,14 @@ lstCalcHeight(HWND hwnd)
 	if (ISOWNERDRAW(GetWindowLong(hwnd, GWL_STYLE)))
 		other = lbAskMeasureItem(hwnd, -1, &pData->itemHeight);
 
-	if (!other) {
+	if (!other || pData->itemHeight == 0) {
 		HDC hdc = GetDC(hwnd);
 #if MWCLIENT			/* nanox client */
 		GrSetGCFont(hdc->gc, hdc->font->fontid);
 		GrGetGCTextSize(hdc->gc, "X", 1, MWTF_ASCII, &xw, &xh, &xb);
 #else
 		SelectObject(hdc, GET_WND_FONT(hwnd));
-		GdSetFont(hdc->font->pfont);
-		GdGetTextSize(hdc->font->pfont, "X", 1, &xw, &xh, &xb,
-			      MWTF_ASCII);
+		GdGetTextSize(hdc->font->pfont, "X", 1, &xw, &xh, &xb, MWTF_ASCII);
 #endif
 		ReleaseDC(hwnd, hdc);
 		pData->itemHeight = xh + 1;
@@ -964,7 +965,9 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 						(DWORD) plbii->hIcon;
 				else
 					newItem->dwData = 0L;
-			}
+			} else
+				if (!(dwStyle & LBS_HASSTRINGS))
+					newItem->dwData = newItem->key;
 			newItem->dwAddData = 0L;
 
 			if (message == LB_ADDSTRING)
@@ -1521,6 +1524,21 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		break;
 
+	case WM_ERASEBKGND:
+		{
+			HDC hdc;
+			HBRUSH hbr;
+
+			if (hbr = (HBRUSH)SendMessage (GetParent(hwnd), WM_CTLCOLORLISTBOX, wParam, (LPARAM)hwnd))
+			{
+				hdc = GetDCEx(hwnd, NULL, DCX_DEFAULTCLIP);
+				FillRect(hdc, NULL, hbr);
+				ReleaseDC(hwnd, hdc);
+				return 1L;
+			}
+			return DefWindowProc(hwnd, message, wParam, lParam);
+		}
+
 	case WM_PAINT:
 		{
 			PAINTSTRUCT ps;
@@ -1829,15 +1847,12 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 			pData = (PLISTBOXDATA) pCtrl->userdata;
 			newTop = pData->itemTop;
-			switch (wParam) {
+			switch (LOWORD(wParam)) {
 			case SB_LINEDOWN:
 
 #if 0				/* test itemVisibles */
-				printf("itemVisibles:%d\n",
-				       pData->itemVisibles);
-				printf("SB_LINEDOWN:(%d:%d)\n",
-				       ITEM_BOTTOM(pData),
-				       (pData->itemCount - 1));
+				DPRINTF("itemVisibles:%d\n", pData->itemVisibles);
+				DPRINTF("SB_LINEDOWN:(%d:%d)\n", ITEM_BOTTOM(pData), (pData->itemCount - 1));
 #endif
 				if (ITEM_BOTTOM(pData) <
 				    (pData->itemCount - 1)) {
@@ -1879,7 +1894,7 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 				break;
 
 			case SB_THUMBTRACK:
-				newTop = (int) lParam;
+				newTop = (int) HIWORD(wParam);
 				scrollHeight =
 					(pData->itemTop -
 					 newTop) * pData->itemHeight;
@@ -1911,7 +1926,7 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 			GetClientRect(hwnd, &rc);
 			pData = (PLISTBOXDATA) pCtrl->userdata;
 			lh = pData->hoffset;
-			switch (wParam) {
+			switch (LOWORD(wParam)) {
 			case SB_LINERIGHT:
 				pData->hoffset += 10;
 				break;
@@ -1929,7 +1944,7 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 				break;
 
 			case SB_THUMBTRACK:
-				pData->hoffset = lParam;
+				pData->hoffset = HIWORD(wParam);
 				break;
 			}
 			if (pData->hoffset > pData->hextent - rc.right)

@@ -1,0 +1,1878 @@
+diff --git a/src/ChangeLog b/src/ChangeLog
+index 42e765f..ff6a349 100644
+--- a/src/ChangeLog
++++ b/src/ChangeLog
+@@ -1,4 +1,10 @@
++	* BMP, PNG image loaders use PSD, not MWIMAGEHDR
++	* pixmaps are now always width aligned to DWORD on right boundary
++	* GrGetImageInfo will work for pixmaps
++	* GR_IMAGE_ID id's are now pixmap id's and can be drawn on
++	* GdLoadImageFromFile/Buffer use PSD not MWIMAGEHDR, remove GdFreeImage
+ 	* rearranged MWIMAGEHDR/SCREENDEVICE to have shared header data members
++		MWIMAGEHDR structure changed, image .c files need convbmp repass
+ 	* fixed linelen parameter bug in gen_mapmemgc
+ 	* new GdCreatePixmap engine function to create memory drawing surfaces
+ 	* added palette to SCREENDEVICE in preparation for elimination of MWIMAGEHDR
+diff --git a/src/FIXME b/src/FIXME
+index ed31fc3..237e9fe 100644
+--- a/src/FIXME
++++ b/src/FIXME
+@@ -1,3 +1,4 @@
++remove psd->linelen, use psd->pitch for line length in bytes, 32bpp bmps broken
+ how to handle child windows in buffered window scheme
+ resize buffered pixmap rather than erase to background color
+ allow bgpixmaps to work with buffered windows for pixmap init
+diff --git a/src/config b/src/config
+index a00993f..d1f8781 100644
+--- a/src/config
++++ b/src/config
+@@ -128,14 +128,14 @@ HAVE_FILEIO              = Y
+ # BMP, GIF reading support
+ ####################################################################
+ HAVE_BMP_SUPPORT         = Y
+-HAVE_GIF_SUPPORT         = Y
+-HAVE_PNM_SUPPORT         = Y
+-HAVE_XPM_SUPPORT         = Y
++HAVE_GIF_SUPPORT         = N
++HAVE_PNM_SUPPORT         = N
++HAVE_XPM_SUPPORT         = N
+ 
+ ####################################################################
+ # JPEG support through libjpeg, see README.txt in contrib/jpeg
+ ####################################################################
+-HAVE_JPEG_SUPPORT        = Y
++HAVE_JPEG_SUPPORT        = N
+ INCJPEG                  = .
+ LIBJPEG                  = /usr/lib/libjpeg.so
+ 
+diff --git a/src/drivers/genmem.c b/src/drivers/genmem.c
+index 9aa2b32..9ca7264 100644
+--- a/src/drivers/genmem.c
++++ b/src/drivers/genmem.c
+@@ -15,11 +15,11 @@
+ 
+ /* alloc and initialize a new memory drawing surface (memgc)*/
+ PSD
+-GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pixels)
++GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pixels, int palsize)
+ {
+-	PSD		psd;
+-	int 	size, linelen, pitch, bpp, planes, data_format;
+-	int		pixtype;
++	PSD		pmd;
++	int 	bpp, planes, data_format, pixtype;
++	unsigned int size, linelen, pitch;
+    
+ 	if (width <= 0 || height <= 0)
+ 		return NULL;
+@@ -39,14 +39,44 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ 		/* else fall through - create RGBA8888 pixmap*/
+ 	case MWIF_RGBA8888:
+ 		bpp = 32;
+-		data_format = MWIF_RGBA8888;
++		data_format = format;
+ 		pixtype = MWPF_TRUECOLORABGR;
+ 		break;
+ 	case MWIF_BGRA8888:
+ 		bpp = 32;
+-		data_format = MWIF_BGRA8888;
++		data_format = format;
+ 		pixtype = MWPF_TRUECOLOR8888;
+ 		break;
++	case MWIF_PAL1:
++		bpp = 1;
++		data_format = format;
++		pixtype = MWPF_PALETTE;
++		break;
++	case MWIF_PAL4:
++		bpp = 4;
++		data_format = format;
++		pixtype = MWPF_PALETTE;
++		break;
++	case MWIF_PAL8:
++		bpp = 8;
++		data_format = format;
++		pixtype = MWPF_PALETTE;
++		break;
++	case MWIF_RGB555:
++		bpp = 16;
++		data_format = format;
++		pixtype = MWPF_TRUECOLOR555;
++		break;
++	case MWIF_RGB565:
++		bpp = 16;
++		data_format = format;
++		pixtype = MWPF_TRUECOLOR565;
++		break;
++	case MWIF_RGB888:
++		bpp = 24;
++		data_format = format;
++		pixtype = MWPF_TRUECOLOR888;
++		break;
+ 	default:
+ 		DPRINTF("GdCreatePixmap: unsupported format %08x\n", format);
+ 		return NULL;	/* fail*/
+@@ -57,27 +87,57 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ 	 * support blitting, this will fail.  Use root window screen
+ 	 * device for compatibility for now.
+ 	 */
+-	psd = rootpsd->AllocateMemGC(rootpsd);
+-	if (!psd)
++	pmd = rootpsd->AllocateMemGC(rootpsd);
++	if (!pmd)
+ 		return NULL;
+ 
+-	GdCalcMemGCAlloc(psd, width, height, planes, bpp, &size, &linelen, &pitch);
++	GdCalcMemGCAlloc(pmd, width, height, planes, bpp, &size, &linelen, &pitch);
++
++	/* FIXME remove later*/
++	switch (pmd->bpp) {
++	case 1:
++	case 4:
++	case 8:
++		pmd->bytesperpixel = 1;
++		break;
++	case 16:
++		pmd->bytesperpixel = 2;
++		break;
++	case 24:
++		pmd->bytesperpixel = 3;
++		break;
++	case 32:
++		pmd->bytesperpixel = 4;
++		break;
++	}
+ 
+ 	/* Allocate space for pixel values */
+ 	if (!pixels) {
+ 		pixels = calloc(size, 1);
+-		psd->flags |= PSF_ADDRMALLOC;
++		pmd->flags |= PSF_ADDRMALLOC;
+ 	}
+ 	if (!pixels) {
+-		psd->FreeMemGC(psd);
++err:
++		pmd->FreeMemGC(pmd);
+ 		return NULL;
+ 	}
+-  
+-	psd->MapMemGC(psd, width, height, planes, bpp, data_format, linelen, pitch, size, pixels);
+-	psd->pixtype = pixtype;		/* save pixtype for proper colorval creation*/
+-	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
++ 
++	/* allocate palette*/
++	if (palsize && (pmd->palette = calloc(palsize*sizeof(MWPALENTRY), 1)) == NULL)
++		goto err;
++	pmd->palsize = palsize;
++ 
++	pmd->MapMemGC(pmd, width, height, planes, bpp, data_format, linelen, pitch, size, pixels);
++	pmd->pixtype = pixtype;		/* save pixtype for proper colorval creation*/
++	pmd->ncolors = (pmd->bpp >= 24)? (1 << 24): (1 << pmd->bpp);
++
++	return pmd;
++}
+ 
+-	return psd;
++void
++GdFreePixmap(PSD pmd)
++{
++	pmd->FreeMemGC(pmd);
+ }
+ 
+ /* allocate a memory offscreen screen device (pixmap)*/
+@@ -96,13 +156,15 @@ gen_allocatememgc(PSD psd)
+ 	*mempsd = *psd;
+ 
+ 	/* initialize*/
+-	mempsd->flags |= PSF_MEMORY;
+-	mempsd->flags &= ~(PSF_SCREEN | PSF_ADDRMALLOC);
++	//mempsd->flags |= PSF_MEMORY;
++	//mempsd->flags &= ~(PSF_SCREEN | PSF_ADDRMALLOC);
++	mempsd->flags = PSF_MEMORY;			/* reset PSF_SCREEN or PSF_ADDRMALLOC flags*/
+ 	mempsd->portrait = MWPORTRAIT_NONE; /* don't rotate offscreen pixmaps*/
+ 	mempsd->addr = NULL;
+ 	mempsd->Update = NULL;				/* no external updates required for mem device*/
+ 	mempsd->palette = NULL;				/* don't copy any palette*/
+ 	mempsd->palsize = 0;
++	mempsd->transcolor = MWNOCOLOR;
+ 
+ 	return mempsd;
+ }
+@@ -175,10 +237,10 @@ gen_freememgc(PSD mempsd)
+  * for bpp <= 8.  Linelen is converted to bytelen for bpp > 8.
+  */
+ int
+-GdCalcMemGCAlloc(PSD psd, unsigned int width, unsigned int height, int planes,
+-	int bpp, int *psize, int *plinelen, int *ppitch)
++GdCalcMemGCAlloc(PSD psd, int width, int height, int planes,
++	int bpp, unsigned int *psize, unsigned *plinelen, unsigned *ppitch)
+ {
+-	int	bytelen, linelen;
++	unsigned int pitch, linelen;
+ 
+ 	if(!planes)
+ 		planes = psd->planes;
+@@ -194,57 +256,62 @@ GdCalcMemGCAlloc(PSD psd, unsigned int width, unsigned int height, int planes,
+ 		height = tmp;
+ 	}
+ 
+-	/*
+-	 * use bpp and planes to create size and linelen.
+-	 * linelen is in bytes for bpp 1, 2, 4, 8, and pixels for bpp 16,24,32.
+-	 */
+-	if(planes == 1) {
+-		switch(bpp) {
+-		case 1:
+-			linelen = (width+7)/8;
+-			bytelen = linelen = (linelen+3) & ~3;
+-			break;
+-		case 2:
+-			linelen = (width+3)/4;
+-			bytelen = linelen = (linelen+3) & ~3;
+-			break;
+-		case 4:
+-			linelen = (width+1)/2;
+-			bytelen = linelen = (linelen+3) & ~3;
+-			break;
+-		case 8:
+-			bytelen = linelen = (width+3) & ~3;
+-			break;
+-		case 16:
+-			linelen = width;
+-			bytelen = width * 2;
+-			break;
+-		case 24:
+-		case 18:
+-			linelen = width;
+-			bytelen = width * 3;
+-			break;
+-		case 32:
+-			linelen = width;
+-			bytelen = width * 4;
+-			break;
+-		default:
+-			return 0;
+-		}
+-	} else if(planes == 4) {
+-		/* FIXME assumes VGA 4 planes 4bpp*/
+-		/* we use 4bpp linear for memdc format*/
++	/* use 4bpp linear for VGA 4 planes memdc format*/
++	if(planes == 4)
++		bpp = 4;
++
++	/* compute linelen: bytes per line for bpp 1, 2, 4 and pixels otherwise*/
++	switch(bpp) {
++	case 1:
++		linelen = (width+7)/8;
++		break;
++	case 2:
++		linelen = (width+3)/4;
++		break;
++	case 4:
+ 		linelen = (width+1)/2;
+-		linelen = (linelen+3) & ~3;
+-		bytelen = linelen;
+-	} else {
+-		*psize = *plinelen = 0;
++		break;
++	case 8:
++	case 16:
++	case 18:
++	case 24:
++	case 32:
++		linelen = width;
++		break;
++	default:
++		*ppitch = *psize = *plinelen = 0;
+ 		return 0;
+ 	}
+ 
+-	*psize = bytelen * height;
++	/* right align image width to DWORD boundary*/
++	linelen = (linelen + 3) & ~3;
++
++	/* compute pitch: bytes per line*/
++	switch (bpp) {
++	case 1:
++	case 2:
++	case 4:
++	case 8:
++	default:
++		pitch = linelen;
++		break;
++	case 16:
++		pitch = linelen * 2;
++		break;
++	case 18:
++	case 24:
++		pitch = linelen * 3;
++		break;
++	case 32:
++		pitch = linelen * 4;
++		break;
++	}
++	// can't do this with linelen calc'd above... must remove linelen
++	//pitch = (pitch + 3) & ~3;
++
++	*psize = pitch * height;
+ 	*plinelen = linelen;
+-	*ppitch = bytelen;
++	*ppitch = pitch;
+ 	return 1;
+ }
+ 
+diff --git a/src/drivers/genmem.h b/src/drivers/genmem.h
+index 558e472..2e0502a 100644
+--- a/src/drivers/genmem.h
++++ b/src/drivers/genmem.h
+@@ -9,13 +9,17 @@
+ /* entry points*/
+ 
+ /* genmem.c*/
+-PSD		GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pixels);
++PSD		GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pixels,
++			int palsize);
++void	GdFreePixmap(PSD pmd);
++
+ PSD 	gen_allocatememgc(PSD psd);
+ MWBOOL	gen_mapmemgc(PSD mempsd, MWCOORD w, MWCOORD h, int planes, int bpp, int data_format,
+ 			int linelen, int pitch, int size, void *addr);
+ void	gen_freememgc(PSD mempsd);
+-int		GdCalcMemGCAlloc(PSD psd, unsigned int width, unsigned int height,
+-			int planes, int bpp, int *size, int *linelen, int *pitch);
++
++int		GdCalcMemGCAlloc(PSD psd, int width, int height, int planes, int bpp,
++			unsigned int *size, unsigned int *linelen, unsigned int *pitch);
+ 
+ void	gen_fillrect(PSD psd,MWCOORD x1, MWCOORD y1, MWCOORD x2, MWCOORD y2, MWPIXELVAL c);
+ 
+diff --git a/src/drivers/scr_ecos.c b/src/drivers/scr_ecos.c
+index 4a6d315..a7cb8b1 100644
+--- a/src/drivers/scr_ecos.c
++++ b/src/drivers/scr_ecos.c
+@@ -35,7 +35,7 @@ static void fb_close(PSD psd);
+ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+diff --git a/src/drivers/scr_fb.c b/src/drivers/scr_fb.c
+index fd53e95..04d20b3 100644
+--- a/src/drivers/scr_fb.c
++++ b/src/drivers/scr_fb.c
+@@ -49,7 +49,7 @@ static void fb_close(PSD psd);
+ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+diff --git a/src/drivers/scr_mem.c b/src/drivers/scr_mem.c
+index 0154618..a922f56 100644
+--- a/src/drivers/scr_mem.c
++++ b/src/drivers/scr_mem.c
+@@ -27,7 +27,7 @@ static void fb_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD heig
+ void fb_graphicsflush(PSD psd);
+ 
+ SCREENDEVICE scrdev = {
+-	0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0, NULL, 0, NULL, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0,
++	0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0, NULL, 0, NULL, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0,0,0,0,0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+diff --git a/src/drivers/scr_mosync.c b/src/drivers/scr_mosync.c
+index 936a244..117a0b3 100644
+--- a/src/drivers/scr_mosync.c
++++ b/src/drivers/scr_mosync.c
+@@ -19,7 +19,7 @@ static PSD  fb_open(PSD psd);
+ static void fb_close(PSD psd);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+diff --git a/src/drivers/scr_psp.c b/src/drivers/scr_psp.c
+index 70763e8..ff99e76 100644
+--- a/src/drivers/scr_psp.c
++++ b/src/drivers/scr_psp.c
+@@ -31,7 +31,7 @@ fb_setpalette(PSD psd,int first,int count,MWPALENTRY *pal)
+ }
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+diff --git a/src/drivers/scr_rtems.c b/src/drivers/scr_rtems.c
+index fcf4ec3..0da9faa 100644
+--- a/src/drivers/scr_rtems.c
++++ b/src/drivers/scr_rtems.c
+@@ -27,7 +27,7 @@ static void fb_close(PSD psd);
+ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ 
+ SCREENDEVICE	scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	fb_open,
+ 	fb_close,
+diff --git a/src/drivers/scr_win32.c b/src/drivers/scr_win32.c
+index c2c8ebf..ae5c5d9 100644
+--- a/src/drivers/scr_win32.c
++++ b/src/drivers/scr_win32.c
+@@ -43,7 +43,7 @@ static void win32_getscreeninfo(PSD psd, PMWSCREENINFO psi);
+ static void win32_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height);
+ 
+ SCREENDEVICE scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	win32_open,
+ 	win32_close,
+diff --git a/src/drivers/scr_x11.c b/src/drivers/scr_x11.c
+index 8ff92f7..a3d58bc 100644
+--- a/src/drivers/scr_x11.c
++++ b/src/drivers/scr_x11.c
+@@ -52,7 +52,7 @@ static void X11_preselect(PSD psd);
+ static void X11_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height);
+ 
+ SCREENDEVICE scrdev = {
+-	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0,
++	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+ 	X11_open,
+ 	X11_close,
+@@ -592,6 +592,7 @@ X11_open(PSD psd)
+ 	/* Calculate the correct linelen here */
+ 	GdCalcMemGCAlloc(psd, psd->xres, psd->yres, psd->planes,
+ 			 psd->bpp, &psd->size, &psd->linelen, &psd->pitch);
++printf("width %d pitch %d\n", psd->xres, psd->pitch);
+ 	if ((psd->addr = malloc(psd->size)) == NULL)
+ 		return NULL;
+ 	psd->ncolors = psd->bpp >= 24? (1 << 24): (1 << psd->bpp);
+diff --git a/src/engine/devimage.c b/src/engine/devimage.c
+index 716f9ab..d25fd86 100644
+--- a/src/engine/devimage.c
++++ b/src/engine/devimage.c
+@@ -29,17 +29,6 @@
+ 
+ #if MW_FEATURE_IMAGES /* whole file */
+ 
+-/* cached image list*/
+-typedef struct {
+-	MWLIST		link;		/* link list*/
+-	int		id;		/* image id*/
+-	PMWIMAGEHDR	pimage;		/* image data*/
+-	PSD		psd;		/* FIXME shouldn't need this*/
+-} IMAGEITEM, *PIMAGEITEM;
+-
+-static MWLISTHEAD imagehead;		/* global image list*/
+-static int nextimageid = 1;
+-
+ /*
+  * Image decoding and display
+  * NOTE: This routine and APIs will change in subsequent releases.
+@@ -50,7 +39,7 @@ static int nextimageid = 1;
+  * Clipping is not currently supported, just stretch/shrink to fit.
+  *
+  */
+-static int GdDecodeImage(PSD psd, buffer_t *src, char *path, int flags);
++static PSD GdDecodeImage(PSD psd, buffer_t *src, char *path, int flags);
+ 
+ /*
+  * Buffered input functions to replace stdio functions
+@@ -134,7 +123,7 @@ GdImageBufferEOF(buffer_t *buffer)
+  * @param size The size of the buffer.
+  * @param flags If nonzero, JPEG images will be loaded as grayscale.  Yuck!
+  */
+-int
++PSD
+ GdLoadImageFromBuffer(PSD psd, void *buffer, int size, int flags)
+ {
+ 	buffer_t src;
+@@ -161,15 +150,15 @@ void
+ GdDrawImageFromBuffer(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
+ 	MWCOORD height, void *buffer, int size, int flags)
+ {
+-	int id;
++	PSD		 pmd;
+ 	buffer_t src;
+ 
+ 	GdImageBufferInit(&src, buffer, size);
+-	id = GdDecodeImage(psd, &src, NULL, flags);
++	pmd = GdDecodeImage(psd, &src, NULL, flags);
+ 
+-	if (id) {
+-		GdDrawImagePartToFit(psd, x, y, width, height, 0, 0, 0, 0, id);
+-		GdFreeImage(id);
++	if (pmd) {
++		GdDrawImagePartToFit(psd, x, y, width, height, 0, 0, 0, 0, pmd);
++		pmd->FreeMemGC(pmd);
+ 	}
+ }
+ 
+@@ -188,15 +177,15 @@ GdDrawImageFromBuffer(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
+  * @param flags If nonzero, JPEG images will be loaded as grayscale.  Yuck!
+  */
+ void
+-GdDrawImageFromFile(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
+-	MWCOORD height, char *path, int flags)
++GdDrawImageFromFile(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
++	char *path, int flags)
+ {
+-	int	id;
++	PSD	pmd;
+ 
+-	id = GdLoadImageFromFile(psd, path, flags);
+-	if (id) {
+-		GdDrawImagePartToFit(psd, x, y, width, height, 0, 0, 0, 0, id);
+-		GdFreeImage(id);
++	pmd = GdLoadImageFromFile(psd, path, flags);
++	if (pmd) {
++		GdDrawImagePartToFit(psd, x, y, width, height, 0, 0, 0, 0, pmd);
++		pmd->FreeMemGC(pmd);
+ 	}
+ }
+ 
+@@ -207,13 +196,14 @@ GdDrawImageFromFile(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
+  * @param path The file containing the image data.
+  * @param flags If nonzero, JPEG images will be loaded as grayscale.  Yuck!
+  */
+-int
++PSD
+ GdLoadImageFromFile(PSD psd, char *path, int flags)
+ {
+-	int fd, id;
+-	struct stat s;
++	int fd;
++	PSD	pmd;
+ 	void *buffer = 0;
+ 	buffer_t src;
++	struct stat s;
+   
+ 	fd = open(path, O_RDONLY);
+ 	if (fd < 0 || fstat(fd, &s) < 0) {
+@@ -244,7 +234,7 @@ GdLoadImageFromFile(PSD psd, char *path, int flags)
+ #endif
+ 
+ 	GdImageBufferInit(&src, buffer, s.st_size);
+-	id = GdDecodeImage(psd, &src, path, flags);
++	pmd = GdDecodeImage(psd, &src, path, flags);
+ 
+ #if HAVE_MMAP
+ 	munmap(buffer, s.st_size);
+@@ -252,7 +242,7 @@ GdLoadImageFromFile(PSD psd, char *path, int flags)
+ 	free(buffer);
+ #endif
+ 	close(fd);
+-	return id;
++	return pmd;
+ }
+ #endif /* HAVE_FILEIO*/
+ 
+@@ -262,89 +252,43 @@ GdLoadImageFromFile(PSD psd, char *path, int flags)
+  * @src: The image data.
+  * @flags: If nonzero, JPEG images will be loaded as grayscale.  Yuck!
+  *
+- * Load an image.
++ * Load an image into a pixmap.
+  */
+-static int
+-GdDecodeImage(PSD psd, buffer_t * src, char *path, int flags)
++static PSD
++GdDecodeImage(PSD psd, buffer_t *src, char *path, int flags)
+ {
+-        int         loadOK = 0;
+-        PMWIMAGEHDR pimage;
+-        PIMAGEITEM  pItem;
+-
+-	/* allocate image struct*/
+-	pimage = (PMWIMAGEHDR)malloc(sizeof(MWIMAGEHDR));
+-	if(!pimage) {
+-		return 0;
+-	}
+-	pimage->flags = PSF_IMAGEHDR;
+-	pimage->imagebits = NULL;
+-	pimage->palette = NULL;
+-	pimage->transcolor = MWNOCOLOR;
++	PSD			pmd = NULL;
+ 
+ #if HAVE_TIFF_SUPPORT
+ 	/* must be first... no buffer support yet*/
+-	if (path)
+-		loadOK = GdDecodeTIFF(path, pimage);
++	if (path && (pmd = GdDecodeTIFF(path, pimage)) != NULL)
++		return pmd;
+ #endif
+ #if HAVE_BMP_SUPPORT
+-	if (loadOK == 0) 
+-		loadOK = GdDecodeBMP(src, pimage, TRUE);	/* read file header*/
++	if ((pmd = GdDecodeBMP(src, TRUE)) != NULL)
++		return pmd;
+ #endif
+ #if HAVE_GIF_SUPPORT
+-	if (loadOK == 0) 
+-		loadOK = GdDecodeGIF(src, pimage);
++	if ((pmd = GdDecodeGIF(src)) != NULL)
++		return pmd;
+ #endif
+ #if HAVE_JPEG_SUPPORT
+-	if (loadOK == 0) 
+-		loadOK = GdDecodeJPEG(src, pimage, psd, flags);
++	if ((pmd = GdDecodeJPEG(src, psd, flags)) != NULL)
++		return pmd;
+ #endif
+ #if HAVE_PNG_SUPPORT
+-	if (loadOK == 0) 
+-		loadOK = GdDecodePNG(src, pimage);
++	if ((pmd = GdDecodePNG(src)) != NULL)
++		return pmd;
+ #endif
+ #if HAVE_PNM_SUPPORT
+-	if(loadOK == 0)
+-		loadOK = GdDecodePNM(src, pimage);
++	if ((pmd = GdDecodePNM(src)) != NULL)
++		return pmd;
+ #endif
+ #if HAVE_XPM_SUPPORT
+-	if (loadOK == 0) 
+-		loadOK = GdDecodeXPM(src, pimage, psd);
++	if ((pmd = GdDecodeXPM(src, psd)) != NULL)
++		return pmd;
+ #endif
+-
+-	if (loadOK == 0) {
+-		EPRINTF("GdLoadImageFromFile: unknown image type\n");
+-		goto err;		/* image loading error*/
+-	}
+-	if (loadOK != 1)
+-		goto err;		/* image loading error*/
+-
+-	/* allocate id*/
+-	pItem = GdItemNew(IMAGEITEM);
+-	if (!pItem)
+-		goto err;
+-	pItem->id = nextimageid++;
+-	pItem->pimage = pimage;
+-	pItem->psd = psd;
+-	GdListAdd(&imagehead, &pItem->link);
+-
+-	return pItem->id;
+-
+-err:
+-	free(pimage);
+-	return 0;			/* image loading error*/
+-}
+-
+-static PIMAGEITEM
+-findimage(int id)
+-{
+-	PMWLIST		p;
+-	PIMAGEITEM	pimagelist;
+-
+-	for (p=imagehead.head; p; p=p->next) {
+-		pimagelist = GdItemAddr(p, IMAGEITEM, link);
+-		if (pimagelist->id == id)
+-			return pimagelist;
+-	}
++	EPRINTF("GdLoadImageFromFile: Image load error\n");
+ 	return NULL;
+ }
+ 
+@@ -366,15 +310,9 @@ findimage(int id)
+  */
+ void
+ GdDrawImagePartToFit(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
+-	MWCOORD sx, MWCOORD sy, MWCOORD swidth, MWCOORD sheight, int id)
++	MWCOORD sx, MWCOORD sy, MWCOORD swidth, MWCOORD sheight, PSD pmd)
+ {
+-	PIMAGEITEM	pItem;
+-	PMWIMAGEHDR	pimage;
+-
+-	pItem = findimage(id);
+-	if (!pItem)
+-		return;
+-	pimage = pItem->pimage;
++	PMWIMAGEHDR pimage = (PMWIMAGEHDR)pmd;	//FIXME
+ 
+ 	/*
+ 	 * Display image, possibly stretch/shrink to resize
+@@ -424,33 +362,6 @@ GdDrawImagePartToFit(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD heigh
+ }
+ 
+ /**
+- * Destroy an image.
+- *
+- * @param id Image to free.
+- */
+-void
+-GdFreeImage(int id)
+-{
+-	PIMAGEITEM	pItem;
+-	PMWIMAGEHDR	pimage;
+-
+-	pItem = findimage(id);
+-	if (pItem) {
+-		GdListRemove(&imagehead, &pItem->link);
+-		pimage = pItem->pimage;
+-
+-		/* delete image bits*/
+-		if(pimage->imagebits)
+-			free(pimage->imagebits);
+-		if(pimage->palette)
+-			free(pimage->palette);
+-
+-		free(pimage);
+-		GdItemFree(pItem);
+-	}
+-}
+-
+-/**
+  * Get information about an image.
+  *
+  * @param id Image to query.
+@@ -458,19 +369,16 @@ GdFreeImage(int id)
+  * @return TRUE on success, FALSE on error.
+  */
+ MWBOOL
+-GdGetImageInfo(int id, PMWIMAGEINFO pii)
++GdGetImageInfo(PSD pmd, PMWIMAGEINFO pii)
+ {
+-	PMWIMAGEHDR	pimage;
+-	PIMAGEITEM	pItem;
++	PMWIMAGEHDR	pimage = (PMWIMAGEHDR)pmd;	//FIXME
+ 	int		i;
+ 
+-	pItem = findimage(id);
+-	if (!pItem) {
++	if (!pimage) {
+ 		memset(pii, 0, sizeof(*pii));
+ 		return FALSE;
+ 	}
+-	pimage = pItem->pimage;
+-	pii->id = id;
++
+ 	pii->width = pimage->width;
+ 	pii->height = pimage->height;
+ 	pii->planes = pimage->planes;
+@@ -485,7 +393,8 @@ GdGetImageInfo(int id, PMWIMAGEINFO pii)
+ 				pii->palette[i] = pimage->palette[i];
+ 		} else {
+ 			/* FIXME handle jpeg's without palette*/
+-			GdGetPalette(pItem->psd, 0, pimage->palsize, pii->palette);
++			// FIXME may want pixmap's palette here... was pItem->psd
++			GdGetPalette(&scrdev, 0, pimage->palsize, pii->palette);
+ 		}
+ 	}
+ 	return TRUE;
+@@ -497,7 +406,7 @@ GdGetImageInfo(int id, PMWIMAGEINFO pii)
+  * from bits per pixel and width
+  */
+ void
+-GdComputeImagePitch(int bpp, int width, int *pitch, int *bytesperpixel)
++GdComputeImagePitch(int bpp, int width, unsigned int *pitch, int *bytesperpixel)
+ {
+ 	int	linesize;
+ 	int	bytespp = 1;
+diff --git a/src/engine/image_bmp.c b/src/engine/image_bmp.c
+index aa76780..1ad3fee 100644
+--- a/src/engine/image_bmp.c
++++ b/src/engine/image_bmp.c
+@@ -13,6 +13,7 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include "device.h"
++#include "../drivers/genmem.h"
+ #include "convblit.h"
+ #include "swap.h"
+ 
+@@ -101,33 +102,31 @@ static inline void little_endian_to_host_16(void *addr)
+ /*
+  * BMP decoding routine
+  */
+-int
+-GdDecodeBMP(buffer_t *src, PMWIMAGEHDR pimage, MWBOOL readfilehdr)
++PSD
++GdDecodeBMP(buffer_t *src, MWBOOL readfilehdr)
+ {
+-	int			h, i, compression;
++	int			h, i, compression, width, height, bpp, data_format, palsize;
++	PSD			pmd;
+ 	DWORD		hdrsize;
+ 	BMPFILEHEAD	bmpf;
+ 
+ 	GdImageBufferSeekTo(src, 0L);
+ 
+-	pimage->imagebits = NULL;
+-	pimage->palette = NULL;
+-
+ 	/* read BMP file header*/
+ 	if (readfilehdr) {
+ 		if (GdImageBufferRead(src, &bmpf, sizeof(bmpf)) != sizeof(bmpf))
+-			return 0;
++			return NULL;
+ 
+ 		/* check magic bytes*/
+ 		if (bmpf.bfType[0] != 'B' || bmpf.bfType[1] != 'M')
+-			return 0;		/* not bmp image*/
++			return NULL;		/* not bmp image*/
+ 
+ 		little_endian_to_host_32(&bmpf.bfOffBits);
+ 	}
+ 
+ 	/* Read header size to determine header type*/
+ 	if (GdImageBufferRead(src, &hdrsize, sizeof(hdrsize)) != sizeof(hdrsize))
+-		return 0;			/* not bmp image*/
++		return 0;				/* not bmp image*/
+ 	little_endian_to_host_32(&hdrsize);
+ 
+ 	/* might be windows or os/2 header */
+@@ -137,27 +136,26 @@ GdDecodeBMP(buffer_t *src, PMWIMAGEHDR pimage, MWBOOL readfilehdr)
+ 		/* read os/2 header */
+ 		if (GdImageBufferRead(src, &bmpc.bcWidth, sizeof(bmpc)-sizeof(DWORD)) !=
+ 			sizeof(bmpc)-sizeof(DWORD))
+-				return 0;	/* not bmp image*/
++				return NULL;	/* not bmp image*/
+ 
+ 		little_endian_to_host_16(&bmpc.bcWidth);
+ 		little_endian_to_host_16(&bmpc.bcHeight);
+ 		little_endian_to_host_16(&bmpc.bcBitCount);
+ 		little_endian_to_host_16(&bmpc.bcWidth);
+ 		
+-		pimage->width = bmpc.bcWidth;
+-		pimage->height = bmpc.bcHeight;
+-		pimage->bpp = bmpc.bcBitCount;
+-		if (pimage->bpp <= 8)
+-			pimage->palsize = 1 << pimage->bpp;
+-		else pimage->palsize = 0;
+ 		compression = BI_RGB;
++		width = bmpc.bcWidth;
++		height = bmpc.bcHeight;
++		bpp = bmpc.bcBitCount;
++		if (bpp <= 8) palsize = 1 << bpp;
++		else palsize = 0;
+ 	} else {
+ 		BMPINFOHEAD	bmpi;
+ 
+ 		/* read windows header */
+ 		if (GdImageBufferRead(src, &bmpi.BiWidth, sizeof(bmpi)-sizeof(DWORD))
+ 			!= sizeof(bmpi)-sizeof(DWORD))
+-				return 0;	/* not bmp image*/
++				return NULL;	/* not bmp image*/
+ 
+ 		little_endian_to_host_32(&bmpi.BiWidth);
+ 		little_endian_to_host_32(&bmpi.BiHeight);
+@@ -165,62 +163,56 @@ GdDecodeBMP(buffer_t *src, PMWIMAGEHDR pimage, MWBOOL readfilehdr)
+ 		little_endian_to_host_32(&bmpi.BiCompression);
+ 		little_endian_to_host_32(&bmpi.BiClrUsed);
+ 
+-		pimage->width = bmpi.BiWidth;
+-		pimage->height = bmpi.BiHeight;
+-		pimage->bpp = bmpi.BiBitCount;
+-		pimage->palsize = bmpi.BiClrUsed;
+-		if (pimage->palsize > 256)
+-			pimage->palsize = 0;
+-		else if(pimage->palsize == 0 && pimage->bpp <= 8)
+-			pimage->palsize = 1 << pimage->bpp;
+ 		compression = bmpi.BiCompression;
++		width = bmpi.BiWidth;
++		height = bmpi.BiHeight;
++		bpp = bmpi.BiBitCount;
++		palsize = bmpi.BiClrUsed;
++		if (palsize > 256) palsize = 0;
++		else if (palsize == 0 && bpp <= 8) palsize = 1 << bpp;
+ 	}
+-DPRINTF("bmp bpp %d\n", pimage->bpp);
+-	pimage->planes = 1;
++DPRINTF("bmp bpp %d pal %d\n", bpp, palsize);
+ 
+ 	/* only 1, 4, 8, 16, 24 and 32 bpp bitmaps*/
+-	switch(pimage->bpp) {
++	switch(bpp) {
+ 	case 1:
++		data_format = MWIF_PAL1;
++		break;
+ 	case 4:
++		data_format = MWIF_PAL4;
++		break;
+ 	case 8:
+-		pimage->data_format = 0;				/* force GdDrawImage for now*/
++		data_format = MWIF_PAL8;
+ 		break;
+ 	case 16:
+-		pimage->data_format = MWIF_RGB565;
++		data_format = MWIF_RGB565;
+ 		break;
+ 	case 24:
+-		pimage->data_format = MWIF_RGB888;		/* BGR will be converted to RGB*/
++		data_format = MWIF_RGB888;		/* BGR will be converted to RGB*/
+ 		break;
+ 	case 32:
+-		pimage->data_format = MWIF_RGBA8888;	/* converted to 32bpp RGBA w/255 alpha*/
++		data_format = MWIF_RGBA8888;	/* converted to 32bpp RGBA w/255 alpha*/
+ 		break;
+ 	default:
+ 		EPRINTF("GdDecodeBMP: image bpp not 1, 4, 8, 16, 24 or 32\n");
+-		return 2;	/* image loading error*/
++		return NULL;
+ 	}
+ 
+-	/* compute byte line size and bytes per pixel*/
+-	GdComputeImagePitch(pimage->bpp, pimage->width, &pimage->pitch, &pimage->bytesperpixel);
+-
+-	/* Allocate image */
+-	if( (pimage->imagebits = malloc(pimage->pitch*pimage->height)) == NULL)
+-		goto err;
+-	if( (pimage->palette = malloc(256*sizeof(MWPALENTRY))) == NULL)
+-		goto err;
++	pmd = GdCreatePixmap(&scrdev, width, height, data_format, NULL, palsize);
+ 
+ 	/* get colormap*/
+-	if(pimage->bpp <= 8) {
+-		for(i=0; i<pimage->palsize; i++) {
+-			pimage->palette[i].b = GdImageBufferGetChar(src);
+-			pimage->palette[i].g = GdImageBufferGetChar(src);
+-			pimage->palette[i].r = GdImageBufferGetChar(src);
+-			if(hdrsize != sizeof(BMPCOREHEAD))
++	if (bpp <= 8) {
++		for (i=0; i<palsize; i++) {
++			pmd->palette[i].b = GdImageBufferGetChar(src);
++			pmd->palette[i].g = GdImageBufferGetChar(src);
++			pmd->palette[i].r = GdImageBufferGetChar(src);
++			if (hdrsize != sizeof(BMPCOREHEAD))
+ 				GdImageBufferGetChar(src);
+ 		}
+ 	}
+ 
+ 	/* determine 16bpp 5/5/5 or 5/6/5 format*/
+-	if (pimage->bpp == 16) {
++	if (bpp == 16) {
+ 		DWORD format = 0x7c00;		/* default is 5/5/5*/
+ 
+ 		if (compression == BI_BITFIELDS) {
+@@ -229,7 +221,7 @@ DPRINTF("bmp bpp %d\n", pimage->bpp);
+ 			little_endian_to_host_32(&format);
+ 		}
+ 		if (format == 0x7c00)
+-			pimage->data_format = MWIF_RGB555;
++			pmd->data_format = MWIF_RGB555;
+ 		/* else it's 5/6/5 format, no flag required*/
+ 	}
+ 
+@@ -237,13 +229,13 @@ DPRINTF("bmp bpp %d\n", pimage->bpp);
+ 	if (readfilehdr)
+ 		GdImageBufferSeekTo(src, bmpf.bfOffBits);
+ 
+-	h = pimage->height;
++	h = height;
+ 	/* For every row ... */
+ 	while (--h >= 0) {
+ 		/* turn image rightside up*/
+-		MWUCHAR *imagebits = pimage->imagebits + h*pimage->pitch;
++		MWUCHAR *imagebits = ((unsigned char *)pmd->addr) + h * pmd->pitch;
+ 
+-		/* Get row data from file */
++		/* Get row data from file, images are DWORD right aligned */
+ 		if(compression == BI_RLE8) {
+ 			if(!DecodeRLE8(imagebits, src))
+ 				break;
+@@ -251,25 +243,22 @@ DPRINTF("bmp bpp %d\n", pimage->bpp);
+ 			if(!DecodeRLE4(imagebits, src))
+ 				break;
+ 		} else {
+-			if(GdImageBufferRead(src, imagebits, pimage->pitch) != pimage->pitch)
+-					goto err;
++			if(GdImageBufferRead(src, imagebits, pmd->pitch) != pmd->pitch)
++				goto err;
+ 		}
+ 	}
+ 
+ 	/* conv BGR -> RGB*/
+-	if (pimage->bpp == 24)
+-		convblit_bgr888_rgb888(pimage->imagebits, pimage->width, pimage->height, pimage->pitch);
+-	else if (pimage->bpp == 32)
+-		convblit_bgrx8888_rgba8888(pimage->imagebits, pimage->width, pimage->height, pimage->pitch);
+-	return 1;		/* bmp image ok*/
++	if (bpp == 24)
++		convblit_bgr888_rgb888(pmd->addr, width, height, pmd->pitch);
++	else if (bpp == 32)
++		convblit_bgrx8888_rgba8888(pmd->addr, width, height, pmd->pitch);
++	return pmd;
+ 	
+ err:
+ 	EPRINTF("GdDecodeBMP: image loading error\n");
+-	if(pimage->imagebits)
+-		free(pimage->imagebits);
+-	if(pimage->palette)
+-		free(pimage->palette);
+-	return 2;		/* bmp image error*/
++	GdFreePixmap(pmd);
++	return NULL;
+ }
+ 
+ /*
+diff --git a/src/engine/image_png.c b/src/engine/image_png.c
+index 30c6ece..9cc7a6d 100644
+--- a/src/engine/image_png.c
++++ b/src/engine/image_png.c
+@@ -18,6 +18,7 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include "device.h"
++#include "../drivers/genmem.h"
+ 
+ #if MW_FEATURE_IMAGES && HAVE_PNG_SUPPORT
+ #include <png.h>
+@@ -34,8 +35,8 @@ png_read_buffer(png_structp pstruct, png_bytep pointer, png_size_t size)
+ 	GdImageBufferRead(pstruct->io_ptr, pointer, size);
+ }
+ 
+-int
+-GdDecodePNG(buffer_t * src, PMWIMAGEHDR pimage)
++PSD
++GdDecodePNG(buffer_t * src)
+ {
+ 	unsigned char hdr[8], **rows;
+ 	png_structp state;
+@@ -43,15 +44,16 @@ GdDecodePNG(buffer_t * src, PMWIMAGEHDR pimage)
+ 	png_uint_32 width, height;
+ 	int bit_depth, color_type, i;
+ 	double file_gamma;
+-	int channels;
++	int channels, data_format;
++	PSD pmd;
+ 
+ 	GdImageBufferSeekTo(src, 0UL);
+ 
+ 	if(GdImageBufferRead(src, hdr, 8) != 8)
+-		return 0;
++		return NULL;
+ 
+ 	if(png_sig_cmp(hdr, 0, 8))
+-		return 0;
++		return NULL;
+ 
+ 	if(!(state = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL)))
+ 		goto nomem;
+@@ -63,7 +65,7 @@ GdDecodePNG(buffer_t * src, PMWIMAGEHDR pimage)
+ 
+ 	if(setjmp(png_jmpbuf(state))) {
+ 		png_destroy_read_struct(&state, &pnginfo, NULL);
+-		return 2;
++		return NULL;
+ 	}
+ 
+ 	/* Set up the input function */
+@@ -73,8 +75,7 @@ GdDecodePNG(buffer_t * src, PMWIMAGEHDR pimage)
+ 	png_set_sig_bytes(state, 8);
+ 
+ 	png_read_info(state, pnginfo);
+-	png_get_IHDR(state, pnginfo, &width, &height, &bit_depth, &color_type,
+-		NULL, NULL, NULL);
++	png_get_IHDR(state, pnginfo, &width, &height, &bit_depth, &color_type, NULL, NULL, NULL);
+ 
+ 	/* set-up the transformations */
+ 	/* transform paletted images into full-color rgb */
+@@ -111,8 +112,7 @@ GdDecodePNG(buffer_t * src, PMWIMAGEHDR pimage)
+ 	png_read_update_info (state, pnginfo);
+ 
+ 	/* get the new color-type and bit-depth (after expansion/stripping) */
+-	png_get_IHDR (state, pnginfo, &width, &height, &bit_depth, &color_type,
+-	    NULL, NULL, NULL);
++	png_get_IHDR (state, pnginfo, &width, &height, &bit_depth, &color_type, NULL, NULL, NULL);
+ 
+ 	/* calculate new number of channels and store alpha-presence */
+ 	if (color_type == PNG_COLOR_TYPE_RGB)
+@@ -126,44 +126,43 @@ GdDecodePNG(buffer_t * src, PMWIMAGEHDR pimage)
+ 	else {
+ 	 	/* GdDrawImage currently only supports 32bpp alpha channel*/
+ 		DPRINTF("GdDecodePNG: Gray image type not supported: %d\n", color_type);
+-		return 2;
++		return NULL;
+ 	}
+-	
+-	pimage->width = width;
+-	pimage->height = height;
+-	pimage->palsize = 0;
+-	pimage->planes = 1;
+-	pimage->pitch = width * channels * (bit_depth / 8);
+-	pimage->bpp = channels * 8;
+-	pimage->bytesperpixel = channels;
+-
+-	/* set format for blit output*/
+-	if (channels == 4)
+-		pimage->data_format = MWIF_RGBA8888;
+-	else
+-		pimage->data_format = MWIF_RGB888;
+-//DPRINTF("png %dbpp\n", channels*8);
+-
+-    if(!(pimage->imagebits = malloc(pimage->pitch * pimage->height))) {
++
++	//pimage->width = width;
++	//pimage->height = height;
++	//pimage->palsize = 0;
++	//pimage->planes = 1;
++	//pimage->pitch = width * channels * (bit_depth / 8);
++	//bpp = channels * 8;
++	//pimage->bytesperpixel = channels;
++
++	/* set image data format*/
++	data_format = (channels == 4)? MWIF_RGBA8888: MWIF_RGB888;
++
++	pmd = GdCreatePixmap(&scrdev, width, height, data_format, NULL, 0);
++	if (!pmd) {
+ 		png_destroy_read_struct(&state, &pnginfo, NULL);
+ 		goto nomem;
+     }
+-    if(!(rows = malloc(pimage->height * sizeof(unsigned char *)))) {
++DPRINTF("png %dbpp\n", channels*8);
++
++    if(!(rows = malloc(height * sizeof(unsigned char *)))) {
+ 		png_destroy_read_struct(&state, &pnginfo, NULL);
+ 		goto nomem;
+     }
+-	for(i = 0; i < pimage->height; i++)
+-		rows[i] = pimage->imagebits + (i * pimage->pitch);
++	for(i = 0; i < height; i++)
++		rows[i] = ((unsigned char *)pmd->addr) + i * pmd->pitch;
+ 
+ 	png_read_image(state, rows);
+ 	png_read_end(state, NULL);
+ 	free(rows);
+ 	png_destroy_read_struct(&state, &pnginfo, NULL);
+ 
+-	return 1;
++	return pmd;
+ 
+ nomem:
+ 	EPRINTF("GdDecodePNG: Out of memory\n");
+-	return 2;
++	return NULL;
+ }
+ #endif /* MW_FEATURE_IMAGES && HAVE_PNG_SUPPORT*/
+diff --git a/src/include/device.h b/src/include/device.h
+index 07774bf..041856e 100644
+--- a/src/include/device.h
++++ b/src/include/device.h
+@@ -137,24 +137,25 @@ typedef struct {
+ typedef struct _mwscreendevice {
+ 	/* shared header with MWIMAGEHDR*/
+ 	int		flags;		/* PSF_SCREEN or PSF_MEMORY*/
+-	MWCOORD	xres;		/* X screen res (real) */
+-	MWCOORD	yres;		/* Y screen res (real) */
++	MWCOORD	xvirtres;	/* X drawing res (will be flipped in portrait mode) */
++	MWCOORD	yvirtres;	/* Y drawing res (will be flipped in portrait mode) */
+ 	int		planes;		/* # planes*/
+ 	int		bpp;		/* # bpp*/
+ 	int 	data_format;/* MWIF_ image data format*/
+-	int		pitch;		/* row length in bytes*/
++	unsigned int pitch;	/* row length in bytes*/
+ 	void *	addr;		/* address of memory allocated (memdc or fb)*/
+ 	int		palsize;	/* palette size*/
+ 	MWPALENTRY *palette;/* palette*/
+ 	int32_t	transcolor;	/* not used*/
++	int		bytesperpixel;/* not used*/
+ 	/* end of shared header*/
+ 
+-	MWCOORD	xvirtres;	/* X drawing res (will be flipped in portrait mode) */
+-	MWCOORD	yvirtres;	/* Y drawing res (will be flipped in portrait mode) */
+-	int	size;			/* size of memory allocated*/
++	MWCOORD	xres;		/* X screen res (real) */
++	MWCOORD	yres;		/* Y screen res (real) */
++	unsigned int size;	/* size of memory allocated*/
+ 	int32_t	ncolors;	/* # screen colors*/
+ 	int	pixtype;		/* format of pixel value*/
+-	int	linelen;		/* line length in bytes for bpp 1,2,4,8*/
++	unsigned int linelen;/* line length in bytes for bpp 1,2,4,8*/
+ 						/* line length in pixels for bpp 16, 18, 24, 32*/
+ 
+ 	/* driver entry points*/
+@@ -401,18 +402,17 @@ extern KBDDEVICE kbddev2;
+ 
+ /* devimage.c */
+ #if MW_FEATURE_IMAGES
+-int		GdLoadImageFromBuffer(PSD psd, void *buffer, int size, int flags);
++PSD		GdLoadImageFromBuffer(PSD psd, void *buffer, int size, int flags);
+ void	GdDrawImageFromBuffer(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
+ 			MWCOORD height, void *buffer, int size, int flags);
+ void	GdDrawImageFromFile(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
+ 			MWCOORD height, char *path, int flags);
+ void	GdDrawImagePartToFit(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
+-			MWCOORD sx, MWCOORD sy, MWCOORD swidth, MWCOORD sheight, int id);
+-int		GdLoadImageFromFile(PSD psd, char *path, int flags);
+-void	GdFreeImage(int id);
+-MWBOOL	GdGetImageInfo(int id, PMWIMAGEINFO pii);
++			MWCOORD sx, MWCOORD sy, MWCOORD swidth, MWCOORD sheight, PSD pmd);
++PSD		GdLoadImageFromFile(PSD psd, char *path, int flags);
++MWBOOL	GdGetImageInfo(PSD pmd, PMWIMAGEINFO pii);
+ void	GdStretchImage(PMWIMAGEHDR src, MWCLIPRECT *srcrect, PMWIMAGEHDR dst, MWCLIPRECT *dstrect);
+-void	GdComputeImagePitch(int bpp, int width, int *pitch, int *bytesperpixel);
++void	GdComputeImagePitch(int bpp, int width, unsigned int *pitch, int *bytesperpixel);
+ 
+ /* Buffered input functions to replace stdio functions*/
+ typedef struct {  /* structure for reading images from buffer   */
+@@ -429,25 +429,25 @@ int		GdImageBufferEOF(buffer_t *buffer);
+ 
+ /* individual decoders*/
+ #ifdef HAVE_BMP_SUPPORT
+-int	GdDecodeBMP(buffer_t *src, PMWIMAGEHDR pimage, MWBOOL readfilehdr);
++PSD	GdDecodeBMP(buffer_t *src, MWBOOL readfilehdr);
+ #endif
+ #ifdef HAVE_JPEG_SUPPORT
+-int	GdDecodeJPEG(buffer_t *src, PMWIMAGEHDR pimage, PSD psd, MWBOOL fast_grayscale);
++PSD	GdDecodeJPEG(buffer_t *src, PSD psd, MWBOOL fast_grayscale);
+ #endif
+ #ifdef HAVE_PNG_SUPPORT
+-int	GdDecodePNG(buffer_t *src, PMWIMAGEHDR pimage);
++PSD	GdDecodePNG(buffer_t *src);
+ #endif
+ #ifdef HAVE_GIF_SUPPORT
+-int	GdDecodeGIF(buffer_t *src, PMWIMAGEHDR pimage);
++PSD	GdDecodeGIF(buffer_t *src);
+ #endif
+ #ifdef HAVE_PNM_SUPPORT
+-int	GdDecodePNM(buffer_t *src, PMWIMAGEHDR pimage);
++PSD	GdDecodePNM(buffer_t *src);
+ #endif
+ #ifdef HAVE_XPM_SUPPORT
+-int	GdDecodeXPM(buffer_t *src, PMWIMAGEHDR pimage, PSD psd);
++PSD	GdDecodeXPM(buffer_t *src, PSD psd);
+ #endif
+ #ifdef HAVE_TIFF_SUPPORT
+-int	GdDecodeTIFF(char *path, PMWIMAGEHDR pimage);
++PSD	GdDecodeTIFF(char *path);
+ #endif
+ #endif /* MW_FEATURE_IMAGES */
+ 
+diff --git a/src/include/mwtypes.h b/src/include/mwtypes.h
+index f53b6ae..d508986 100644
+--- a/src/include/mwtypes.h
++++ b/src/include/mwtypes.h
+@@ -358,7 +358,7 @@ typedef struct {
+ 	int	pixtype;		/* MWPF_ pixel type*/
+ 	int	bpp;			/* bits per pixel*/
+ 	int	bytespp;		/* bytes per pixel*/
+-	int	pitch;			/* bytes per scan line for window (=fb pitch)*/
++	unsigned int pitch;	/* bytes per scan line for window (=fb pitch)*/
+ 	MWCOORD	x, y;		/* absolute window coordinates*/
+ 	int	portrait_mode;	/* current portrait mode*/
+ 	MWCOORD	xres;		/* real framebuffer resolution*/
+@@ -437,7 +437,7 @@ typedef struct {
+ 	MWCOORD		width, height;	/* width and height for src and dest*/
+ 	MWCOORD		dstx, dsty;		/* dest x, y*/
+ 	MWCOORD		srcx, srcy;		/* source x, y*/
+-	MWCOORD		src_pitch;		/* source row length in bytes*/
++	unsigned int src_pitch;		/* source row length in bytes*/
+ 	MWCOLORVAL	fg_colorval;	/* fg color, MWCOLORVAL 0xAARRGGBB format*/
+ 	MWCOLORVAL	bg_colorval;
+ 	uint32_t	fg_pixelval;	/* fg color, hw pixel format*/
+@@ -447,7 +447,7 @@ typedef struct {
+ 
+ 	/* these items filled in by GdConversionBlit*/
+ 	void *		data_out;		/* output image from conversion blits subroutines*/
+-	MWCOORD		dst_pitch;		/* dest row length in bytes*/
++	unsigned int dst_pitch;		/* dest row length in bytes*/
+ 
+ 	/* used by GdBlit and GdStretchBlit for GdCheckCursor and fallback blit*/
+ 	PSD			srcpsd;			/* source psd for psd->psd blits*/
+@@ -800,25 +800,24 @@ typedef struct {
+ 	int		planes;		/* # image planes*/
+ 	int		bpp;		/* bits per pixel (1, 4 or 8)*/
+ 	int		data_format;/* MWIF_ image data format*/
+-	int		pitch;		/* bytes per line*/
++	unsigned int pitch;	/* bytes per line*/
+ 	MWUCHAR *imagebits;	/* image bits (dword padded)*/
+ 	int		palsize;	/* palette size*/
+ 	MWPALENTRY *palette;/* palette*/
+ 	int32_t	transcolor;	/* transparent color or MWNOCOLOR if none*/
++	int		bytesperpixel;/* bytes per pixel*/
+ 	/* end of shared header*/
+-
+-	int		bytesperpixel;	/* bytes per pixel*/
+ } MWIMAGEHDR, *PMWIMAGEHDR;
+ 
+ /* image information structure - returned by GdGetImageInfo*/
+ typedef struct {
+ 	int		id;			/* image id*/
+-	int		width;		/* image width in pixels*/
+-	int		height;		/* image height in pixels*/
++	unsigned int width;	/* image width in pixels*/
++	unsigned int height;/* image height in pixels*/
+ 	int		planes;		/* # image planes*/
+ 	int		bpp;		/* bits per pixel (1, 4 or 8)*/
+ 	int		data_format;/* MWIF image data format*/
+-	int		pitch;		/* bytes per line*/
++	unsigned int pitch;	/* bytes per line*/
+ 	int		bytesperpixel;	/* bytes per pixel*/
+ 	int		palsize;	/* palette size*/
+ 	MWPALENTRY 	palette[256];	/* palette*/
+diff --git a/src/include/nano-X.h b/src/include/nano-X.h
+index 87f9906..1df89d9 100644
+--- a/src/include/nano-X.h
++++ b/src/include/nano-X.h
+@@ -48,10 +48,10 @@ typedef unsigned char	GR_CHAR_WIDTH;	/* width of character */
+ typedef unsigned int	GR_ID;		/* resource ids */
+ typedef GR_ID		GR_DRAW_ID;	/* drawable id */
+ typedef GR_DRAW_ID	GR_WINDOW_ID;	/* window or pixmap id */
++typedef GR_DRAW_ID	GR_IMAGE_ID;	/* image/pixmap id */
+ typedef GR_ID		GR_GC_ID;	/* graphics context id */
+ typedef GR_ID		GR_REGION_ID;	/* region id */
+ typedef GR_ID		GR_FONT_ID;	/* font id */
+-typedef GR_ID		GR_IMAGE_ID;	/* image id */
+ typedef GR_ID		GR_TIMER_ID;	/* timer id */
+ typedef GR_ID		GR_CURSOR_ID;	/* cursor id */
+ typedef unsigned short	GR_BOOL;	/* boolean value */
+diff --git a/src/include/winres.h b/src/include/winres.h
+index eebf7da..a0510db 100644
+--- a/src/include/winres.h
++++ b/src/include/winres.h
+@@ -195,20 +195,17 @@ typedef struct tagMWRSRC
+ 
+ 
+ //  Resource access internal functions
+-FILE *mwFindResource ( HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName,
+-				       PMWRESOURCEHEADER pResHead );
++FILE *mwFindResource ( HINSTANCE hInst, LPCTSTR resType, LPCTSTR resName, PMWRESOURCEHEADER pResHead );
+ 
+ PMWDLGITEMTEMPLATE resNextDlgItem ( PMWDLGITEMTEMPLATE pItem );
+ PMWDLGITEMTEMPLATE resFirstDlgItem ( PMWDLGTEMPLATE pDlg );
+ void resDiscardDlgTemplExtra ( PMWDLGTEMPLEXTRA pDlgExtra );
+-void resGetDlgTemplExtra ( PMWDLGTEMPLATE pDlg,
+-						   PMWDLGTEMPLEXTRA pDlgExtra );
++void resGetDlgTemplExtra ( PMWDLGTEMPLATE pDlg, PMWDLGTEMPLEXTRA pDlgExtra );
+ void resDiscardDlgItemTemplate ( PMWDLGITEMTEMPLEXTRA pItemExtra );
+ PMWDLGITEMTEMPLATE resGetDlgItemTemplExtra ( PMWDLGITEMTEMPLATE pItem,
+ 							   				 PMWDLGITEMTEMPLEXTRA pItemExtra );
+-
+ PMWIMAGEHDR resLoadBitmap ( HINSTANCE hInst, LPCTSTR resName );
+-void resFreeBitmap ( PMWIMAGEHDR pImageHdr );
++void resFreeBitmap ( PMWIMAGEHDR pimage );
+ 
+ 
+ 
+@@ -222,9 +219,6 @@ BOOL WINAPI FreeResource ( HGLOBAL hObj );
+ int WINAPI UnlockResource ( HGLOBAL hObj );
+ LPVOID WINAPI LockResource ( HGLOBAL hObj );
+ 
+-int WINAPI LoadString ( HINSTANCE hInstance, UINT uid,
+-				        LPTSTR lpBuffer, int nMaxBuff );
+-
+-
++int WINAPI LoadString ( HINSTANCE hInstance, UINT uid, LPTSTR lpBuffer, int nMaxBuff );
+ 
+ #endif /*__WINRES_H__*/
+diff --git a/src/mwin/winres.c b/src/mwin/winres.c
+index 7252742..3f307a3 100644
+--- a/src/mwin/winres.c
++++ b/src/mwin/winres.c
+@@ -17,6 +17,7 @@
+ #include "winres.h"
+ #include "windlg.h"
+ #include "device.h"
++#include "../drivers/genmem.h"
+ 
+ #define MAX_MRU_RESOURCES	32
+ 
+@@ -24,8 +25,9 @@
+ static HRSRC mruResources = NULL;
+ static int mruResCount = 0;
+ 
++static PMWIMAGEHDR resDecodeBitmap(unsigned char *buffer, int size);
+ 
+-void
++static void
+ mwAddResource(HRSRC hRes)
+ {
+ 	hRes->next = mruResources;
+@@ -60,7 +62,7 @@ mwAddResource(HRSRC hRes)
+ 
+ 
+ //  Compare resource types
+-int
++static int
+ mwResCompare(LPCTSTR res1, LPCTSTR res2)
+ {
+ 	if ((HIWORD(res1) == 0xFFFF) || (HIWORD(res2) == 0xFFFF))
+@@ -70,7 +72,7 @@ mwResCompare(LPCTSTR res1, LPCTSTR res2)
+ }
+ 
+ 
+-HRSRC
++static HRSRC
+ mwFindMruResource(LPCTSTR resName, LPCTSTR resType)
+ {
+ 	HRSRC obj = mruResources;
+@@ -156,15 +158,6 @@ mwFreeInstance(HINSTANCE hInst)
+ /*
+  *  File access functions
+  */
+-static BYTE
+-resReadByte(FILE * f, BOOL * pEof)
+-{
+-	int ch = fgetc(f);
+-	if (ch == EOF)
+-		*pEof = TRUE;
+-	return (BYTE) ch;
+-}
+-
+ static WORD
+ resReadWord(FILE * f, BOOL * pEof)
+ {
+@@ -185,6 +178,16 @@ resReadDWord(FILE * f, BOOL * pEof)
+ 	return dw;
+ }
+ 
++#if LATER
++static BYTE
++resReadByte(FILE * f, BOOL * pEof)
++{
++	int ch = fgetc(f);
++	if (ch == EOF)
++		*pEof = TRUE;
++	return (BYTE) ch;
++}
++
+ static void
+ resReadData(FILE * f, void *buffer, int len, BOOL * pEof)
+ {
+@@ -234,6 +237,7 @@ resReadText(FILE * f, BOOL * pEof)
+ 
+ 	return txt;
+ }
++#endif /* LATER*/
+ 
+ /*
+  *  Check if type (numeric or text) are the same
+@@ -655,25 +659,6 @@ LoadString(HINSTANCE hInstance, UINT uid, LPTSTR lpBuffer, int nMaxBuff)
+ 	return retV;
+ }
+ 
+-static PMWIMAGEHDR
+-resDecodeBitmap(unsigned char *buffer, int size)
+-{
+-	PMWIMAGEHDR pimage = (PMWIMAGEHDR)calloc(1, sizeof(MWIMAGEHDR));
+-	buffer_t stream;
+-
+-	if (!pimage)
+-		return NULL;
+-	pimage->flags = PSF_IMAGEHDR;
+-	pimage->transcolor = MWNOCOLOR;
+-
+-	GdImageBufferInit(&stream, buffer, size);
+-	if (GdDecodeBMP(&stream, pimage, FALSE) != 1) {	/* don't read file hdr*/
+-		free (pimage);
+-		return NULL;
+-	}
+-	return pimage;
+-}
+-
+ /*
+  *  Load a bitmap from resource file.
+  */
+@@ -682,7 +667,7 @@ resLoadBitmap(HINSTANCE hInst, LPCTSTR resName)
+ {
+ 	HGLOBAL hResBmp;
+ 	HRSRC hRes;
+-	PMWIMAGEHDR retV;
++	PMWIMAGEHDR pimage = NULL;
+ 	unsigned char *buffer;
+ 	int size;
+ 
+@@ -693,25 +678,31 @@ resLoadBitmap(HINSTANCE hInst, LPCTSTR resName)
+ 	size = SizeofResource(hInst, hRes);
+ 	hResBmp = LoadResource(hInst, hRes);
+ 	buffer = LockResource(hResBmp);
+-	if (!buffer)
+-		return NULL;
++	if (buffer) {
++		pimage = resDecodeBitmap(buffer, size);
++		UnlockResource(hResBmp);
++	}
++	FreeResource(hResBmp);
++	return pimage;
++}
+ 
+-	retV = resDecodeBitmap(buffer, size);
++static PMWIMAGEHDR
++resDecodeBitmap(unsigned char *buffer, int size)
++{
++	PSD			pmd;
++	buffer_t stream;
+ 
+-	UnlockResource(hResBmp);
+-	FreeResource(hResBmp);
+-	return retV;
++	GdImageBufferInit(&stream, buffer, size);
++	pmd = GdDecodeBMP(&stream, FALSE);	/* don't read file hdr*/
++
++	return (PMWIMAGEHDR)pmd;		//FIXME uses shared header for now
+ }
+ 
+ /*
+  *  Free memory allocated with resLoadBitmap.
+  */
+ void
+-resFreeBitmap(PMWIMAGEHDR pImageHdr)
++resFreeBitmap(PMWIMAGEHDR pimage)
+ {
+-	if (pImageHdr->palette)
+-		free(pImageHdr->palette);
+-	if (pImageHdr->imagebits)
+-		free(pImageHdr->imagebits);
+-	free(pImageHdr);
++	GdFreePixmap((PSD)pimage);		// FIXME uses shared header
+ }
+diff --git a/src/nanox/client.c b/src/nanox/client.c
+index 901ab84..2d748da 100644
+--- a/src/nanox/client.c
++++ b/src/nanox/client.c
+@@ -3060,7 +3060,7 @@ GrDrawImageBits(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
+ 	int		      imagesize, blocksize;
+ 	int		      palsize, rest, step;
+ 	char                  *addr;
+-	char		      *bits;
++	unsigned char		*bits;
+ 
+ 	imagesize = pimage->pitch * pimage->height;
+ 	palsize = pimage->palsize * sizeof(MWPALENTRY);
+diff --git a/src/nanox/serv.h b/src/nanox/serv.h
+index 81d04fb..e0cfde1 100644
+--- a/src/nanox/serv.h
++++ b/src/nanox/serv.h
+@@ -285,19 +285,6 @@ typedef struct {
+ 	char *typelist;
+ } GR_SELECTIONOWNER;
+ 
+-
+-#if MW_FEATURE_IMAGES
+-/*
+- * Structure to remember images.
+- */
+-typedef struct gr_image	GR_IMAGE;
+-struct gr_image {
+-	GR_IMAGE_ID	id;
+-	GR_CLIENT *	owner;		/* client that created it */
+-	GR_IMAGE *	next;
+-};
+-#endif /* MW_FEATURE_IMAGES */
+- 
+ #if MW_FEATURE_TIMERS
+ /*
+  * Structure to remember timers.
+@@ -508,9 +495,6 @@ extern	GR_GC		*cachegcp;		/* cached graphics context */
+ extern	GR_GC		*listgcp;		/* list of all gc */
+ extern	GR_REGION	*listregionp;		/* list of all regions */
+ extern	GR_FONT		*listfontp;		/* list of all fonts */
+-#if MW_FEATURE_IMAGES
+-extern	GR_IMAGE	*listimagep;		/* list of all images */
+-#endif
+ extern	GR_CURSOR	*listcursorp;		/* list of all cursors */
+ extern	GR_CURSOR	*stdcursor;		/* root window cursor */
+ extern	GR_GC		*curgcp;		/* current graphics context */
+diff --git a/src/nanox/srvfunc.c b/src/nanox/srvfunc.c
+index 962c119..b1dd916 100644
+--- a/src/nanox/srvfunc.c
++++ b/src/nanox/srvfunc.c
+@@ -2004,7 +2004,7 @@ GsNewPixmap(GR_SIZE width, GR_SIZE height, int format, void *pixels)
+ 		return 0;
+ 	}
+ 
+-	psd = GdCreatePixmap(rootwp->psd, width, height, format, pixels);
++	psd = GdCreatePixmap(rootwp->psd, width, height, format, pixels, 0);
+ 	if (!psd)
+ 		return 0;
+ 
+@@ -2016,15 +2016,15 @@ GsNewPixmap(GR_SIZE width, GR_SIZE height, int format, void *pixels)
+ 	}
+ 
+ 	pp->id = nextid++;
+-	pp->next = listpp;
+ 	pp->psd = psd;
+ 	pp->x = 0;
+ 	pp->y = 0;
+ 	pp->width = width;
+ 	pp->height = height;
+ 	pp->owner = curclient;
+-
++	pp->next = listpp;
+ 	listpp = pp;
++
+ 	return pp->id;
+ }
+ 
+@@ -2920,36 +2920,41 @@ GrDrawImageFromFile(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
+ 	SERVER_UNLOCK();
+ }
+ 
+-/* load image from file and cache it*/
++/* load image from file and cache it in pixmap*/
+ GR_IMAGE_ID
+ GrLoadImageFromFile(char *path, int flags)
+ {
+-	GR_IMAGE_ID	id;
+-	GR_IMAGE *	imagep;
++	GR_PIXMAP 	*pp;
++	PSD			pmd;
+ 
+ 	SERVER_LOCK();
+ 
+-	id = GdLoadImageFromFile(&scrdev, path, flags);
+-	if (!id) {
++	pmd = GdLoadImageFromFile(&scrdev, path, flags);
++	if (!pmd) {
+ 		SERVER_UNLOCK();
+ 		return 0;
+ 	}
+ 
+-	imagep = (GR_IMAGE *) malloc(sizeof(GR_IMAGE));
+-	if (!imagep) {
++	pp = (GR_PIXMAP *)malloc(sizeof(GR_PIXMAP));
++	if (pp == NULL) {
++		pmd->FreeMemGC(pmd);
+ 		GsError(GR_ERROR_MALLOC_FAILED, 0);
+-		GdFreeImage(id);
+ 		SERVER_UNLOCK();
+ 		return 0;
+ 	}
+-	
+-	imagep->id = id;
+-	imagep->owner = curclient;
+-	imagep->next = listimagep;
+-	listimagep = imagep;
++
++	pp->id = nextid++;
++	pp->psd = pmd;
++	pp->x = 0;
++	pp->y = 0;
++	pp->width = pmd->xvirtres;
++	pp->height = pmd->yvirtres;
++	pp->owner = curclient;
++	pp->next = listpp;
++	listpp = pp;
+ 
+ 	SERVER_UNLOCK();
+-	return id;
++	return pp->id;
+ }
+ #endif /* MW_FEATURE_IMAGES && HAVE_FILEIO */
+ 
+@@ -2978,33 +2983,37 @@ GrDrawImageFromBuffer(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
+ GR_IMAGE_ID
+ GrLoadImageFromBuffer(void *buffer, int size, int flags)
+ {
+-	GR_IMAGE_ID	id;
+-	GR_IMAGE *	imagep;
++	GR_PIXMAP 	*pp;
++	PSD			pmd;
+ 
+ 	SERVER_LOCK();
+ 
+-	id = GdLoadImageFromBuffer(&scrdev, buffer, size, flags);
+-	if (!id) {
++	pmd = GdLoadImageFromBuffer(&scrdev, buffer, size, flags);
++	if (!pmd) {
+ 		SERVER_UNLOCK();
+ 		return 0;
+ 	}
+ 
+-	imagep = (GR_IMAGE *) malloc(sizeof(GR_IMAGE));
+-	if (!imagep) {
++	pp = (GR_PIXMAP *)malloc(sizeof(GR_PIXMAP));
++	if (pp == NULL) {
++		pmd->FreeMemGC(pmd);
+ 		GsError(GR_ERROR_MALLOC_FAILED, 0);
+-		GdFreeImage(id);
+ 		SERVER_UNLOCK();
+ 		return 0;
+ 	}
+ 
+-	imagep->id = id;
+-	imagep->owner = curclient;
+-	imagep->next = listimagep;
+-	listimagep = imagep;
++	pp->id = nextid++;
++	pp->psd = pmd;
++	pp->x = 0;
++	pp->y = 0;
++	pp->width = pmd->xvirtres;
++	pp->height = pmd->yvirtres;
++	pp->owner = curclient;
++	pp->next = listpp;
++	listpp = pp;
+ 
+ 	SERVER_UNLOCK();
+-
+-	return id;
++	return pp->id;
+ }
+ 
+ /* draw part of the cached image, or whole if swidth == 0*/
+@@ -3014,47 +3023,37 @@ GrDrawImagePartToFit(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD dx, GR_COORD dy,
+ 	GR_SIZE swidth, GR_SIZE sheight, GR_IMAGE_ID imageid)
+ {
+ 	GR_DRAWABLE	*dp;
++	GR_PIXMAP	*pp;
+ 	SERVER_LOCK();
+ 
++	pp = GsFindPixmap(imageid);
++	if (!pp) {
++		SERVER_UNLOCK();
++		return;
++	}
++
+ 	switch (GsPrepareDrawing(id, gc, &dp)) {
+ 	case GR_DRAW_TYPE_WINDOW:
+ 	case GR_DRAW_TYPE_PIXMAP:
+ 		GdDrawImagePartToFit(dp->psd, dp->x + dx, dp->y + dy, dwidth, dheight,
+-			sx, sy, swidth, sheight, imageid);
++			sx, sy, swidth, sheight, pp->psd);
+ 		break;
+ 	}
+ 
+ 	SERVER_UNLOCK();
+ }
+ 
+-/* free cached image*/
++/* free cached image pixmap*/
+ void
+ GrFreeImage(GR_IMAGE_ID id)
+ {
+-	GR_IMAGE	*imagep;
+-	GR_IMAGE	*previmagep;
++	GR_PIXMAP	*pp;
+ 
+ 	SERVER_LOCK();
+ 
+-	for (imagep = listimagep; imagep; imagep = imagep->next) {
+-		if (imagep->id == id) {
+-
+-			if (listimagep == imagep)
+-				listimagep = imagep->next;
+-			else {
+-				previmagep = listimagep;
+-				while (previmagep->next != imagep)
+-					previmagep = previmagep->next;
+-
+-				previmagep->next = imagep->next;
+-			}
+-
+-			GdFreeImage(imagep->id);
+-			free(imagep);
+-			SERVER_UNLOCK();
+-			return;
+-		}
+-	}
++	pp = GsFindPixmap(id);
++	if (pp)
++		GsDestroyPixmap(pp);
+ 
+ 	SERVER_UNLOCK();
+ }
+@@ -3063,8 +3062,16 @@ GrFreeImage(GR_IMAGE_ID id)
+ void
+ GrGetImageInfo(GR_IMAGE_ID id, GR_IMAGE_INFO *iip)
+ {
++	GR_PIXMAP	*pp;
++	PSD			pmd = NULL;
++
+ 	SERVER_LOCK();
+-	GdGetImageInfo(id, iip);
++	pp = GsFindPixmap(id);
++	if (pp)
++		pmd = pp->psd;
++	GdGetImageInfo(pmd, iip);
++	if (pp)
++		iip->id = id;
+ 	SERVER_UNLOCK();
+ }
+ #endif /* MW_FEATURE_IMAGES */
+diff --git a/src/nanox/srvmain.c b/src/nanox/srvmain.c
+index 19ffcee..7cf075d 100644
+--- a/src/nanox/srvmain.c
++++ b/src/nanox/srvmain.c
+@@ -67,9 +67,6 @@ GR_WINDOW	*rootwp;		/* root window pointer */
+ GR_GC		*listgcp;		/* list of all gc */
+ GR_REGION	*listregionp;		/* list of all regions */
+ GR_FONT		*listfontp;		/* list of all fonts */
+-#if MW_FEATURE_IMAGES
+-GR_IMAGE	*listimagep;		/* list of all images */
+-#endif
+ GR_CURSOR	*listcursorp;		/* list of all cursors */
+ GR_CURSOR	*stdcursor;		/* root window cursor */
+ GR_GC		*curgcp;		/* currently enabled gc */
+diff --git a/src/nanox/srvnet.c b/src/nanox/srvnet.c
+index 24dba84..9080623 100644
+--- a/src/nanox/srvnet.c
++++ b/src/nanox/srvnet.c
+@@ -1911,9 +1911,6 @@ GsDestroyClientResources(GR_CLIENT * client)
+ 	GR_EVENT_CLIENT *pecp = NULL;
+ 	GR_EVENT_LIST	*evp;
+ 	GR_GRABBED_KEY	*kp, *nkp;
+-#if MW_FEATURE_IMAGES
+-	GR_IMAGE      * ip, *nip;
+-#endif
+ #if MW_FEATURE_TIMERS
+ 	GR_TIMER      * tp, *ntp;
+ #endif
+@@ -1981,17 +1978,6 @@ DPRINTF("  Destroy region %d\n", rp->id);
+ 		}
+ 	}
+ 
+-#if MW_FEATURE_IMAGES
+-	/* free images owned by client*/
+-	for(ip=listimagep; ip; ip=nip) {
+-		nip = ip->next;
+-		if (ip->owner == client) {
+-DPRINTF("  Destroy image %d\n", ip->id);
+-			GrFreeImage(ip->id);
+-		}
+-	}
+-#endif
+-
+ #if MW_FEATURE_TIMERS
+ 	/* free timers owned by client*/
+ 	for(tp=list_timer; tp; tp=ntp) {
+@@ -2043,9 +2029,6 @@ GsPrintResources(void)
+ 	GR_GC *gp;
+ 	GR_REGION *rp;
+ 	GR_FONT *fp;
+-#if MW_FEATURE_IMAGES
+-	GR_IMAGE *ip;
+-#endif
+ #if MW_FEATURE_TIMERS
+ 	GR_TIMER *tp;
+ #endif
+@@ -2071,12 +2054,6 @@ GsPrintResources(void)
+ 	for(rp=listregionp; rp; rp=rp->next) {
+ 		DPRINTF("%d(%d),", rp->id, rp->owner->id);
+ 	}
+-#if MW_FEATURE_IMAGES
+-	DPRINTF("\nImage list:\n");
+-	for(ip=listimagep; ip; ip=ip->next) {
+-		DPRINTF("%d(%d),", ip->id, ip->owner->id);
+-	}
+-#endif
+ #if MW_FEATURE_TIMERS
+ 	DPRINTF("\nTimer list:\n");
+ 	for(tp=list_timer; tp; tp=tp->next) {
+diff --git a/src/nanox/srvutil.c b/src/nanox/srvutil.c
+index 10fd856..f65e89e 100644
+--- a/src/nanox/srvutil.c
++++ b/src/nanox/srvutil.c
+@@ -361,7 +361,7 @@ void
+ GsDestroyPixmap(GR_PIXMAP *pp)
+ {
+ 	GR_PIXMAP	*prevpp;
+-	PSD psd = pp->psd;
++	PSD			psd = pp->psd;
+ 
+ 	/* deallocate mem gc*/
+ 	psd->FreeMemGC(psd);

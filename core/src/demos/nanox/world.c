@@ -11,7 +11,7 @@
 #define MWINCLUDECOLORS
 #include "nano-X.h"
 
-#if defined(MSDOS) || defined(__ECOS)
+#if MSDOS || RTEMS || __ECOS
 #include <fcntl.h>
 #endif
 
@@ -21,7 +21,7 @@
 #include <fcntl.h>
 #endif
 
-#if LINUX || DOS_DJGPP || defined(__CYGWIN__)
+#if LINUX || MACOSX || DOS_DJGPP || defined(__CYGWIN__)
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -32,7 +32,7 @@
 #define O_BINARY 	0
 #endif
 
-#if defined(DOS_DJGPP) || defined(__ECOS)
+#if DOS_DJGPP || __ECOS
 #define	MAPFILE	"/world.map"
 #else
 #define	MAPFILE	"demos/nanox/world.map"		/* was /usr/lib*/
@@ -182,7 +182,7 @@ main(int argc, char **argv)
         GrReqShmCmds(65536); /* Test by Morten Rolland for shm support */
 
 	GrGetScreenInfo(&si);
-#ifdef __ECOS
+#if __ECOS
 /* 240x320 screen*/
 COLS = si.cols - 10;
 ROWS = si.rows - 40;

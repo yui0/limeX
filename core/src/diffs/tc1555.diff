@@ -1,0 +1,849 @@
+diff --git a/src/Arch.rules b/src/Arch.rules
+index faf15d9..4d94394 100644
+--- a/src/Arch.rules
++++ b/src/Arch.rules
+@@ -250,6 +250,30 @@ CFLAGS += -Wall $(OPTFLAGS)
+ LDFLAGS +=
+ endif
+ 
++ifeq ($(ARCH), NDS)
++COMPILER = gcc
++HOSTCC = gcc
++MAKE = make
++CXX_COMPILER = g++
++TOOLSPREFIX = arm-eabi-
++DEFINES += -DNDS=1 -DUNIX=0 -DHAVE_MMAP=0 -DNOMAIN
++##DEFINES += -DPSP=1 -DHAVE_SIGNAL=0 -DHAVE_MMAP=0 -DHAVE_FPRINTF=0
++INCLUDEDIRS += -I$(DEVKITPRO)/libnds/include -DARM9
++CFLAGS += -g -Wall -O2 -s \
++          -march=armv5te -mtune=arm946e-s -fomit-frame-pointer\
++                  -ffast-math \
++                  -mthumb-interwork
++#-mthumb 
++
++export PORTLIBS	        :=	$(DEVKITPRO)/portlibs/arm
++export PATH		:=	$(DEVKITARM)/bin:$(PORTLIBS)/bin:$(PATH)
++
++# Additional settings for a NDS
++SCREEN_HEIGHT=192
++SCREEN_WIDTH=256
++
++endif
++
+ ifeq ($(BIGENDIAN), Y)
+ DEFINES += -DMW_CPU_BIG_ENDIAN=1
+ endif
+diff --git a/src/Configs/config.nds b/src/Configs/config.nds
+new file mode 100644
+index 0000000..1a05f05
+--- /dev/null
++++ b/src/Configs/config.nds
+@@ -0,0 +1,347 @@
++####################################################################
++# config: Microwindows and Nano-X configuration file
++#
++# This package is configured using this file for desktop Linux running
++# framebuffer (FRAMEBUFFER=Y) or X11 (X11=Y), or cross-compiled
++# for a variety of architectures (see ARCH= below).
++# In addition, a variety of mouse and keyboards drivers can be
++# selected (see MOUSE AND KBD below)
++#
++# See the src/Configs directory for pre-built config files.
++# Edit this or copy one src/config, and type "make clean; make"
++####################################################################
++
++####################################################################
++# Build target platform.  Valid ARCH values are:
++#
++# LINUX-NATIVE
++# LINUX-AVR32 (BIGENDIAN=Y)
++# LINUX-TCC
++# LINUX-ARM
++# UCLINUX-ARM
++# LINUX-MIPS
++# LINUX-POWERPC (BIGENDIAN=Y)
++# LINUX-SPARC (BIGENDIAN=Y)
++# LINUX-BLACKFIN
++# LINUX-SH
++# SOLARIS (BIGENDIAN=Y)
++# PSP
++# TRIMEDIA
++# MACOSX
++# RTEMS
++# ECOS
++# CYGWIN
++# NDS
++####################################################################
++ARCH                     = NDS
++BIGENDIAN                = N
++NATIVETOOLSPREFIX        = 
++ARMTOOLSPREFIX           = arm-linux-
++MIPSTOOLSPREFIX          = mipsel-linux-
++POWERPCTOOLSPREFIX       = powerpc-linux-
++SHTOOLSPREFIX            = sh-linux-gnu
++AVR32TOOLSPREFIX	 	 = avr32-linux-
++BLACKFINTOOLSPREFIX	 	 = bfin-uclinux-
++PSPTOOLSPREFIX           = psp-
++
++####################################################################
++#
++# Compiling options
++#
++####################################################################
++OPTIMIZE                 = Y
++DEBUG                    = N
++VERBOSE                  = Y
++THREADSAFE               = N
++GPROF                    = N
++
++####################################################################
++#
++# Libraries to build: microwin, nano-X, engine, object frameworks
++#
++####################################################################
++MICROWIN                 = Y
++NANOX                    = Y
++ENGINE                   = Y
++SHAREDLIBS               = N
++OBJFRAMEWORK             = N
++
++####################################################################
++#
++# Demos to build
++#
++####################################################################
++MICROWINDEMO             = N
++NANOXDEMO                = N
++
++####################################################################
++#
++# Applications to build
++#
++####################################################################
++NANOWM                   = N
++FBEMULATOR               = N
++
++####################################################################
++#
++# If using Linux framebuffer, set to MWPF_TRUECOLOR8888, and use fbset.
++# When running X11, this sets the X11 pixel emulation at runtime.
++#
++# On Linux or when running the standard framebuffer subdrivers,
++# the runtime framebuffer BPP (bits per pixel) is used to select 
++# the runtime screen subdriver.  However, the format of the pixel
++# itself must be selected at compile time, which sets macros used
++# for MWCOLORVAL color conversions and conversion blit byte order.
++# This also sets sizeof(MWPIXELVAL) for optimizing buffers sizes
++# in GrArea/GrReadArea.
++#
++# define MWPF_PALETTE       /* pixel is packed 8 bits 1, 4 or 8 pal index*/
++# define MWPF_TRUECOLOR8888 /* pixel is packed 32 bits byte order |B|G|R|A|*/
++# define MWPF_TRUECOLORABGR /* pixel is packed 32 bits byte order |R|G|B|A|*/
++# define MWPF_TRUECOLOR888  /* pixel is packed 24 bits byte order |B|G|R|*/
++# define MWPF_TRUECOLOR565  /* pixel is packed 16 bits little endian RGB565*/
++# define MWPF_TRUECOLOR555  /* pixel is packed 16 bits little endian RGB555*/
++# define MWPF_TRUECOLOR1555 /* pixel is packed 16 bits A/B/G/R truecolor for NDS*/
++# define MWPF_TRUECOLOR332  /* pixel is packed 8 bits RGB 332*/
++# define MWPF_TRUECOLOR233  /* pixel is packed 8 bits BGR 332*/
++#
++####################################################################
++SCREEN_PIXTYPE           = MWPF_TRUECOLOR1555
++
++####################################################################
++# NanoX: Put Y to the following line to link the nano-X application
++# with the server. This is required if UNIX sockets aren't available,
++# or for speed or debugging.  This affects the nano-X server only.
++####################################################################
++LINK_APP_INTO_SERVER     = Y
++
++####################################################################
++# Shared memory support for Nano-X client/server protocol speedup
++####################################################################
++HAVE_SHAREDMEM_SUPPORT   = N
++
++####################################################################
++# File I/O support
++# Supporting either below drags in libc stdio, which may not be wanted
++####################################################################
++HAVE_FILEIO              = Y
++
++####################################################################
++# BMP, GIF reading support
++####################################################################
++HAVE_BMP_SUPPORT         = Y
++HAVE_GIF_SUPPORT         = Y
++HAVE_PNM_SUPPORT         = N
++HAVE_XPM_SUPPORT         = N
++
++####################################################################
++# JPEG support through libjpeg, see README.txt in contrib/jpeg
++####################################################################
++HAVE_JPEG_SUPPORT        = N
++INCJPEG                  = .
++LIBJPEG                  = /usr/lib/libjpeg.so
++
++####################################################################
++# PNG support via libpng and libz
++####################################################################
++HAVE_PNG_SUPPORT         = N
++INCPNG                   = .
++LIBPNG                   = /usr/lib/libpng.so
++INCZ                     = .
++LIBZ                     = /usr/lib/libz.so
++
++####################################################################
++# TIFF support through libtiff
++####################################################################
++HAVE_TIFF_SUPPORT        = N
++INCTIFF                  = .
++LIBTIFF                  = /usr/lib/libtiff.so
++
++####################################################################
++# PCF font support - .pcf/.pcf.gz loadable fonts
++####################################################################
++HAVE_PCF_SUPPORT         = N
++HAVE_PCFGZ_SUPPORT       = N
++PCF_FONT_DIR             = "fonts/pcf"
++
++####################################################################
++# Truetype fonts - .ttf loadable fonts thru Freetype 2.x
++####################################################################
++HAVE_FREETYPE_2_SUPPORT  = N
++INCFT2LIB                = /usr/include
++LIBFT2LIB                = /usr/local/lib/libfreetype.a
++FREETYPE_FONT_DIR        = "fonts/truetype"
++
++####################################################################
++# T1 adobe type1 fonts - .pfb/.afm loadable thru t1lib
++# t1lib.config must be setup and in T1LIB_FONT_DIR
++####################################################################
++HAVE_T1LIB_SUPPORT       = N
++T1LIB_FONT_DIR           = "fonts/type1"
++INCT1LIB                 = /usr/include
++LIBT1LIB                 = /usr/lib/libt1.so
++
++####################################################################
++# FNT font support - .fnt/.fnt.gz loadable fonts (native bdf-converted)
++####################################################################
++HAVE_FNT_SUPPORT         = N
++HAVE_FNTGZ_SUPPORT       = N
++FNT_FONT_DIR             = "fonts/fnt"
++
++####################################################################
++# Japanese EUC-JP support using loadable MGL font
++####################################################################
++HAVE_EUCJP_SUPPORT       = N
++EUCJP_FONT_DIR           = "fonts/japanese"
++
++####################################################################
++# Chinese Han Zi Ku loadable font support
++####################################################################
++HAVE_HZK_SUPPORT         = N
++HZK_FONT_DIR             = "fonts/chinese"
++
++####################################################################
++# DBCS Chinese BIG5 compiled in font support (big5font.c)
++####################################################################
++HAVE_BIG5_SUPPORT        = N
++
++####################################################################
++# DBCS Chinese GB2312 compiled in font support (gb2312font.c)
++####################################################################
++HAVE_GB2312_SUPPORT      = N
++
++####################################################################
++# DBCS Japanese JISX0213 compiled in font support (jisx0213-12x12.c)
++####################################################################
++HAVE_JISX0213_SUPPORT    = N
++
++####################################################################
++# DBCS Korean HANGUL font support (jo16x16.c)
++####################################################################
++HAVE_KSC5601_SUPPORT     = N
++
++####################################################################
++# Fribidi and shape/joining support for right to left rendering
++####################################################################
++HAVE_FRIBIDI_SUPPORT     = N
++HAVE_SHAPEJOINING_SUPPORT = N
++INCFRIBIDI               = $(TOP)/../../../include
++LIBFRIBIDI               = $(TOP)/../../../lib/libfribidi.a
++
++####################################################################
++# Generate screen driver interface only with no fonts or clipping
++####################################################################
++NOFONTS                  = N
++NOCLIPPING               = N
++
++####################################################################
++# Window move algorithms for Microwindows
++# Change for tradeoff between cpu speed and looks
++# ERASEMOVE (nanowm) repaints only backgrounds while window dragging
++# Otherwise an XOR redraw is used for window moves only after button up
++# UPDATEREGIONS (win32 api only)paints in update clipping region only
++####################################################################
++ERASEMOVE                = N
++UPDATEREGIONS            = Y
++
++####################################################################
++# SCREEN DRIVERS
++####################################################################
++
++# X11 and FBE startup screen width, height, (depth for palette mode only)
++SCREEN_WIDTH             = 800
++SCREEN_HEIGHT            = 600
++SCREEN_DEPTH             = 8
++
++# X Window screen driver
++# USE_EXPOSURE for XFree86 4.x or if backing store not working
++X11                      = N
++USE_EXPOSURE             = N
++
++# Framebuffer screen driver
++FRAMEBUFFER              = N
++
++# memory screen driver
++SCRMEM                   = N
++
++# PSP screen driver
++PSP                      = N
++
++# NDS screen driver
++SCRNDS                   = Y
++
++# set VTSWITCH to include virtual terminal switch code
++# set FBREVERSE to reverse bit orders in 1,2,4 bpp
++# set GRAYPALETTE to link with Gray Palette (valid only for 4bpp modes)
++# set HAVETEXTMODE=Y for systems that can switch between text & graphics.
++VTSWITCH                 = N
++FBREVERSE                = N
++GRAYPALETTE              = N
++HAVETEXTMODE             = N
++
++# SA1100_LCD_LTLEND 4bpp driver with arm SA1100 LCD controller
++# INVERT4BPP 4bpp inverted pixel driver for VTech Helio
++SA1100_LCD_LTLEND        = N
++INVERT4BPP               = N
++
++####################################################################
++# Mouse drivers
++# GPMMOUSE	gpm mouse
++# SERMOUSE	serial Microsoft, PC, Logitech, PS/2 mice (/dev/psaux)
++# SUNMOUSE	Sun Workstation mouse (/dev/sunmouse)
++# NOMOUSE	no mouse driver
++#
++# Touchscreen drivers
++# IPAQMOUSE	Compaq iPAQ, Intel Assabet (/dev/h3600_tsraw)
++# ZAURUSMOUSE	Sharp Zaurus (/dev/sharp_ts)
++# TUXMOUSE	TuxScreen (/dev/ucb1x00-ts)
++# ADSMOUSE	Applied Data Systems GC+ (/dev/ts)
++# ADS7846MOUSE	ADS7846 chip, PSI OMAP Innovator (/dev/innnovator_ts)
++# EPMOUSE	Embedded Planet (/dev/tpanel)
++# VHMOUSE	Vtech Helio (/dev/tpanel)
++# MTMOUSE	MicroTouch serial (/dev/ttyS1)
++# PSIONMOUSE	Psion 5 (/dev/touch_psion)
++# YOPYMOUSE	Yopy (/dev/yopy-ts)
++# HARRIERMOUSE	NEC Harrier (/dev/tpanel)
++# TSLIBMOUSE    Use tslib (/dev/input/event0)
++# TTMOUSE       TomTom GO and ONE (/dev/ts)
++####################################################################
++GPMMOUSE                 = N
++SERMOUSE                 = N
++SUNMOUSE                 = N
++NOMOUSE                  = N
++IPAQMOUSE                = N
++ZAURUSMOUSE              = N
++TUXMOUSE                 = N
++ADSMOUSE                 = N
++ADS7846MOUSE             = N
++EPMOUSE                  = N
++VHMOUSE                  = N
++MTMOUSE                  = N
++PSIONMOUSE               = N
++YOPYMOUSE                = N
++HARRIERMOUSE             = N
++LIRCMOUSE                = N
++TSLIBMOUSE               = N
++TTMOUSE		             = N
++PSPMOUSE                 = N
++NDSMOUSE                 = Y
++
++# keyboard or null kbd driver
++TTYKBD                   = N
++SCANKBD                  = N
++PIPEKBD                  = N
++IPAQKBD                  = N
++LIRCKBD                  = N
++PSPKBD                   = N
++NOKBD                    = Y
++# Secondary keyboard drivers for IR input
++LIRCKBD2                 = N
++
++####################################################################
++# VNC server support through libvncserver
++####################################################################
++HAVE_VNCSERVER_SUPPORT   = N
++VNCSERVER_PTHREADED      = N
++LIBVNC                   = /usr/lib/libvncserver.a
++INCVNC                   = /usr/include
+diff --git a/src/drivers/Objects.rules b/src/drivers/Objects.rules
+index d6bf2e5..8bdf356 100644
+--- a/src/drivers/Objects.rules
++++ b/src/drivers/Objects.rules
+@@ -80,6 +80,12 @@ MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+ MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_mem.o
+ endif
+ 
++# NDS screen device
++ifeq ($(SCRNDS), Y)
++MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
++MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_nds.o
++endif
++
+ # PSP
+ ifeq ($(ARCH), PSP)
+ MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+@@ -191,6 +197,10 @@ ifeq ($(PSPMOUSE), Y)
+ MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/mou_psp.o
+ endif
+ 
++ifeq ($(NDSMOUSE), Y)
++MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/mou_nds.o
++endif
++
+ #
+ # Keyboard driver specific for every system
+ #
+diff --git a/src/drivers/fb.c b/src/drivers/fb.c
+index 01ba0ba..965984b 100644
+--- a/src/drivers/fb.c
++++ b/src/drivers/fb.c
+@@ -98,6 +98,9 @@ set_data_format(PSD psd)
+ 	case MWPF_TRUECOLOR555:
+ 		data_format = MWIF_RGB555;
+ 		break;
++	case MWPF_TRUECOLOR1555:
++	        data_format = MWIF_RGB1555;
++		break;
+ 	case MWPF_TRUECOLOR332:
+ 		data_format = MWIF_RGB332;
+ 		break;
+diff --git a/src/drivers/genmem.c b/src/drivers/genmem.c
+index 9c3e913..0d17ff1 100644
+--- a/src/drivers/genmem.c
++++ b/src/drivers/genmem.c
+@@ -70,6 +70,11 @@ GdCreatePixmap(PSD rootpsd, MWCOORD width, MWCOORD height, int format, void *pix
+ 		data_format = format;
+ 		pixtype = MWPF_PALETTE;
+ 		break;
++        case MWIF_RGB1555:
++ 	        bpp = 16;
++		data_format = format;
++		pixtype = MWPF_TRUECOLOR1555;
++		break;
+ 	case MWIF_RGB555:
+ 		bpp = 16;
+ 		data_format = format;
+diff --git a/src/drivers/vncserver.c b/src/drivers/vncserver.c
+index 5677c5e..143c94f 100644
+--- a/src/drivers/vncserver.c
++++ b/src/drivers/vncserver.c
+@@ -612,6 +612,17 @@ int GdOpenVNC( PSD psd, int argc, char *argv[] )
+ 
+            break;
+ 
++   case MWPF_TRUECOLOR1555:
++           rfbScreen->serverFormat.greenMax = 31;
++           rfbScreen->serverFormat.redMax = 31;
++           rfbScreen->serverFormat.blueMax = 31;
++
++           rfbScreen->serverFormat.redShift = 0;
++           rfbScreen->serverFormat.greenShift = 5;
++           rfbScreen->serverFormat.blueShift = 10;
++
++           break;
++
+    case MWPF_PALETTE:
+      cmap = &(rfbScreen->colourMap);
+      rfbScreen->serverFormat.trueColour = FALSE;
+diff --git a/src/engine/devblit.c b/src/engine/devblit.c
+index ab6534f..0a2858c 100644
+--- a/src/engine/devblit.c
++++ b/src/engine/devblit.c
+@@ -72,6 +72,7 @@ GdFindConvBlit(PSD psd, int data_format, int op)
+ 
+ 	case MWIF_RGB565:				/* GdArea MWPF_TRUECOLOR565*/
+ 	case MWIF_RGB555:				/* GdArea MWPF_TRUECOLOR555*/
++	case MWIF_RGB1555:                              /* GdArea MWPF_TRUECOLOR1555*/
+ 		if (psd->data_format == data_format)
+ 			convblit = convblit_copy_16bpp_16bpp;	/* 16bpp to 16bpp copy*/
+ 		break;
+diff --git a/src/engine/devdraw.c b/src/engine/devdraw.c
+index faf43d4..e044a77 100644
+--- a/src/engine/devdraw.c
++++ b/src/engine/devdraw.c
+@@ -750,6 +750,25 @@ typedef union {
+ 	unsigned short v; 
+ } RGB555;	
+ 
++typedef union {
++	/* bitfield order should use __BIG_ENDIAN_BITFIELDS, assuming so with big endian byte order*/
++	struct {
++#if !MW_CPU_BIG_ENDIAN	
++		unsigned short r:5; 
++		unsigned short g:5;
++		unsigned short b:5;
++		unsigned short a:1; // MSBit on little endian
++#else
++		unsigned short a:1; // MSBit on big endian
++		unsigned short b:5;
++		unsigned short g:5;
++		unsigned short r:5; 
++#endif		
++	} f;
++	unsigned short v; 
++} RGB1555;	
++
++
+ /* slow draw point by point with clipping*/
+ static void
+ GdDrawImageByPoint(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+@@ -979,11 +998,7 @@ GdDrawImageByPoint(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+ 						break;
+ 					case MWPF_TRUECOLOR555:
+ 						if (alpha == 255)
+-							pixel = (
+-										(((cr) & 0x0000f8) >> 3) | 
+-										(((cr) & 0x00f800) >> 6) | 
+-										(((cr) & 0xf80000) >> 9)
+-									);
++						  pixel = COLOR2PIXEL555(cr);
+ 						else {
+ 							/* ARGB8888   : 0xAARRGGBB*/
+ 							/* MWPIXELVAL : r/g/b 5/5/5*/
+@@ -1002,6 +1017,29 @@ GdDrawImageByPoint(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+ 							pixel = bg.v;
+ 						}
+ 						break;
++
++					case MWPF_TRUECOLOR1555:
++						if (alpha == 255)
++						        pixel = COLOR2PIXEL1555(cr);
++						else {
++							/* ARGB8888   : 0xAARRGGBB*/
++							/* MWPIXELVAL : r/g/b 5/5/5*/
++							ARGB8888  fg;
++							RGB1555   bg;
++							
++							fg.v = cr;
++							bg.v = psd->ReadPixel(psd,x,y);
++
++ 							//bg +=mulscale(a,fg-bg)
++							bg.f.r += mulscale(alpha, fg.f.r - PIXEL1555RED8(bg.v), 11);
++							bg.f.g += mulscale(alpha, fg.f.g - PIXEL1555GREEN8(bg.v), 11);
++							bg.f.b += mulscale(alpha, fg.f.b - PIXEL1555BLUE(bg.v), 11);
++
++							//bg.f.a = 0;
++							pixel = bg.v;
++						}
++						break;
++
+ #else /* !alpha blending*/
+ 					/* implement image draw without alpha blending*/
+ 					/*
+@@ -1023,6 +1061,8 @@ GdDrawImageByPoint(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+ 					case MWPF_TRUECOLOR555:
+ 						pixel = COLOR2PIXEL555(ARGB2COLORVAL(cr));
+ 						break;
++					case MWPF_TRUECOLOR1555:
++					        pixel = COLOR2PIXEL1555(ARGB2COLORVAL(cr));
+ #endif /* alpha blending*/
+ 
+ 					case MWPF_PALETTE:
+@@ -1069,9 +1109,18 @@ GdDrawImageByPoint(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+ #else
+ 				unsigned int pv = (imagebits[1] << 8) | imagebits[0];
+ #endif
+-
+-				cr = (pimage->data_format == MWIF_RGB555)?
+-					PIXEL555TOCOLORVAL(pv): PIXEL565TOCOLORVAL(pv);
++				switch (pimage->data_format)
++				{
++				  case MWIF_RGB555:
++				    cr =  PIXEL555TOCOLORVAL(pv);
++				    break;
++				  case MWIF_RGB565:
++				    cr = PIXEL565TOCOLORVAL(pv);
++				    break;
++				  case MWIF_RGB1555:
++				    cr = PIXEL1555TOCOLORVAL(pv);
++				    break;
++				}
+ 				imagebits += 2;
+ 			}
+ 
+@@ -1098,6 +1147,9 @@ GdDrawImageByPoint(PSD psd, MWCOORD x, MWCOORD y, PMWIMAGEHDR pimage)
+ 				case MWPF_TRUECOLOR555:
+ 					pixel = COLOR2PIXEL555(cr);
+ 					break;
++				case MWPF_TRUECOLOR1555:
++				        pixel = COLOR2PIXEL1555(cr);
++					break;
+ 				case MWPF_TRUECOLOR332:
+ 					pixel = COLOR2PIXEL332(cr);
+ 					break;
+@@ -1416,9 +1468,13 @@ GdArea(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height, void *pixel
+ 		pixsize = 2;
+ 		break;
+ 	case MWPF_TRUECOLOR555:
+-		data_format = MWIF_RGB565;
++		data_format = MWIF_RGB555;
+ 		pixsize = 2;
+ 		break;
++	case MWPF_TRUECOLOR1555:
++	        data_format = MWIF_RGB1555;
++		pixsize = 2;
++                break;
+ 	case MWPF_PALETTE:
+ 	case MWPF_TRUECOLOR233:
+ 	case MWPF_TRUECOLOR332:
+@@ -1512,6 +1568,7 @@ GdAreaByPoint(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height, void
+ 		break;
+ 	case MWPF_TRUECOLOR565:
+ 	case MWPF_TRUECOLOR555:
++	case MWPF_TRUECOLOR1555:
+ 		gr_foreground = *(unsigned short *)PIXELS;
+ 		PIXELS += sizeof(unsigned short);
+ 		break;
+@@ -1563,6 +1620,7 @@ GdAreaByPoint(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height, void
+ 			break;
+ 		case MWPF_TRUECOLOR565:
+ 		case MWPF_TRUECOLOR555:
++		case MWPF_TRUECOLOR1555:
+ 			if(gr_foreground != *(unsigned short *)PIXELS)
+ 				goto breakwhile;
+ 			PIXELS += sizeof(unsigned short);
+@@ -1728,6 +1786,11 @@ GdTranslateArea(MWCOORD width, MWCOORD height, void *in, int inpixtype,
+ 			colorval = PIXEL555TOCOLORVAL(pixelval);
+ 			inbuf += sizeof(unsigned short);
+ 			break;
++		case MWPF_TRUECOLOR1555:
++		        pixelval = *(unsigned short *)inbuf;
++			colorval = PIXEL1555TOCOLORVAL(pixelval);
++			inbuf += sizeof(unsigned short);
++			break;
+ 		default:
+ 			return;
+ 		}
+@@ -1778,6 +1841,10 @@ GdTranslateArea(MWCOORD width, MWCOORD height, void *in, int inpixtype,
+ 			*(unsigned short *)outbuf = COLOR2PIXEL555(colorval);
+ 			outbuf += sizeof(unsigned short);
+ 			break;
++		case MWPF_TRUECOLOR1555:
++		        *(unsigned short *)outbuf = COLOR2PIXEL1555(colorval);
++			outbuf += sizeof(unsigned short);
++			break;
+ 		}
+ 	    }
+ 
+diff --git a/src/engine/devopen.c b/src/engine/devopen.c
+index 3ac70da..0a10140 100644
+--- a/src/engine/devopen.c
++++ b/src/engine/devopen.c
+@@ -301,6 +301,11 @@ GdFindColor(PSD psd, MWCOLORVAL c)
+ 		/*RGB2PIXEL555(REDVALUE(c), GREENVALUE(c), BLUEVALUE(c))*/
+ 		return COLOR2PIXEL555(c);
+ 
++	case MWPF_TRUECOLOR1555:
++		/* create 16 bit RGB5/5/5 format pixel from ABGR colorval (0xAABBGGRR)*/
++		/*RGB2PIXEL1555(REDVALUE(c), GREENVALUE(c), BLUEVALUE(c))*/
++		return COLOR2PIXEL1555(c);
++
+ 	case MWPF_TRUECOLOR332:
+ 		/* create 8 bit RGB3/3/2 format pixel from ABGR colorval (0xAABBGGRR)*/
+ 		/*RGB2PIXEL332(REDVALUE(c), GREENVALUE(c), BLUEVALUE(c))*/
+@@ -391,6 +396,9 @@ GdGetColorRGB(PSD psd, MWPIXELVAL pixel)
+ 	case MWPF_TRUECOLOR555:
+ 		return PIXEL555TOCOLORVAL(pixel);
+ 
++	case MWPF_TRUECOLOR1555:
++ 	        return PIXEL1555TOCOLORVAL(pixel);
++
+ 	case MWPF_TRUECOLOR332:
+ 		return PIXEL332TOCOLORVAL(pixel);
+ 
+diff --git a/src/include/mwtypes.h b/src/include/mwtypes.h
+index 6a30e23..7660b92 100644
+--- a/src/include/mwtypes.h
++++ b/src/include/mwtypes.h
+@@ -119,7 +119,7 @@
+ //#define MWIF_RGB565_BE 0x00090000L		/* 16bpp 5/6/5 RGB packed b.endian (new)*/
+ #define MWIF_RGB555		 0x000A0000L		/* 16bpp 5/5/5 RGB packed l.endian (old TRUECOLOR555)*/
+ //#define MWIF_RGB555_BE 0x000B0000L		/* 16bpp 5/5/5 RGB packed b.endian (new)*/
+-//#define MWIF_BGR555	 0x000C0000L		/* 16bpp 5/5/5 BGR packed l.endian (old TRUECOLOR1555)*/
++#define MWIF_RGB1555	 0x000C0000L		        /* 16bpp 1/5/5/5 NDS color format */
+ //#define MWIF_BGR555_BE 0x000D0000L		/* 16bpp 5/5/5 BGR packed b.endian (new)*/
+ #define MWIF_RGB332		 0x000E0000L		/*  8bpp 3/3/2 RGB packed (old TRUECOLOR332)*/
+ #define MWIF_BGR233		 0x000F0000L		/*  8bpp 2/3/3 BGR packed (old TRUECOLOR233)*/
+@@ -207,6 +207,7 @@
+ #define MWPF_TRUECOLOR233  9	/* pixel is packed  8 bits 2/3/3 BGR truecolor*/
+ #define MWPF_HWPIXELVAL   10	/* pseudo, no convert, pixels are in hw format*/
+ #define MWPF_TRUECOLORABGR 11	/* pixel is packed 32 bits A/B/G/R ABGR truecolor with alpha */
++#define MWPF_TRUECOLOR1555 12   /* pixel is packed 16 bits 1/5/5/5 NDS truecolor */
+ 
+ /*
+  * MWPIXELVALHW definition: changes based on target system
+@@ -908,6 +909,11 @@ typedef struct {
+ 						  (((((((d) & 0x7C00) - (sr)) * as) >> 8) + (sr)) & 0x7C00)\
+ 						| (((((((d) & 0x03E0) - (sg)) * as) >> 8) + (sg)) & 0x03E0)\
+ 						| (((((((d) & 0x001F) - (sb)) * as) >> 8) + (sb)) & 0x001F)
++#define muldiv255_rgb1555(d, sr, sg, sb, as) \
++						  (((((((d) & 0x001F) - (sr)) * as) >> 8) + (sr)) & 0x001F)\
++						| (((((((d) & 0x03E0) - (sg)) * as) >> 8) + (sg)) & 0x03E0)\
++						| (((((((d) & 0x7C00) - (sb)) * as) >> 8) + (sb)) & 0x7C00)
++
+ 
+ /* palette color definition*/
+ #define RGBDEF(r,g,b)	{r, g, b}
+@@ -1019,6 +1025,11 @@ typedef struct {
+ #define GREEN2PIXEL555(byte)	(((byte) & 0xf8) << 2)
+ #define BLUE2PIXEL555(byte)		(((byte) & 0xf8) >> 3)
+ 
++/* create single component of 1/5/5/5format pixel from color byte*/
++#define RED2PIXEL1555(byte)		(((byte) & 0xf8) >> 3)
++#define GREEN2PIXEL1555(byte)	(((byte) & 0xf8) << 2)
++#define BLUE2PIXEL1555(byte)		(((byte) & 0xf8) << 7)
++
+ /* these defines used in convblits, must be available regardless of MWPIXEL_FORMAT, default 565*/
+ #if MWPIXEL_FORMAT == MWPF_TRUECOLOR555
+ #define muldiv255_16bpp		muldiv255_rgb555
+@@ -1029,6 +1040,15 @@ typedef struct {
+ #define GREENMASK(pixel)	((pixel) & 0x03e0)
+ #define BLUEMASK(pixel)		((pixel) & 0x001f)
+ #else
++ #if MWPIXEL_FORMAT == MWPF_TRUECOLOR1555
++#define muldiv255_16bpp		muldiv255_rgb1555
++#define RED2PIXEL(byte)		RED2PIXEL1555(byte)
++#define GREEN2PIXEL(byte)	GREEN2PIXEL1555(byte)
++#define BLUE2PIXEL(byte)	BLUE2PIXEL1555(byte)
++#define REDMASK(pixel)		((pixel) & 0x001f)
++#define GREENMASK(pixel)	((pixel) & 0x03e0)
++#define BLUEMASK(pixel)		((pixel) & 0x7c00)
++ #else
+ #define muldiv255_16bpp		muldiv255_rgb565
+ #define RED2PIXEL(byte)		RED2PIXEL565(byte)
+ #define GREEN2PIXEL(byte)	GREEN2PIXEL565(byte)
+@@ -1036,6 +1056,7 @@ typedef struct {
+ #define REDMASK(pixel)		((pixel) & 0xf800)
+ #define GREENMASK(pixel)	((pixel) & 0x07e0)
+ #define BLUEMASK(pixel)		((pixel) & 0x001f)
++ #endif
+ #endif
+ 
+ /*
+@@ -1238,6 +1259,10 @@ typedef struct {
+ #define PIXEL555TOCOLORVAL(p)	\
+ 	(0xff000000ul | (((p) & 0x7c00u) >> 7) | (((p) & 0x03e0u) << 6) | (((p) & 0x1ful) << 19) | 0xff000000ul)
+ 
++/* create ABGR colorval (0xFFBBGGRR) from 1/5/5/5 format pixel*/
++#define PIXEL1555TOCOLORVAL(p)  \
++        (0xff000000ul | (((p) & 0x7c00u) << 9) | (((p) & 0x03e0u) << 6) | (((p) & 0x1ful) << 3) | 0xff000000ul)
++
+ /* create ABGR colorval (0xFFBBGGRR) from 3/3/2 format pixel*/
+ #define PIXEL332TOCOLORVAL(p)	\
+ 	(0xff000000ul | (((p) & 0xe0u)) | (((p) & 0x1cu) << 11) | (((p) & 0x03ul) << 19) | 0xff000000ul)
+@@ -1302,6 +1327,15 @@ typedef struct {
+ #define PIXEL2BLUE(p)		PIXEL555BLUE(p)
+ #endif
+ 
++#if MWPIXEL_FORMAT == MWPF_TRUECOLOR1555
++#define RGB2PIXEL(r,g,b)	RGB2PIXEL1555(r,g,b)
++#define COLORVALTOPIXELVAL(c)	COLOR2PIXEL1555(c)
++#define PIXELVALTOCOLORVAL(p)	PIXEL1555TOCOLORVAL(p)
++#define PIXEL2RED(p)		PIXEL1555RED(p)
++#define PIXEL2GREEN(p)		PIXEL1555GREEN(p)
++#define PIXEL2BLUE(p)		PIXEL1555BLUE(p)
++#endif
++
+ #if MWPIXEL_FORMAT == MWPF_TRUECOLOR332
+ #define RGB2PIXEL(r,g,b)	RGB2PIXEL332(r,g,b)
+ #define COLORVALTOPIXELVAL(c)	COLOR2PIXEL332(c)
+diff --git a/src/mwin/winmain.c b/src/mwin/winmain.c
+index 1a9e706..96129b5 100644
+--- a/src/mwin/winmain.c
++++ b/src/mwin/winmain.c
+@@ -82,7 +82,7 @@ void CallbackThread(void *arg)
+ #endif
+ 
+ int
+-#if __ECOS
++#if __ECOS | NOMAIN
+ invoke_WinMain(int ac, char **av)
+ #else
+ main(int ac, char **av)
+@@ -280,6 +280,24 @@ MwUnregisterFdExcept(HWND hwnd, int fd)
+ 
+ #endif /* UNIX && HAVE_SELECT*/
+ 
++#if NDS
++void
++MwSelect(BOOL mayWait)
++{
++	/* If mouse data present, service it*/
++	if(mousedev.Poll())
++		while(MwCheckMouseEvent())
++			continue;
++
++	/* If keyboard data present, service it*/
++	if(kbddev.Poll())
++		while(MwCheckKeyboardEvent())
++			continue;
++
++	MwHandleTimers();
++}
++#endif
++
+ #if MSDOS | _MINIX
+ void
+ MwSelect(BOOL mayWait)
+diff --git a/src/nanox/srvmain.c b/src/nanox/srvmain.c
+index 7cf075d..84326ea 100644
+--- a/src/nanox/srvmain.c
++++ b/src/nanox/srvmain.c
+@@ -287,6 +287,10 @@ GrOpen(void)
+ 		sceKernelStartThread(thid, 0, 0);
+ #endif
+ 
++#if NDS
++	consoleDemoInit();  //setup the sub screen for printing
++#endif
++
+ 	SERVER_LOCK();
+ 	escape_quits = 1;
+ 
+@@ -1061,6 +1065,25 @@ GrServiceSelect(void *rfdset, GR_FNCALLBACKEVENT fncb)
+ 
+ #endif /* NONETWORK */
+ 
++
++#elif NDS /* UNIX && defined(HAVESELECT)*/
++
++void
++GsSelect(GR_TIMEOUT timeout)
++{
++	/* If mouse data present, service it*/
++	if(mousedev.Poll())
++		while(GsCheckMouseEvent())
++			continue;
++
++	/* If keyboard data present, service it*/
++	if(kbddev.Poll())
++		while(GsCheckKeyboardEvent())
++			continue;
++
++}
++
++
+ #endif /* UNIX && HAVE_SELECT*/
+ 
+ #if RTEMS

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2010 Greg Haerr <greg@censoft.com>
  * Copyright (c) 1991 David I. Bell
  *
  * DYNAMICREGIONS Device-independent routines to set clipping regions.
@@ -191,8 +191,7 @@ GdClipPoint(PSD psd,MWCOORD x,MWCOORD y)
    * and is fast.
    */
   for (rp = clipregion->rects; count-- > 0; rp++) {
-	if ((x >= rp->left) && (y >= rp->top) && (x < rp->right)
-	    && (y < rp->bottom)) {
+	if ((x >= rp->left) && (y >= rp->top) && (x < rp->right) && (y < rp->bottom)) {
 		clipminx = rp->left;
 		clipminy = rp->top;
 		clipmaxx = rp->right - 1;
@@ -249,15 +248,42 @@ GdClipPoint(PSD psd,MWCOORD x,MWCOORD y)
 int
 GdClipArea(PSD psd,MWCOORD x1, MWCOORD y1, MWCOORD x2, MWCOORD y2)
 {
-  if ((x1 < clipminx) || (x1 > clipmaxx) ||
-      (y1 < clipminy) || (y1 > clipmaxy))
+  if ((x1 < clipminx) || (x1 > clipmaxx) || (y1 < clipminy) || (y1 > clipmaxy))
 	GdClipPoint(psd, x1, y1);
 
-  if ((x2 >= clipminx) && (x2 <= clipmaxx) &&
-      (y2 >= clipminy) && (y2 <= clipmaxy)) {
+  if ((x2 >= clipminx) && (x2 <= clipmaxx) && (y2 >= clipminy) && (y2 <= clipmaxy)) {
 	if (!clipresult) return CLIP_INVISIBLE;
 	GdCheckCursor(psd, x1, y1, x2, y2);
 	return CLIP_VISIBLE;
   }
   return CLIP_PARTIAL;
 }
+
+#if DEBUG
+void
+GdPrintClipRects(PMWBLITPARMS gc)
+{
+	extern MWCLIPREGION *clipregion;
+	MWRECT *prc = clipregion->rects;
+	int count = clipregion->numRects;
+	int n = 1;
+
+	if (gc)
+		DPRINTF("Clip rects (%d) for window draw %d,%d %d,%d\n",
+			count, gc->dstx, gc->dsty, gc->width, gc->height);
+
+	while (count-- > 0) {
+		MWCOORD rx1, rx2, ry1, ry2, rw, rh;
+		rx1 = prc->left;
+		ry1 = prc->top;
+		rx2 = prc->right;
+		ry2 = prc->bottom;
+		rw = rx2 - rx1;
+		rh = ry2 - ry1;
+
+		DPRINTF("R%03d %d,%d %d,%d\n", n++, rx1, ry1, rw, rh);
+
+		prc++;
+	}
+}
+#endif

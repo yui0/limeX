@@ -3,7 +3,7 @@
 #include "wintools.h"
 #include "wintern.h"
 /*
- * Copyright (c) 2005 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2005, 2010 Greg Haerr <greg@censoft.com>
  *
  * WINCTL Custom Control Library
  * Push button Custom Control
@@ -23,6 +23,7 @@
  * Gabriele Brugnoni 2003/08/30 Italy      Modified WM_GETDLGCODE event.
  * Gabriele Brugnoni 2003/08/30 Italy      CheckRadioButton moved on windlg.c
  * Gabriele Brugnoni 2004/07/13 Italy      Radio button vertical centered
+ * Ludwig Ertl       2010/04/27 Austria    Support for BS_PUSHLIKE
  */
 
 #define CONFIG_AUTORADIOBUTTONSIZE
@@ -32,16 +33,16 @@
 #define GET_PBWASINSIDE(h)		(GetWindowWord(h, 4))
 #define GET_PBDELETEFONT(h)		(GetWindowWord(h, 6))
 #define GET_PBFONT(h)			(GetWindowWord(h, 8))
-#define GET_WND_FONT(h)			((HFONT)GetWindowLong(h, 10))
-#define GET_PBTXTRECT(h,t)		{(t).left=GetWindowLong(h, 14); (t).right=GetWindowLong(h, 18);}
+#define GET_WND_FONT(h)			((HFONT)GetWindowLong(h, 12))
+#define GET_PBTXTRECT(h,t)		{(t).left=GetWindowLong(h, 16); (t).right=GetWindowLong(h, 20);}
 
 #define SET_PBSTATE(h,x)		(SetWindowWord(h, 0, x))
 #define SET_PBCAPTURE(h,x)		(SetWindowWord(h, 2, x))
 #define SET_PBWASINSIDE(h,x)		(SetWindowWord(h, 4, x))
 #define SET_PBDELETEFONT(h,x)		(SetWindowWord(h, 6, x))
 #define SET_PBFONT(h,x)			(SetWindowWord(h, 8, x))
-#define SET_WND_FONT(h, f)		(SetWindowLong(h, 10, (LPARAM)(f)))
-#define SET_PBTXTRECT(h,t)		{ SetWindowLong(h, 14, MAKELONG((t).left, (t).top)); SetWindowLong(h, 18, MAKELONG((t).right, (t).bottom)); }
+#define SET_WND_FONT(h, f)		(SetWindowLong(h, 12, (LPARAM)(f)))
+#define SET_PBTXTRECT(h,t)		{ SetWindowLong(h, 16, MAKELONG((t).left, (t).top)); SetWindowLong(h, 20, MAKELONG((t).right, (t).bottom)); }
 
 #define PARENT(hwnd)		((HWND)GetWindowLong(hwnd,GWL_HWNDPARENT))
 
@@ -197,9 +198,13 @@ LPMSG 	lpMsg)
 	/* pushbutton.											   */
 	/* If lpMsg is not null and message is WM_CHAR,            */
 	/* checks if the char is ' ' signal that we need it.       */
-	if( (lpMsg != NULL) && (lpMsg->message == WM_CHAR) &&
-		(lpMsg->wParam == ' ') )
-		flags = DLGC_WANTCHARS;
+	if (lpMsg) {
+		if (lpMsg->message == WM_CHAR && lpMsg->wParam == ' ')
+			flags = DLGC_WANTCHARS;
+		else if (lpMsg->message == WM_KEYDOWN &&
+			     (lpMsg->wParam == VK_MBUTTON || lpMsg->wParam == VK_RETURN))
+				  flags = DLGC_WANTMESSAGE;
+	}
 
 	dwStyle = GetWindowLong ( hwnd, GWL_STYLE );
 	switch((int)(dwStyle & 0x0f)) {
@@ -475,11 +480,15 @@ DrawPushButton(HWND hwnd,HDC hDCwParam,UINT wEnumState,DWORD dwStyle)
 	crOld = SetTextColor( hdc, GetSysColor( COLOR_BTNTEXT));
 	crBkOld = SetBkColor( hdc, GetSysColor( COLOR_BTNFACE));
 
+   /* "Convert" pushlike buttons to pushbuttons */
+   if (dwStyle & BS_PUSHLIKE)
+      dwStyle &= ~0x0F;
+
 	rc = rectClient;
 	switch((int)(dwStyle & 0x0f)) {
 	case BS_PUSHBUTTON:
 	case BS_DEFPUSHBUTTON:
-		if( wEnumState & PBS_FOCUSDOWN) {
+		if( (wEnumState & PBS_FOCUSDOWN) || (wEnumState & PBS_CHECKED)) {
 			if(dwStyle & BS_BITMAP)
 				DrawDIB(hdc, rc.left+1, rc.top+1, (PMWIMAGEHDR)hwnd->userdata);
 			Draw3dBox(hdc, rc.left, rc.top, rc.right-rc.left, rc.bottom-rc.top,
@@ -573,18 +582,12 @@ DrawPushButton(HWND hwnd,HDC hDCwParam,UINT wEnumState,DWORD dwStyle)
 	 * draw text
 	 */
 	if(buf[ 0]) {
-		RECT ulinePos;
-		BOOL bUline;
 		hNewFont = GET_WND_FONT ( hwnd );
 		hOldFont = SelectObject( hdc, hNewFont);
 
-		/* Check for underlined char */
-		bUline = MwCheckUnderlineChar ( hdc, buf, &txtlen, &ulinePos );
-
 		/* calculate text bounding rect*/
-		rect.left = 0;
-		rect.top = 0;
-		DrawText( hdc, buf, txtlen, &rect, DT_CALCRECT | DT_LEFT |
+		rect.top = rect.left = rect.bottom = rect.right = 0;
+		DrawText( hdc, buf, -1, &rect, DT_CALCRECT | DT_LEFT |
 			DT_SINGLELINE | DT_TOP);
 		rectSave = rect;
 
@@ -602,8 +605,8 @@ DrawPushButton(HWND hwnd,HDC hDCwParam,UINT wEnumState,DWORD dwStyle)
 				+ iFaceOffset;
 			break;
 		case BS_RIGHT:
-			rect.left = (rect.right - rect.left) + uiWidthFrame
-				+ uiWidthShadow + 4 + iFaceOffset;
+			rect.left = uiWidth - ((rect.right - rect.left) + uiWidthFrame
+				+ uiWidthShadow + 4 + iFaceOffset);
 			break;
 		}
 
@@ -652,13 +655,7 @@ DrawPushButton(HWND hwnd,HDC hDCwParam,UINT wEnumState,DWORD dwStyle)
 				GetSysColor( COLOR_BTNTEXT));
 
 		SET_PBTXTRECT ( hwnd, rect );
-		OffsetRect ( &ulinePos, rect.left, rect.top );
-		DrawText( hdc, buf, txtlen, &rect,DT_LEFT | DT_SINGLELINE | DT_TOP);
-		if( bUline ) {
-			SelectObject ( hdc, GetStockObject(BLACK_PEN) );
-			MoveToEx ( hdc, ulinePos.left, ulinePos.bottom, NULL );
-			LineTo ( hdc, ulinePos.right, ulinePos.bottom );
-		}
+		DrawText( hdc, buf, -1, &rect,DT_LEFT | DT_SINGLELINE | DT_TOP);
 
 		if( (GetFocus() == hwnd) )
 			DrawFocusRect ( hdc, &rect );
@@ -856,16 +853,18 @@ LPARAM	lParam)
 	case WM_GETDLGCODE:
 		return cenButton_OnGetDlgCode ( hwnd, (LPMSG)lParam );
 
+	case WM_KEYDOWN:
 	case WM_CHAR:
-	    if( (char)wParam == ' ' )
+	    if( (char)wParam == ' ' || wParam == VK_RETURN || wParam == VK_MBUTTON)
 			{
 			SendMessage ( hwnd, WM_LBUTTONDOWN, -1, -1 );
 			UpdateWindow ( hwnd );
 			SendMessage ( hwnd, WM_LBUTTONUP, -1, -1 );
 			UpdateWindow ( hwnd );
 			}
-	    else
+	    else if (message == WM_CHAR)
 			return SendMessage ( GetParent(hwnd), message, wParam, lParam );
+		break;
 
 	case BM_GETCHECK:
 #if 0
@@ -889,7 +888,7 @@ LPARAM	lParam)
 #endif
 		return 1;
 	case BM_SETIMAGE:
-            	hwnd->userdata = (DWORD)wParam;
+            	hwnd->userdata = (DWORD)lParam;
             	InvalidateRect(hwnd, NULL, FALSE);
 		return 0;
 
@@ -976,7 +975,7 @@ MwRegisterButtonControl(HINSTANCE hInstance)
 	wc.style	= CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS | CS_GLOBALCLASS;
 	wc.lpfnWndProc	= (WNDPROC)cenButtonWndFn;
 	wc.cbClsExtra	= 0;
-	wc.cbWndExtra	= 22;	/*GB: was 10*/
+	wc.cbWndExtra	= 24;
 	wc.hInstance	= hInstance;
 	wc.hIcon	= NULL;
 	wc.hCursor	= 0; /*LoadCursor(NULL, IDC_ARROW);*/
@@ -1019,19 +1018,10 @@ DrawGroupBox(HWND hwnd,HDC hDCwParam,DWORD dwStyle)
 	FastFillRect(hdc, &rcClient, GetSysColor(COLOR_BTNFACE));
 
 	if(buf[ 0]) {
-		RECT ulinePos;
-		BOOL bUline = MwCheckUnderlineChar ( hdc, buf, &txtlen, &ulinePos );
-
 		SetTextColor(hdc,GetSysColor(COLOR_WINDOWTEXT));
 		SetBkMode(hdc,TRANSPARENT);
 		SetRect(&rcText,8,2,rc.right+8,rc.bottom+2);
-		OffsetRect ( &ulinePos, rcText.left, rcText.top );
-		DrawText(hdc,buf,txtlen,&rcText,DT_CENTER|DT_VCENTER);
-		if( bUline ) {
-			SelectObject ( hdc, GetStockObject(BLACK_PEN) );
-			MoveToEx ( hdc, ulinePos.left, ulinePos.bottom, NULL );
-			LineTo ( hdc, ulinePos.right, ulinePos.bottom );
-		}
+		DrawText(hdc,buf,-1,&rcText,DT_CENTER|DT_VCENTER);
 	}
 
 	crTop=GetSysColor(COLOR_BTNHIGHLIGHT);

@@ -1,9 +1,9 @@
 /*
- * Copyright (c) 2000, 2001, 2003, 2005 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2001, 2003, 2005, 2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2000 Martin Jolicoeur <martinj@visuaide.com>
  * Portions Copyright (c) 2000 Alex Holden <alex@linuxhacker.org>
  *
- * Image load/cache/resize/display routines
+ * Image load/resize/display routines - pixmaps used for storage.
  *
  * GIF, BMP, JPEG, PPM, PGM, PBM, PNG, XPM and TIFF formats are supported.
  *
@@ -12,7 +12,7 @@
  * and provides a mechanism by which the client can send image
  * data directly to the engine.
  *
- * WARNING: GIF decoder and stretchimage routine are licensed under GPL only!
+ * WARNING: GIF decoder routine is licensed under LGPL only!
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,35 +23,15 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "device.h"
-#include "swap.h"
+#include "convblit.h"
+#include "../drivers/genmem.h"
 #if HAVE_MMAP
 #include <sys/mman.h>
 #endif
 
 #if MW_FEATURE_IMAGES /* whole file */
 
-/* cached image list*/
-typedef struct {
-	MWLIST		link;		/* link list*/
-	int		id;		/* image id*/
-	PMWIMAGEHDR	pimage;		/* image data*/
-	PSD		psd;		/* FIXME shouldn't need this*/
-} IMAGEITEM, *PIMAGEITEM;
-
-static MWLISTHEAD imagehead;		/* global image list*/
-static int nextimageid = 1;
-
-/*
- * Image decoding and display
- * NOTE: This routine and APIs will change in subsequent releases.
- *
- * Decodes and loads a graphics file, then resizes to width/height,
- * then displays image at x, y
- * If width/height == -1, don't resize, use image size.
- * Clipping is not currently supported, just stretch/shrink to fit.
- *
- */
-static int GdDecodeImage(PSD psd, buffer_t *src, char *path, int flags);
+static PSD GdDecodeImage(buffer_t *src, char *path, int flags);
 
 /*
  * Buffered input functions to replace stdio functions
@@ -130,18 +110,17 @@ GdImageBufferEOF(buffer_t *buffer)
 /**
  * Load an image from a memory buffer.
  *
- * @param psd Screen device.
  * @param buffer The buffer containing the image data.
  * @param size The size of the buffer.
  * @param flags If nonzero, JPEG images will be loaded as grayscale.  Yuck!
  */
-int
-GdLoadImageFromBuffer(PSD psd, void *buffer, int size, int flags)
+PSD
+GdLoadImageFromBuffer(void *buffer, int size, int flags)
 {
 	buffer_t src;
 
 	GdImageBufferInit(&src, buffer, size);
-	return GdDecodeImage(psd, &src, NULL, flags);
+	return GdDecodeImage(&src, NULL, flags);
 }
 
 /**
@@ -162,19 +141,19 @@ void
 GdDrawImageFromBuffer(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
 	MWCOORD height, void *buffer, int size, int flags)
 {
-	int id;
+	PSD		 pmd;
 	buffer_t src;
 
 	GdImageBufferInit(&src, buffer, size);
-	id = GdDecodeImage(psd, &src, NULL, flags);
+	pmd = GdDecodeImage(&src, NULL, flags);
 
-	if (id) {
-		GdDrawImageToFit(psd, x, y, width, height, id);
-		GdFreeImage(id);
+	if (pmd) {
+		GdDrawImagePartToFit(psd, x, y, width, height, 0, 0, 0, 0, pmd);
+		pmd->FreeMemGC(pmd);
 	}
 }
 
-#if defined(HAVE_FILEIO)
+#if HAVE_FILEIO
 /**
  * Draw an image from a file.
  *
@@ -189,32 +168,32 @@ GdDrawImageFromBuffer(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
  * @param flags If nonzero, JPEG images will be loaded as grayscale.  Yuck!
  */
 void
-GdDrawImageFromFile(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width,
-	MWCOORD height, char *path, int flags)
+GdDrawImageFromFile(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
+	char *path, int flags)
 {
-	int	id;
+	PSD	pmd;
 
-	id = GdLoadImageFromFile(psd, path, flags);
-	if (id) {
-		GdDrawImageToFit(psd, x, y, width, height, id);
-		GdFreeImage(id);
+	pmd = GdLoadImageFromFile(path, flags);
+	if (pmd) {
+		GdDrawImagePartToFit(psd, x, y, width, height, 0, 0, 0, 0, pmd);
+		pmd->FreeMemGC(pmd);
 	}
 }
 
 /**
  * Load an image from a file.
  *
- * @param psd Drawing surface.
  * @param path The file containing the image data.
  * @param flags If nonzero, JPEG images will be loaded as grayscale.  Yuck!
  */
-int
-GdLoadImageFromFile(PSD psd, char *path, int flags)
+PSD
+GdLoadImageFromFile(char *path, int flags)
 {
-	int fd, id;
-	struct stat s;
+	int fd;
+	PSD	pmd;
 	void *buffer = 0;
 	buffer_t src;
+	struct stat s;
   
 	fd = open(path, O_RDONLY);
 	if (fd < 0 || fstat(fd, &s) < 0) {
@@ -245,7 +224,7 @@ GdLoadImageFromFile(PSD psd, char *path, int flags)
 #endif
 
 	GdImageBufferInit(&src, buffer, s.st_size);
-	id = GdDecodeImage(psd, &src, path, flags);
+	pmd = GdDecodeImage(&src, path, flags);
 
 #if HAVE_MMAP
 	munmap(buffer, s.st_size);
@@ -253,365 +232,352 @@ GdLoadImageFromFile(PSD psd, char *path, int flags)
 	free(buffer);
 #endif
 	close(fd);
-	return id;
+	return pmd;
 }
-#endif /* defined(HAVE_FILEIO) */
+#endif /* HAVE_FILEIO*/
+
+/*
+ * Convert 8bpp palettized image to RGBA
+ */
+void convblit_pal8_rgba8888(PMWBLITPARMS gc)
+{
+	unsigned char *src = ((unsigned char *)gc->data) +     gc->srcy * gc->src_pitch + gc->srcx;
+	unsigned char *dst = ((unsigned char *)gc->data_out) + gc->dsty * gc->dst_pitch + gc->dstx * 4;
+	MWPALENTRY *palette = gc->palette;
+	unsigned char transcolor = (unsigned char)gc->transcolor;
+	int height = gc->height;
+
+	while (--height >= 0)
+	{
+		register unsigned char *d = dst;
+		register unsigned char *s = src;
+		unsigned char pixval;
+		int w = gc->width;
+
+		while (--w >= 0)
+		{
+			pixval = *s++;
+			d[0] = palette[pixval].r;
+			d[1] = palette[pixval].g;
+			d[2] = palette[pixval].b;
+			d[3] = (pixval == transcolor)? 0: 255;
+
+			d += 4;
+		}
+		src += gc->src_pitch;
+		dst += gc->dst_pitch;
+	}
+}
+
+#if LATER
+/*
+ * Convert 4bpp hi nibble first palettized image to RGBA
+ */
+void convblit_pal4_msb_rgba8888(PMWBLITPARMS gc)
+{
+	MWCOORD minx = gc->srcx;
+	MWCOORD maxx = minx + gc->width;
+	unsigned char *src = ((unsigned char *)gc->data) +     gc->srcy * gc->src_pitch + (minx >> 1);
+	unsigned char *dst = ((unsigned char *)gc->data_out) + gc->dsty * gc->dst_pitch + gc->dstx * 4;
+	MWPALENTRY *palette = gc->palette;
+	int height = gc->height;
+
+	while (--height >= 0)
+	{
+		register unsigned char *d = dst;
+		register unsigned char *s = src;
+		unsigned char byteval = 0;
+		unsigned char pixval;
+		int x;
+
+		if ( (minx & 01) != 0)			/* preload byteval for srcx != 0 case*/
+			byteval = *s++;
+
+		for (x = minx; x < maxx; x++)
+		{
+			if ( (x & 01) == 0)			/* byte boundary*/
+				byteval = *s++;
+			pixval = byteval >> 4;
+
+			d[0] = palette[pixval].r;
+			d[1] = palette[pixval].g;
+			d[2] = palette[pixval].b;
+			d[3] = 255;
+
+			byteval <<= 4;				/* hi nibble first, then low*/
+			d += 4;
+		}
+		src += gc->src_pitch;
+		dst += gc->dst_pitch;
+	}
+}
+
+/*
+ * Convert 1bpp MSB first palettized image to RGBA
+ */
+void convblit_pal1_byte_msb_rgba8888(PMWBLITPARMS gc)
+{
+	MWCOORD minx = gc->srcx;
+	MWCOORD maxx = minx + gc->width;
+	unsigned char *src = ((unsigned char *)gc->data) +     gc->srcy * gc->src_pitch + (minx >> 3);
+	unsigned char *dst = ((unsigned char *)gc->data_out) + gc->dsty * gc->dst_pitch + gc->dstx * 4;
+	MWPALENTRY *palette = gc->palette;
+	int height = gc->height;
+
+	while (--height >= 0)
+	{
+		register unsigned char *d = dst;
+		register unsigned char *s = src;
+		unsigned char byteval = 0;
+		unsigned char pixval;
+		int x;
+
+		if ( (minx & 07) != 0)			/* preload byteval for srcx != 0 case*/
+			byteval = *s++;
+
+		for (x = minx; x < maxx; x++)
+		{
+			if ( (x & 07) == 0)			/* byte boundary*/
+				byteval = *s++;
+			pixval = byteval >> 7;
+
+			d[0] = palette[pixval].r;
+			d[1] = palette[pixval].g;
+			d[2] = palette[pixval].b;
+			d[3] = 255;
+
+			byteval <<= 1;				/* hi bit first, then low bits*/
+			d += 4;
+		}
+		src += gc->src_pitch;
+		dst += gc->dst_pitch;
+	}
+}
+#endif /* LATER*/
+
+/*
+ * Convert palettized image to RGBA.
+ * Returns same image if no palette.
+ */
+PSD
+GdConvertImageRGBA(PSD pmd)
+{
+	PSD 		rgba;
+	MWBLITPARMS parms;
+
+	/* check if image conversion supported*/
+	switch (pmd->data_format) {
+	case MWIF_PAL8:			/* 8bpp palette*/
+	//case MWIF_PAL4:
+	//case MWIF_PAL1:
+		break;
+	default:			/* not supported, return same image*/
+		return pmd;
+	}
+DPRINTF("Converting %dbpp image to RGBA\n", pmd->bpp);
+
+	/* create RGBA pixmap*/
+	rgba = GdCreatePixmap(&scrdev, pmd->xvirtres, pmd->yvirtres, MWIF_RGBA8888, NULL, 0);
+	if (!rgba)
+		return pmd;
+
+	/* convert palette to RGBA image*/
+	parms.dstx = parms.dsty = parms.srcx = parms.srcy = 0;
+	parms.width = pmd->xvirtres;
+	parms.height = pmd->yvirtres;
+	parms.data = pmd->addr;
+	parms.src_pitch = pmd->pitch;
+	parms.palette = pmd->palette;
+	parms.transcolor = pmd->transcolor;
+	parms.data_out = rgba->addr;
+	parms.dst_pitch = rgba->pitch;
+
+	switch (pmd->data_format) {
+	case MWIF_PAL8:
+		convblit_pal8_rgba8888(&parms);
+		break;
+#if LATER
+	case MWIF_PAL4:
+		convblit_pal4_msb_rgba8888(&parms);
+		break;
+	case MWIF_PAL1:
+		convblit_pal1_byte_msb_rgba8888(&parms);
+		break;
+#endif
+	}
+
+	GdFreePixmap(pmd);
+	return rgba;
+}
 
 /*
  * GdDecodeImage:
- * @psd: Drawing surface.
  * @src: The image data.
  * @flags: If nonzero, JPEG images will be loaded as grayscale.  Yuck!
  *
- * Load an image.
+ * Load an image into a pixmap.
  */
-static int
-GdDecodeImage(PSD psd, buffer_t * src, char *path, int flags)
+static PSD
+GdDecodeImage(buffer_t *src, char *path, int flags)
 {
-        int         loadOK = 0;
-        PMWIMAGEHDR pimage;
-        PIMAGEITEM  pItem;
+	PSD	pmd = NULL;
+	int	op;
 
-	/* allocate image struct*/
-	pimage = (PMWIMAGEHDR)malloc(sizeof(MWIMAGEHDR));
-	if(!pimage) {
-		return 0;
-	}
-	pimage->imagebits = NULL;
-	pimage->palette = NULL;
-	pimage->transcolor = MWNOCOLOR;
-
-#if defined(HAVE_TIFF_SUPPORT)
+	do {
+#if HAVE_TIFF_SUPPORT
 	/* must be first... no buffer support yet*/
-	if (path)
-		loadOK = GdDecodeTIFF(path, pimage);
+	if (path && (pmd = GdDecodeTIFF(path)) != NULL)
+		break;
 #endif
-#if defined(HAVE_BMP_SUPPORT)
-	if (loadOK == 0) 
-		loadOK = GdDecodeBMP(src, pimage);
+#if HAVE_BMP_SUPPORT
+	if ((pmd = GdDecodeBMP(src, TRUE)) != NULL)
+		break;
 #endif
-#if defined(HAVE_GIF_SUPPORT)
-	if (loadOK == 0) 
-		loadOK = GdDecodeGIF(src, pimage);
+#if HAVE_GIF_SUPPORT
+	if ((pmd = GdDecodeGIF(src)) != NULL)
+		break;
 #endif
-#if defined(HAVE_JPEG_SUPPORT)
-	if (loadOK == 0) 
-		loadOK = GdDecodeJPEG(src, pimage, psd, flags);
+#if HAVE_JPEG_SUPPORT
+	if ((pmd = GdDecodeJPEG(src, flags)) != NULL)
+		break;
 #endif
-#if defined(HAVE_PNG_SUPPORT)
-	if (loadOK == 0) 
-		loadOK = GdDecodePNG(src, pimage);
+#if HAVE_PNG_SUPPORT
+	if ((pmd = GdDecodePNG(src)) != NULL)
+		break;
 #endif
-#if defined(HAVE_PNM_SUPPORT)
-	if(loadOK == 0)
-		loadOK = GdDecodePNM(src, pimage);
+#if HAVE_PNM_SUPPORT
+	if ((pmd = GdDecodePNM(src)) != NULL)
+		break;
 #endif
-#if defined(HAVE_XPM_SUPPORT)
-	if (loadOK == 0) 
-		loadOK = GdDecodeXPM(src, pimage, psd);
+#if HAVE_XPM_SUPPORT
+	if ((pmd = GdDecodeXPM(src)) != NULL)
+		break;
 #endif
+	} while (0);
 
-	if (loadOK == 0) {
-		EPRINTF("GdLoadImageFromFile: unknown image type\n");
-		goto err;		/* image loading error*/
+	if (!pmd) {
+		EPRINTF("GdLoadImageFromFile: Image load error\n");
+		return NULL;
 	}
-	if (loadOK != 1)
-		goto err;		/* image loading error*/
 
-	/* allocate id*/
-	pItem = GdItemNew(IMAGEITEM);
-	if (!pItem)
-		goto err;
-	pItem->id = nextimageid++;
-	pItem->pimage = pimage;
-	pItem->psd = psd;
-	GdListAdd(&imagehead, &pItem->link);
+	/* if not running in palette mode and no conversion blit available upgrade image to RGBA*/
+	op = (pmd->data_format & MWIF_HASALPHA)? MWROP_SRC_OVER: MWROP_COPY;
+	if (scrdev.pixtype != MWPF_PALETTE && !GdFindConvBlit(pmd, pmd->data_format, op))
+		pmd = GdConvertImageRGBA(pmd);
 
-	return pItem->id;
-
-err:
-	free(pimage);
-	return 0;			/* image loading error*/
-}
-
-static PIMAGEITEM
-findimage(int id)
-{
-	PMWLIST		p;
-	PIMAGEITEM	pimagelist;
-
-	for (p=imagehead.head; p; p=p->next) {
-		pimagelist = GdItemAddr(p, IMAGEITEM, link);
-		if (pimagelist->id == id)
-			return pimagelist;
-	}
-	return NULL;
+	return pmd;
 }
 
 /**
- * Draw an image.
+ * Draw whole or part of the image, stretching/shrinking to fit destination.
+ *
+ * The pixmap is resized to width/height, then displayed at x, y.
+ * If width/height == -1, don't resize, use image size.
+ * Clipping is not currently supported, just stretch/shrink to fit.
  *
  * @param psd Drawing surface.
  * @param x X destination co-ordinate.
  * @param y Y destination co-ordinate.
  * @param width If >=0, the image will be scaled to this width.
- * If <0, the image will not be scaled horiziontally.
- * @param height If >=0, the image will be scaled to this height.
- * If <0, the image will not be scaled vertically.
- * @param id Image to draw.
- */
-void
-GdDrawImageToFit(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
-	int id)
-{
-	PIMAGEITEM	pItem;
-	PMWIMAGEHDR	pimage;
-
-	pItem = findimage(id);
-	if (!pItem)
-		return;
-	pimage = pItem->pimage;
-
-	/*
-	 * Display image, possibly stretch/shrink to resize
-	 */
-	if (height < 0)
-		height = pimage->height;
-	if (width < 0)
-		width = pimage->width;
-
-	if (height != pimage->height || width != pimage->width) {
-		MWCLIPRECT	rcDst;
-		MWIMAGEHDR	image2;
-
-		/* create similar image, different width/height*/
-
-		image2.width = width;
-		image2.height = height;
-		image2.planes = pimage->planes;
-		image2.bpp = pimage->bpp;
-		GdComputeImagePitch(pimage->bpp, width, &image2.pitch,
-			&image2.bytesperpixel);
-		image2.compression = pimage->compression;
-		image2.palsize = pimage->palsize;
-		image2.palette = pimage->palette;	/* already allocated*/
-		image2.transcolor = pimage->transcolor;
-		if( (image2.imagebits = malloc(image2.pitch*height)) == NULL) {
-			EPRINTF("GdDrawImageToFit: no memory\n");
-			return;
-		}
-
-		rcDst.x = 0;
-		rcDst.y = 0;
-		rcDst.width = width;
-		rcDst.height = height;
-
-		/* Stretch full source to destination rectangle*/
-		GdStretchImage(pimage, NULL, &image2, &rcDst);
-		GdDrawImage(psd, x, y, &image2);
-		free(image2.imagebits);
-	} else
-		GdDrawImage(psd, x, y, pimage);
-}
-
-/**
- * Draw part of the image.
- *
- * @param psd Drawing surface.
- * @param x X destination co-ordinate.
- * @param y Y destination co-ordinate.
- * @param width If >=0, the image will be scaled to this width.
- * If <0, the image will not be scaled horiziontally.
+ * If <0, the image will not be scaled horizontally.
  * @param height If >=0, the image will be scaled to this height.
  * If <0, the image will not be scaled vertically.
  * @param sx source X co-ordinate.
  * @param sy source Y co-ordinate.
- * @param swidth source width.
+ * @param swidth source width.  If 0, draw whole image.
  * @param sheight source height.
  * @param id Image to draw.
  */
 void
 GdDrawImagePartToFit(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height,
-								MWCOORD sx, MWCOORD sy, MWCOORD swidth, MWCOORD sheight,
-	int id)
+	MWCOORD sx, MWCOORD sy, MWCOORD swidth, MWCOORD sheight, PSD pmd)
 {
-	PIMAGEITEM	pItem;
-	PMWIMAGEHDR	pimage;
+	PSD			pmd2;
+	MWCLIPRECT	rcDst,rcSrc;
 
-	pItem = findimage(id);
-	if (!pItem)
-		return;
-	pimage = pItem->pimage;
-
-	/*
-	 * Display image, possibly stretch/shrink to resize
-	 */
 	if (height < 0)
-		height = pimage->height;
+		height = pmd->yvirtres;
 	if (width < 0)
-		width = pimage->width;
+		width = pmd->xvirtres;
 
-	if (height != pimage->height || width != pimage->width) {
-		MWCLIPRECT	rcDst,rcSrc;
-		MWIMAGEHDR	image2;
-
-		/* create similar image, different width/height*/
-
-		image2.width = width;
-		image2.height = height;
-		image2.planes = pimage->planes;
-		image2.bpp = pimage->bpp;
-		GdComputeImagePitch(pimage->bpp, width, &image2.pitch,
-			&image2.bytesperpixel);
-		image2.compression = pimage->compression;
-		image2.palsize = pimage->palsize;
-		image2.palette = pimage->palette;	/* already allocated*/
-		image2.transcolor = pimage->transcolor;
-		if( (image2.imagebits = malloc(image2.pitch*height)) == NULL) {
-			EPRINTF("GdDrawImageToFit: no memory\n");
-			return;
-		}
-
-		rcDst.x = 0;
-		rcDst.y = 0;
-		rcDst.width = width;
-		rcDst.height = height;
-
-		rcSrc.x = sx;
-		rcSrc.y = sy;
-		rcSrc.width = swidth;
-		rcSrc.height = sheight;
-
-		/* Stretch full source to destination rectangle*/
-		GdStretchImage(pimage, &rcSrc, &image2, &rcDst);
-		GdDrawImage(psd, x, y, &image2);
-		free(image2.imagebits);
-	} else
-		GdDrawImage(psd, x, y, pimage);
-}
-
-/**
- * Destroy an image.
- *
- * @param id Image to free.
- */
-void
-GdFreeImage(int id)
-{
-	PIMAGEITEM	pItem;
-	PMWIMAGEHDR	pimage;
-
-	pItem = findimage(id);
-	if (pItem) {
-		GdListRemove(&imagehead, &pItem->link);
-		pimage = pItem->pimage;
-
-		/* delete image bits*/
-		if(pimage->imagebits)
-			free(pimage->imagebits);
-		if(pimage->palette)
-			free(pimage->palette);
-
-		free(pimage);
-		GdItemFree(pItem);
+	/* no need to stretch if width/height the same and no source offsets*/
+	if (height == pmd->yvirtres && width == pmd->xvirtres && swidth == 0) {
+		GdDrawImage(psd, x, y, (PMWIMAGEHDR)pmd);	// FIXME casting MWIMAGEHDR
+		return;
 	}
+
+#if OLDWAY
+	/* create similar image, different width/height, no palette*/
+	pmd2 = GdCreatePixmap(&scrdev, width, height, pmd->data_format, NULL, 0);
+	if (!pmd2) {
+		EPRINTF("GdDrawImagePartToFit: no memory\n");
+		return;
+	}
+	pmd2->transcolor = pmd->transcolor;
+
+	/* fake up palette*/
+	pmd2->palsize = pmd->palsize;
+	pmd2->palette = pmd->palette;
+
+	rcDst.x = 0;
+	rcDst.y = 0;
+	rcDst.width = width;
+	rcDst.height = height;
+
+	/* src rect, not used if swidth == 0*/
+	rcSrc.x = sx;
+	rcSrc.y = sy;
+	rcSrc.width = swidth;
+	rcSrc.height = sheight;
+
+	/* Stretch full source to destination rectangle*/
+	// FIXME casting MWIMAGEHDR below
+	GdStretchImage((PMWIMAGEHDR)pmd, (swidth == 0)? NULL: &rcSrc, (PMWIMAGEHDR)pmd2, &rcDst);
+	GdDrawImage(psd, x, y, (PMWIMAGEHDR)pmd2);
+
+	/* undo faked up palette before free*/
+	pmd2->palsize = 0;
+	pmd2->palette = NULL;
+	GdFreePixmap(pmd2);
+#else
+	GdStretchBlit(psd, x, y, width, height, pmd, sx, sy, sx+swidth, sy+sheight, MWROP_COPY);
+#endif
 }
 
 /**
- * Get information about an image.
+ * Get information about an image or pixmap.
  *
- * @param id Image to query.
- * @param pii Destination for image information.
+ * @param id pixmap id
+ * @param pinfo Destination for image information.
  * @return TRUE on success, FALSE on error.
  */
 MWBOOL
-GdGetImageInfo(int id, PMWIMAGEINFO pii)
+GdGetImageInfo(PSD pmd, PMWIMAGEINFO pinfo)
 {
-	PMWIMAGEHDR	pimage;
-	PIMAGEITEM	pItem;
 	int		i;
 
-	pItem = findimage(id);
-	if (!pItem) {
-		memset(pii, 0, sizeof(*pii));
+	if (!pmd) {
+		memset(pinfo, 0, sizeof(*pinfo));
 		return FALSE;
 	}
-	pimage = pItem->pimage;
-	pii->id = id;
-	pii->width = pimage->width;
-	pii->height = pimage->height;
-	pii->planes = pimage->planes;
-	pii->bpp = pimage->bpp;
-	pii->pitch = pimage->pitch;
-	pii->bytesperpixel = pimage->bytesperpixel;
-	pii->compression = pimage->compression;
-	pii->palsize = pimage->palsize;
-	if (pimage->palsize) {
-		if (pimage->palette) {
-			for (i=0; i<pimage->palsize; ++i)
-				pii->palette[i] = pimage->palette[i];
+
+	pinfo->width = pmd->xvirtres;
+	pinfo->height = pmd->yvirtres;
+	pinfo->planes = pmd->planes;
+	pinfo->bpp = pmd->bpp;
+	pinfo->data_format = pmd->data_format;
+	pinfo->pitch = pmd->pitch;
+	pinfo->transcolor = pmd->transcolor;
+	pinfo->palsize = pmd->palsize;
+	if (pmd->palsize) {
+		if (pmd->palette) {
+			for (i=0; i<pmd->palsize; ++i)
+				pinfo->palette[i] = pmd->palette[i];
 		} else {
 			/* FIXME handle jpeg's without palette*/
-			GdGetPalette(pItem->psd, 0, pimage->palsize,
-				pii->palette);
+			GdGetPalette(&scrdev, 0, pmd->palsize, pinfo->palette);
 		}
 	}
 	return TRUE;
 }
-
-#define PIX2BYTES(n)	(((n)+7)/8)
-/*
- * compute image line size and bytes per pixel
- * from bits per pixel and width
- */
-void
-GdComputeImagePitch(int bpp, int width, int *pitch, int *bytesperpixel)
-{
-	int	linesize;
-	int	bytespp = 1;
-
-	if(bpp == 1)
-		linesize = PIX2BYTES(width);
-	else if(bpp <= 4)
-		linesize = PIX2BYTES(width<<2);
-	else if(bpp <= 8)
-		linesize = width;
-	else if(bpp <= 16) {
-		linesize = width * 2;
-		bytespp = 2;
-	} else if(bpp <= 24) {
-		linesize = width * 3;
-		bytespp = 3;
-	} else {
-		linesize = width * 4;
-		bytespp = 4;
-	}
-
-	/* rows are DWORD right aligned*/
-	*pitch = (linesize + 3) & ~3;
-	*bytesperpixel = bytespp;
-}
-
-#if 0
-void print_image(PMWIMAGEHDR image)
-{
-	int i;
-
-	DPRINTF("Image:\n\n");
-	DPRINTF("height: %d\n", image->height);
-	DPRINTF("width: %d\n", image->width);
-	DPRINTF("planes: %d\n", image->planes);
-	DPRINTF("bpp: %d\n", image->bpp);
-	DPRINTF("compression: %d\n", image->compression);
-	DPRINTF("palsize: %d\n", image->palsize);
-
-	for (i=0;i<image->palsize;i++)
-		DPRINTF("palette: %d, %d, %d\n", image->palette[i].r,
-			image->palette[i].g, image->palette[i].b);
-
-	for(i=0;i<(image->width*image->height);i++)
-		DPRINTF("imagebits: %d\n", image->imagebits[i]);
-}
-#endif
-
 #endif /* MW_FEATURE_IMAGES - whole file */

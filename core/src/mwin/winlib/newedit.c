@@ -176,7 +176,7 @@ neCreate(HWND hwnd)
 
 
 	GetClientRect(hwnd, &rc);
-	nl = (rc.bottom - rc.top + charH - 1) / charH;
+	//nl = (rc.bottom - rc.top + charH - 1) / charH;
 
 	if (!(pSLEditData = malloc(sizeof(SLEDITDATA)))) {
 		EPRINTF("EDIT: malloc error!\n");
@@ -221,7 +221,7 @@ neCreate(HWND hwnd)
 	pSLEditData->hardLimit = -1;
 
 	pSLEditData->buffer =
-		(EDITCHAR *) malloc(SZEDITCHAR * pSLEditData->bufferLen);
+		(EDITCHAR *) calloc(SZEDITCHAR, pSLEditData->bufferLen);
 
 	/* undo information */
 	pSLEditData->lastOp = EDIT_OP_NONE;
@@ -449,9 +449,7 @@ neGetPasswdCharWith(HDC hdc, EDITCHAR pwdChar)
 {
 	int xw, xh, xb;
 
-	GdSetFont(hdc->font->pfont);
-	GdGetTextSize(hdc->font->pfont, &pwdChar, 1,
-		      &xw, &xh, &xb, MWTF_UC16);
+	GdGetTextSize(hdc->font->pfont, &pwdChar, 1, &xw, &xh, &xb, MWTF_UC16);
 	return xw;
 }
 
@@ -468,7 +466,6 @@ neGetTextHeight(HWND hWnd, HDC hdc)
 	if (hdc == NULL)
 		hdc = GetDC(hWnd), bRelDC = TRUE;
 	SelectObject(hdc, ((PSLEDITDATA) (hWnd->userdata2))->hFont);
-	GdSetFont(hdc->font->pfont);
 	GdGetTextSize(hdc->font->pfont, "X", 1, &xw, &xh, &xb, MWTF_ASCII);
 	if (bRelDC)
 		ReleaseDC(hWnd, hdc);
@@ -493,7 +490,6 @@ neGetTextWith(HWND hWnd, HDC hdc, PSLEDITDATA pSLEditData,
 	if (hdc == NULL)
 		hdc = GetDC(hWnd), bRelDC = TRUE;
 	SelectObject(hdc, pSLEditData->hFont);
-	GdSetFont(hdc->font->pfont);
 	GdGetTextSize(hdc->font->pfont, txt, len, &xw, &xh, &xb, MWTF_UC16);
 	if (bRelDC)
 		ReleaseDC(hWnd, hdc);
@@ -607,7 +603,7 @@ neRecalcScrollPos(HWND hWnd, HDC hdc, PSLEDITDATA pSLEditData,
 	pSLEditData->caretRow =
 		pSLEditData->epY / pSLEditData->charHeight -
 		pSLEditData->scrollRow;
-	if (pSLEditData->caretRow >= pSLEditData->cLines - 1) {
+	if (pSLEditData->cLines > 1 && pSLEditData->caretRow >= pSLEditData->cLines - 1) {
 		int delta = pSLEditData->caretRow - pSLEditData->cLines + 2;
 		pSLEditData->scrollRow += delta;
 		pSLEditData->caretRow -= delta;
@@ -1505,7 +1501,7 @@ neCharPressed(HWND hWnd, WPARAM wParam, LPARAM lParam)
 	int i, chars, inserting;
 	PSLEDITDATA pSLEditData = (PSLEDITDATA) (hWnd->userdata2);
 	DWORD dwStyle = hWnd->style;
-	BOOL isPasting = (((long) wParam == -1) && ((long) lParam == -1));
+	BOOL isPasting = (((LPARAM) wParam == -1) && lParam == -1);
 
 
 	if (dwStyle & ES_READONLY)
@@ -1542,6 +1538,9 @@ neCharPressed(HWND hWnd, WPARAM wParam, LPARAM lParam)
 			charBuffer[0] = '\n';
 			break;
 		}
+
+		if ((dwStyle & ES_NUMBER) && !isdigit(charBuffer[0]))
+			return 0;
 	}
 
 	//  If there is a selection, remove it.
@@ -1577,7 +1576,7 @@ neCharPressed(HWND hWnd, WPARAM wParam, LPARAM lParam)
 			pSLEditData->buffer[i] = pSLEditData->buffer[i + 1];
 	} else if (inserting > 0) {
 		for (i = pSLEditData->dataEnd - 1;
-		     i > pSLEditData->editPos - 1; i--)
+		     i > pSLEditData->editPos - 1 && i - inserting>=0; i--)
 			pSLEditData->buffer[i] =
 				pSLEditData->buffer[i - inserting];
 	}
@@ -1698,11 +1697,10 @@ SLEditCtrlProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			int len;
 
 			pSLEditData = (PSLEDITDATA) (pCtrl->userdata2);
-			len = min((int) wParam, pSLEditData->dataEnd);
+			len = min((int) wParam, pSLEditData->dataEnd+1);
 			//memcpy_fromedit (buffer, pSLEditData->buffer, len);
-			GdConvertEncoding(pSLEditData->buffer, MWTF_UC16, len,
-					  buffer, mwTextCoding);
-			return strlen(buffer);
+			return GdConvertEncoding(pSLEditData->buffer, MWTF_UC16, len,
+					  buffer, mwTextCoding)?strlen(buffer):0;
 		}
 
 	case WM_SETTEXT:

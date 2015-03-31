@@ -23,8 +23,8 @@ extern Visual*      x11_vis;
 extern Window       x11_win;
 extern GC           x11_gc;
 extern unsigned int x11_event_mask;
-extern int          x11_setup_display();
-extern void         x11_handle_event(XEvent*);
+int          x11_setup_display(void);
+void         x11_handle_event(XEvent*);
 
 MOUSEDEVICE mousedev = {
     X11_Open,
@@ -43,9 +43,9 @@ MOUSEDEVICE mousedev = {
 static int X11_Open(MOUSEDEVICE *pmd)
 {
     if (x11_setup_display() < 0)
-	return -1;
+		return -1;
     /* return the x11 file descriptor for select */
-    return ConnectionNumber(x11_dpy);
+    return ConnectionNumber(x11_dpy);  
 }
 
 /*
@@ -86,14 +86,14 @@ X11_GetDefaultAccel(int *pscale,int *pthresh)
 static int
 X11_Read(MWCOORD *dx, MWCOORD *dy, MWCOORD *dz, int *bp)
 {
-	static int noevent_count = 0;
-	XEvent ev;
-	int events = 0;
-	long mask = /* x11_event_mask | */
-#ifdef USE_EXPOSURE
-	ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask;
+    static int noevent_count = 0;
+    XEvent ev;
+    int events = 0;
+    long mask = /* x11_event_mask | */
+#if USE_EXPOSURE
+      ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask;
 #else
-	ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
+      ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
 #endif
 
     while (XCheckMaskEvent(x11_dpy, mask, &ev)) {
@@ -109,29 +109,21 @@ X11_Read(MWCOORD *dx, MWCOORD *dy, MWCOORD *dz, int *bp)
 		    button |= MWBUTTON_M;
 		if (ev.xmotion.state & Button3Mask)
 		    button |= MWBUTTON_R;
-		if (ev.xmotion.state & Button4Mask)
-		    button |= MWBUTTON_UP;
-		if (ev.xmotion.state & Button5Mask)
-		    button |= MWBUTTON_DOWN;
 		*bp = button;
 		events++;
 	    }
 	}
 	else if (ev.type == ButtonPress) {
 	    if (ev.xbutton.window == x11_win) {
-		int button = 0;
-
+	        int button = 0;
+		
 		/* Get pressed button */
-		if (ev.xbutton.button == 1)
+	    	if(ev.xbutton.button == 1)
 			button = MWBUTTON_L;
-		else if (ev.xbutton.button == 2)
+		else if(ev.xbutton.button == 2)
 			button = MWBUTTON_M;
-		else if (ev.xbutton.button == 3)
+		else if(ev.xbutton.button == 3)
 			button = MWBUTTON_R;
-		else if (ev.xbutton.button == 4)
-			button = MWBUTTON_UP;
-		else if (ev.xbutton.button == 5)
-			button = MWBUTTON_DOWN;
 
 		/* Get any other buttons that might be already held */
 		if (ev.xbutton.state & Button1Mask)
@@ -140,39 +132,29 @@ X11_Read(MWCOORD *dx, MWCOORD *dy, MWCOORD *dz, int *bp)
 		    button |= MWBUTTON_M;
 		if (ev.xbutton.state & Button3Mask)
 		    button |= MWBUTTON_R;
-		if (ev.xbutton.state & Button4Mask)
-		    button |= MWBUTTON_UP;
-		if (ev.xbutton.state & Button5Mask)
-		    button |= MWBUTTON_DOWN;
-
-/*		printf("!Pressing button: 0x%x, state: 0x%x, button: 0x%x\n",
+		
+/*		DPRINTF("!Pressing button: 0x%x, state: 0x%x, button: 0x%x\n",
 			button,ev.xbutton.state, ev.xbutton.button);*/
 		*bp = button;
 		*dx = ev.xbutton.x;
 		*dy = ev.xbutton.y;
 		*dz = 0;
 		events++;
-
-		if (button & (MWBUTTON_UP|MWBUTTON_DOWN)) break;
 	    }
 	}
 	else if (ev.type == ButtonRelease) {
 	    if (ev.xbutton.window == x11_win) {
-		int button = 0;
+	        int button = 0;
 		int released = 0;
-
+	
 		/* Get released button */
-		if (ev.xbutton.button == 1)
+	    	if(ev.xbutton.button == 1)
 			released = MWBUTTON_L;
-		else if (ev.xbutton.button == 2)
+		else if(ev.xbutton.button == 2)
 			released = MWBUTTON_M;
-		else if (ev.xbutton.button == 3)
+		else if(ev.xbutton.button == 3)
 			released = MWBUTTON_R;
-		else if (ev.xbutton.button == 4)
-			released = MWBUTTON_UP;
-		else if (ev.xbutton.button == 5)
-			released = MWBUTTON_DOWN;
-
+		
 		/* Get any other buttons that might be already held */
 		if (ev.xbutton.state & Button1Mask)
 		    button |= MWBUTTON_L;
@@ -180,21 +162,15 @@ X11_Read(MWCOORD *dx, MWCOORD *dy, MWCOORD *dz, int *bp)
 		    button |= MWBUTTON_M;
 		if (ev.xbutton.state & Button3Mask)
 		    button |= MWBUTTON_R;
-		if (ev.xbutton.state & Button4Mask)
-		    button |= MWBUTTON_UP;
-		if (ev.xbutton.state & Button5Mask)
-		    button |= MWBUTTON_DOWN;
-
+	
 		/* We need to remove the released button from the button mask*/
-		button &= ~released;
+		button &= ~released; 
 
 		*bp = button;
 		*dx = ev.xbutton.x;
 		*dy = ev.xbutton.y;
 		*dz = 0;
 		events++;
-
-		if (button & (MWBUTTON_UP|MWBUTTON_DOWN)) break;
 	    }
 	}
 	else {
@@ -207,7 +183,7 @@ X11_Read(MWCOORD *dx, MWCOORD *dy, MWCOORD *dz, int *bp)
             is returned......), force an event read (which will
             most likely terminate the connection) */
 	if (++noevent_count >= 50) {
-            while (XNextEvent(x11_dpy, &ev)) {
+            while(XNextEvent(x11_dpy, &ev)) {
                 /* if we return, then we got an event...put it back
                    so we can properly process it next time through */
                 XPutBackEvent(x11_dpy, &ev);

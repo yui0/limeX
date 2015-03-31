@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2000, 2001, 2002, 2007 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2001, 2002, 2007,2010 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002 Koninklijke Philips Electronics
  *
  * Microwindows Screen Driver for Linux kernel framebuffers
@@ -18,6 +18,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -29,6 +30,14 @@
 #include "genmem.h"
 #include "fb.h"
 
+#define PATH_FRAMEBUFFER	"/dev/fb0"	/* real framebuffer*/
+
+/* frame buffer emulator defaults - not used with real framebuffer*/
+#define PATH_EMULATORFB		"/tmp/fb0"	/* framebuffer emulator when used*/
+#define XRES				800			/* default fb emulator xres*/
+#define YRES				600			/* default fb emulator yres*/
+#define BPP					32			/* default bpp, 1,2,4,8,15,16,24,32, use 15 for 16bpp 5/5/5*/
+
 #define EMBEDDEDPLANET	0	/* =1 for kluge embeddedplanet ppc framebuffer*/
 
 #ifndef FB_TYPE_VGA_PLANES
@@ -37,31 +46,64 @@
 
 static PSD  fb_open(PSD psd);
 static void fb_close(PSD psd);
-static void fb_setportrait(PSD psd, int portraitmode);
 static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
-static void gen_getscreeninfo(PSD psd,PMWSCREENINFO psi);
 
 SCREENDEVICE	scrdev = {
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL,
+	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0,
+	gen_fonts,
 	fb_open,
 	fb_close,
-	gen_getscreeninfo,
 	fb_setpalette,
-	NULL,			/* DrawPixel subdriver*/
-	NULL,			/* ReadPixel subdriver*/
-	NULL,			/* DrawHorzLine subdriver*/
-	NULL,			/* DrawVertLine subdriver*/
-	NULL,			/* FillRect subdriver*/
-	gen_fonts,
-	NULL,			/* Blit subdriver*/
-	NULL,			/* PreSelect*/
-	NULL,			/* DrawArea subdriver*/
-	NULL,			/* SetIOPermissions*/
+	gen_getscreeninfo,
 	gen_allocatememgc,
-	fb_mapmemgc,
+	gen_mapmemgc,
 	gen_freememgc,
-	NULL,			/* StretchBlit subdriver*/
-	fb_setportrait		/* SetPortrait*/
+	gen_setportrait,
+	NULL,				/* Update*/
+	NULL				/* PreSelect*/
+};
+
+/* framebuffer info defaults for emulator*/
+static struct fb_fix_screeninfo  fb_fix = {
+	  .type = FB_TYPE_PACKED_PIXELS,
+#if BPP == 1
+	  .visual = FB_VISUAL_MONO10,
+	  .line_length = XRES / (8 / BPP),
+#elif BPP <= 8
+	  .visual = FB_VISUAL_PSEUDOCOLOR,
+	  .line_length = XRES / (8 / BPP),
+#else /* 15,16,24,32bpp*/
+	  .visual = FB_VISUAL_TRUECOLOR,
+	  .line_length = XRES * ((BPP+1)/8),	/* +1 to make 15bpp work*/
+#endif
+	  .accel = FB_ACCEL_NONE,
+};
+
+static struct fb_var_screeninfo fb_var = {
+	  .xres = XRES,
+	  .yres = YRES,
+	  .xres_virtual = XRES,
+	  .yres_virtual = YRES,
+	  .bits_per_pixel = BPP,
+#if BPP <= 8
+	  /* offset, length, msb_right*/
+	  .red = { 0, BPP, 0 },
+	  .green = { 0, BPP, 0 },
+	  .blue = { 0, BPP, 0 },
+#elif BPP == 15
+	  .red = { 0, 5, 0 },
+	  .green = { 0, 5, 0 },		/* green.length is checked for MWPF_TRUECOLOR555*/
+	  .blue = { 0, 5, 0 },
+#elif BPP == 16
+	  .red = { 0, 5, 0 },
+	  .green = { 0, 6, 0 },
+	  .blue = { 0, 5, 0 },
+#else
+	  .red = { 0, 8, 0 },
+	  .green = { 0, 8, 0 },
+	  .blue = { 0, 8, 0 },
+#endif
+	  .transp = { 0, 0, 0 },	/* transp.length == 8 indicates alpha channel*/
 };
 
 /* static variables*/
@@ -70,11 +112,6 @@ static int status;		/* 0=never inited, 1=once inited, 2=inited. */
 static short saved_red[16];	/* original hw palette*/
 static short saved_green[16];
 static short saved_blue[16];
-
-extern SUBDRIVER fbportrait_left, fbportrait_right, fbportrait_down;
-static PSUBDRIVER pdrivers[4] = { /* portrait mode subdrivers*/
-	NULL, &fbportrait_left, &fbportrait_right, &fbportrait_down
-};
 
 /* local functions*/
 static void	set_directcolor_palette(PSD psd);
@@ -86,35 +123,6 @@ fb_open(PSD psd)
 	char *	env;
 	int	type, visual;
 	PSUBDRIVER subdriver;
-#if HAVETEXTMODE
-	int tty;
-#endif
-#if EMBEDDEDPLANET
-	env = "/dev/lcd";
-	fb = open(env, O_RDWR);
-	if(fb < 0) {
-		EPRINTF("Error opening %s: %m", env);
-		return NULL;
-	}
-	/* framebuffer attributes are fixed*/
-	type = FB_TYPE_PACKED_PIXELS;
-	visual = FB_VISUAL_PSEUDOCOLOR;
-	psd->xres = psd->xvirtres = 640;
-	psd->yres = psd->yvirtres = 480;
-	psd->planes = 1;
-	psd->bpp = 8;
-	/* set linelen to byte length, possibly converted later*/
-	psd->linelen = psd->xvirtres;
-	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
-	psd->size = 0;		/* force subdriver init of size*/
-
-        if (ioctl(fb, 1, 0) < 0) {
-		EPRINTF("Error: can't enable LCD");
-		goto fail;
-	}
-#else
-	struct fb_fix_screeninfo fb_fix;
-	struct fb_var_screeninfo fb_var;
 
 	assert(status < 2);
 
@@ -123,19 +131,25 @@ fb_open(PSD psd)
 		fb = open(env, O_RDWR);
 	else {
 		/* try /dev/fb0 then /dev/fb/0 */
-		fb = open("/dev/fb0", O_RDWR);
+		fb = open(PATH_FRAMEBUFFER, O_RDWR);
 		if (fb < 0)
 			fb = open("/dev/fb/0", O_RDWR);
 	}
 	if(fb < 0) {
-		EPRINTF("Error opening %s: %m. Check kernel config\n", env);
+		EPRINTF("Error opening %s: %m. Check kernel config\n", env? env: PATH_FRAMEBUFFER);
 		return NULL;
 	}
-	if(ioctl(fb, FBIOGET_FSCREENINFO, &fb_fix) == -1 ||
+
+	/* get framebuffer info*/
+	if (ioctl(fb, FBIOGET_FSCREENINFO, &fb_fix) == -1 ||
 		ioctl(fb, FBIOGET_VSCREENINFO, &fb_var) == -1) {
-			EPRINTF("Error reading screen info: %m\n");
-			goto fail;
+			/* allow framebuffer emulator to fail ioctl*/
+			if (env && strcmp(env, PATH_EMULATORFB) != 0) {
+				EPRINTF("Error reading screen info: %m\n");
+				goto fail;
+			}
 	}
+
 	/* setup screen device from framebuffer info*/
 	type = fb_fix.type;
 	visual = fb_fix.visual;
@@ -158,16 +172,14 @@ fb_open(PSD psd)
 
 	psd->bpp = fb_var.bits_per_pixel;
 	psd->ncolors = (psd->bpp >= 24)? (1 << 24): (1 << psd->bpp);
+	if (psd->bpp == 15)		/* allow 15bpp for static fb emulator init only*/
+		psd->bpp = 16;
 
-	/* set linelen to byte length, possibly converted later*/
-	psd->linelen = fb_fix.line_length;
-	psd->size = 0;		/* force subdriver init of size*/
-#endif /* !EMBEDDEDPLANET*/
-
-	psd->flags = PSF_SCREEN | PSF_HAVEBLIT;
+	psd->pitch = fb_fix.line_length;
+	psd->size = psd->yres * psd->pitch;
+    psd->flags = PSF_SCREEN;
 
 	/* set pixel format*/
-#ifndef TPHELIO /* temp kluge: VTech Helio kernel needs changing*/
 	if(visual == FB_VISUAL_TRUECOLOR || visual == FB_VISUAL_DIRECTCOLOR) {
 		switch(psd->bpp) {
 		case 8:
@@ -175,59 +187,49 @@ fb_open(PSD psd)
 			break;
 		case 16:
 			if (fb_var.green.length == 5)
-				psd->pixtype = MWPF_TRUECOLOR555;
+				psd->pixtype = MWPF_TRUECOLOR555;	// FIXME must also set MWPF_PIXELFORMAT in config
 			else
 				psd->pixtype = MWPF_TRUECOLOR565;
 			break;
+		case 18:
 		case 24:
 			psd->pixtype = MWPF_TRUECOLOR888;
 			break;
 		case 32:
-			psd->pixtype = MWPF_TRUECOLOR0888;
-#if !EMBEDDEDPLANET
-			/* Check if we have alpha */
-			if (fb_var.transp.length == 8)
-				psd->pixtype = MWPF_TRUECOLOR8888;
+#if MWPIXEL_FORMAT == MWPF_TRUECOLORABGR
+			psd->pixtype = MWPF_TRUECOLOR8888;
+#else
+			psd->pixtype = MWPF_TRUECOLORABGR;
 #endif
 			break;
 		default:
-			EPRINTF(
-			"Unsupported %ld color (%d bpp) truecolor framebuffer\n",
-				psd->ncolors, psd->bpp);
+			EPRINTF("Unsupported %d color (%d bpp) truecolor framebuffer\n", psd->ncolors, psd->bpp);
 			goto fail;
 		}
 	} else 
-#endif
 		psd->pixtype = MWPF_PALETTE;
 
-	/*DPRINTF("%dx%dx%d linelen %d type %d visual %d bpp %d\n", psd->xres,
-	 	psd->yres, psd->ncolors, psd->linelen, type, visual,
-		psd->bpp);*/
+	/* set standard data format from bpp and pixtype*/
+	psd->data_format = set_data_format(psd);
+
+	EPRINTF("%dx%dx%dbpp pitch %d type %d visual %d colors %d pixtype %d\n", psd->xres, psd->yres,
+		(psd->pixtype == MWPF_TRUECOLOR555)? 15: psd->bpp, psd->pitch, type, visual,
+		psd->ncolors, psd->pixtype);
 
 	/* select a framebuffer subdriver based on planes and bpp*/
 	subdriver = select_fb_subdriver(psd);
 	if (!subdriver) {
-		EPRINTF("No driver for screen type %d visual %d bpp %d\n",
-			type, visual, psd->bpp);
+		EPRINTF("No driver for screen type %d visual %d bpp %d\n", type, visual, psd->bpp);
 		goto fail;
 	}
 
-	/*
-	 * set and initialize subdriver into screen driver
-	 * psd->size is calculated by subdriver init
-	 */
-	if(!set_subdriver(psd, subdriver, TRUE)) {
-		EPRINTF("Driver initialize failed type %d visual %d bpp %d\n",
-			type, visual, psd->bpp);
-		goto fail;
-	}
+	/* set subdriver into screen driver*/
+	set_subdriver(psd, subdriver);
 
-	/* remember original subdriver for portrait mode switching*/
-	pdrivers[0] = psd->orgsubdriver = subdriver;
-
-#if HAVETEXTMODE
+#if HAVE_TEXTMODE
+	{
 	/* open tty, enter graphics mode*/
-	tty = open ("/dev/tty0", O_RDWR);
+	int tty = open ("/dev/tty0", O_RDWR);
 	if(tty < 0) {
 		EPRINTF("Error can't open /dev/tty0: %m\n");
 		goto fail;
@@ -238,35 +240,37 @@ fb_open(PSD psd)
 		goto fail;
 	}
 	close(tty);
+	}
 #endif
+
 	/* mmap framebuffer into this address space*/
-	psd->size = (psd->size + getpagesize () - 1)
-			/ getpagesize () * getpagesize ();
+	psd->size = (psd->size + getpagesize() - 1) / getpagesize() * getpagesize();
+
 #ifdef ARCH_LINUX_SPARC
-#define CG3_MMAP_OFFSET 	0x4000000
+#define CG3_MMAP_OFFSET 0x4000000
 #define CG6_RAM    		0x70016000
-#define TCX_RAM8BIT             0x00000000
-#define TCX_RAM24BIT            0x01000000
-        switch (fb_fix.accel) {
-            case FB_ACCEL_SUN_CGTHREE:
-	         psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,CG3_MMAP_OFFSET);
-                 break;
-            case FB_ACCEL_SUN_CGSIX:
-	         psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,CG6_RAM);
-                 break;
-	    case FB_ACCEL_SUN_TCX:
-	         psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,TCX_RAM24BIT);
-                 break;
-            default:
-		EPRINTF("Don;t know how to mmap %s with accel %d\n", env, fb_fix.accel);
+#define TCX_RAM8BIT		0x00000000
+#define TCX_RAM24BIT	0x01000000
+	switch (fb_fix.accel) {
+	case FB_ACCEL_SUN_CGTHREE:
+	psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,CG3_MMAP_OFFSET);
+		break;
+	case FB_ACCEL_SUN_CGSIX:
+		psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,CG6_RAM);
+		break;
+	case FB_ACCEL_SUN_TCX:
+		psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,TCX_RAM24BIT);
+ 		break;
+	default:
+		EPRINTF("Don't know how to mmap %s with accel %d\n", env, fb_fix.accel);
 		goto fail;
-        }
-#else
-#ifndef __uClinux__
-	psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,0);
-#else
+	}
+#elif defined(BLACKFIN)
+	psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_FILE,fb,0);
+#elif defined(__uClinux__)
 	psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,0,fb,0);
-#endif
+#else
+	psd->addr = mmap(NULL, psd->size, PROT_READ|PROT_WRITE,MAP_SHARED,fb,0);
 #endif
 	if(psd->addr == NULL || psd->addr == (unsigned char *)-1) {
 		EPRINTF("Error mmaping %s: %m\n", env);
@@ -292,10 +296,6 @@ fail:
 static void
 fb_close(PSD psd)
 {
-#if HAVETEXTMODE
-	int	tty;
-#endif
-
 	/* if not opened, return*/
 	if(status != 2)
 		return;
@@ -307,35 +307,16 @@ fb_close(PSD psd)
 	/* unmap framebuffer*/
 	munmap(psd->addr, psd->size);
   
-#if HAVETEXTMODE
+#if HAVE_TEXTMODE
+	{
 	/* enter text mode*/
-	tty = open ("/dev/tty0", O_RDWR);
+	int tty = open ("/dev/tty0", O_RDWR);
 	ioctl(tty, KDSETMODE, KD_TEXT);
 	close(tty);
+	}
 #endif
 	/* close framebuffer*/
 	close(fb);
-}
-
-static void
-fb_setportrait(PSD psd, int portraitmode)
-{
-	psd->portrait = portraitmode;
-
-	/* swap x and y in left or right portrait modes*/
-	if (portraitmode & (MWPORTRAIT_LEFT|MWPORTRAIT_RIGHT)) {
-		/* swap x, y*/
-		psd->xvirtres = psd->yres;
-		psd->yvirtres = psd->xres;
-	} else {
-		/* normal x, y*/
-		psd->xvirtres = psd->xres;
-		psd->yvirtres = psd->yres;
-	}
-	/* assign portrait subdriver which calls original subdriver*/
-	if (portraitmode == MWPORTRAIT_DOWN)
-		portraitmode = 3;	/* change bitpos to index*/
-	set_subdriver(psd, pdrivers[portraitmode], FALSE);
 }
 
 /* setup directcolor palette - required for ATI cards*/
@@ -365,9 +346,9 @@ static void
 fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette)
 {
 	int 	i;
-	unsigned short 	red[256];
-	unsigned short 	green[256];
-	unsigned short 	blue[256];
+	short 	red[256];
+	short 	green[256];
+	short 	blue[256];
 
 	if (count > 256)
 		count = 256;
@@ -406,9 +387,9 @@ ioctl_getpalette(int start, int len, short *red, short *green, short *blue)
 
 	cmap.start = start;
 	cmap.len = len;
-	cmap.red = red;
-	cmap.green = green;
-	cmap.blue = blue;
+	cmap.red = (unsigned short *)red;
+	cmap.green = (unsigned short *)green;
+	cmap.blue = (unsigned short *)blue;
 	cmap.transp = NULL;
 
 	ioctl(fb, FBIOGETCMAP, &cmap);
@@ -435,9 +416,9 @@ ioctl_setpalette(int start, int len, short *red, short *green, short *blue)
 
 	cmap.start = start;
 	cmap.len = len;
-	cmap.red = red;
-	cmap.green = green;
-	cmap.blue = blue;
+	cmap.red = (unsigned short *)red;
+	cmap.green = (unsigned short *)green;
+	cmap.blue = (unsigned short *)blue;
 	cmap.transp = NULL;
 
 	ioctl(fb, FBIOPUTCMAP, &cmap);
@@ -449,7 +430,7 @@ void
 setfadelevel(PSD psd, int f)
 {
 	int 		i;
-	unsigned short 	r[256], g[256], b[256];
+	short 	r[256], g[256], b[256];
 	extern MWPALENTRY gr_palette[256];
 
 	if(psd->pixtype != MWPF_PALETTE)
@@ -464,67 +445,4 @@ setfadelevel(PSD psd, int f)
 		b[i] = (gr_palette[i].b * fade / 100) << 8;
 	}
 	ioctl_setpalette(0, 256, r, g, b);
-}
-
-static void
-gen_getscreeninfo(PSD psd,PMWSCREENINFO psi)
-{
-	psi->rows = psd->yvirtres;
-	psi->cols = psd->xvirtres;
-	psi->planes = psd->planes;
-	psi->bpp = psd->bpp;
-	psi->ncolors = psd->ncolors;
-	psi->fonts = NUMBER_FONTS;
-	psi->portrait = psd->portrait;
-	psi->fbdriver = TRUE;	/* running fb driver, can direct map*/
-
-	psi->pixtype = psd->pixtype;
-	switch (psd->pixtype) {
-	case MWPF_TRUECOLOR8888:
-	case MWPF_TRUECOLOR0888:
-	case MWPF_TRUECOLOR888:
-		psi->rmask 	= 0xff0000;
-		psi->gmask 	= 0x00ff00;
-		psi->bmask	= 0x0000ff;
-		break;
-	case MWPF_TRUECOLOR565:
-		psi->rmask 	= 0xf800;
-		psi->gmask 	= 0x07e0;
-		psi->bmask	= 0x001f;
-		break;
-	case MWPF_TRUECOLOR555:
-		psi->rmask 	= 0x7c00;
-		psi->gmask 	= 0x03e0;
-		psi->bmask	= 0x001f;
-		break;
-	case MWPF_TRUECOLOR332:
-		psi->rmask 	= 0xe0;
-		psi->gmask 	= 0x1c;
-		psi->bmask	= 0x03;
-		break;
-	case MWPF_PALETTE:
-	default:
-		psi->rmask 	= 0xff;
-		psi->gmask 	= 0xff;
-		psi->bmask	= 0xff;
-		break;
-	}
-
-	if(psd->yvirtres > 480) {
-		/* SVGA 800x600*/
-		psi->xdpcm = 33;	/* assumes screen width of 24 cm*/
-		psi->ydpcm = 33;	/* assumes screen height of 18 cm*/
-	} else if(psd->yvirtres > 350) {
-		/* VGA 640x480*/
-		psi->xdpcm = 27;	/* assumes screen width of 24 cm*/
-		psi->ydpcm = 27;	/* assumes screen height of 18 cm*/
-        } else if(psd->yvirtres <= 240) {
-		/* half VGA 640x240 */
-		psi->xdpcm = 14;        /* assumes screen width of 24 cm*/ 
-		psi->ydpcm =  5;
-	} else {
-		/* EGA 640x350*/
-		psi->xdpcm = 27;	/* assumes screen width of 24 cm*/
-		psi->ydpcm = 19;	/* assumes screen height of 18 cm*/
-	}
 }

@@ -1,3 +1,454 @@
+30 Jul 2011
+	* Nintendo DS port, added MWPF_TRUECOLOR1555 format (Derek Carter)
+	* add Standard Event mouse/kbd drivers (/dev/input/event0) EVENTMOUSE/EVENTKBD config (David Rizzo)
+	* updated DJGPP support in contrib/djgpp, GRX lib and VESA (Georg Potthast)
+	* add GetSysColorBrush (Ludwig)
+19 Feb 2011
+	* remove GsError() in GrSetFocus to fix FLTK 1.1.10 crash/desync problem (Martin)
+	* fix scr_fb.c typo
+	* NOTE: unlike v0.92, config SCREEN_PIXTYPE _must_ be set to target framebuffer pixel format.
+		The convblit routines use RGB2PIXEL/RED2PIXEL macros which fail when converting
+		to 16bpp, and GdDrawImage display is incorrect.  The inability to use
+		multiple fb pixel formats selected at runtime will be fixed soon.
+10 Jan 2011
+	* fix slow fbe startup creating framebuffer
+8 Jan 2011
+	* prelim C++ linkages: agg rasterizer demo (src/agglite), canny edge detector src/canny)
+	* added MWIF_MONOWORDLSB blit to fblin1 for PCF/core font drawing
+	* added MWIF_MONOBYTELSB blit to fblin1 for T1LIB font non-aliased drawing
+	* freetype/t1lib driver auto downgrade to non-antialias if blend blitter not present
+	* added fast 1bpp raster ops from Dan Bloomberg's leptonica library (www.leptonica.com)
+		all raster ops now supported
+	* added support for 1bpp (pseudo-palette) pixmaps (use MWIF_PAL1), demos/nanox/monobitmap.c
+		must set fg and possibly bg color and usebg when calling GrCopyArea with
+			palette (1,2,4,8 bpp) pixmap to truecolor (higher bpp) pixmap
+			for 1bpp pixmap conversion, fg/bg color used is bit 0 of MWCOLORVAL
+	* cleaned up MWIMAGEINFO, added MWIF_PAL1 1bpp option to GdCreatePixmap
+31 Dec 2010
+	* cleanup jpeg loader, forces pal8 in palette mode else pal8 or RGB888 from image
+	* remove sscanf from xpm and pnm loaders
+	* remove bytesperpixel from image/psd header and  GrGetImageInfo return
+	* cleanup xpm loader, force pal8 image in palette mode else RGBA8888
+30 Dec 2010
+	* auto image upgrade to RGBA if not running in palette mode and no convblit available
+		this allows very fast drawing of .gifs and other 8bpp palettized images
+29 Dec 2010
+	* fix GdDrawImagePartToFit, test in composite.c
+	* all image loaders use PSD, not MWIMAGEHDR
+	* fix 16bpp driver rop bugs
+	* remove psd->linelen, use psd->pitch for line length in bytes
+	* pixmaps are now always width aligned to DWORD on right boundary
+	* GrGetImageInfo will work for pixmaps, as all images are now stored in pixmaps
+	* GR_IMAGE_ID id's are now pixmap id's and can be drawn on (no duplicate id's)
+	* GdLoadImageFromFile/Buffer use PSD not MWIMAGEHDR, remove GdFreeImage
+	* rearranged MWIMAGEHDR/SCREENDEVICE to have shared header data members
+		MWIMAGEHDR structure changed, image .c files need convbmp regeneration
+	* fixed linelen parameter bug in gen_mapmemgc
+	* new GdCreatePixmap function to create memory drawing surfaces
+	* added palette to SCREENDEVICE in preparation for elimination of MWIMAGEHDR
+27 Dec 2010
+	* added ALWAYS_INLINE to force inline convblit functions when not optimizing
+	* fix MwTextOut/MwDrawTextOut NULL hDC when erasemove bug
+	* rewrote dwswap/wswap endian reversal routines in bmp loaders, cleanup bmp reader/writers
+	* swap.h tries to automatically determine CPU endianness, new host_to_little_endian_32/16
+	* remove/fix duplicate bmp decoder in mwin/winresbmp.c, must set HAVE_BMP_SUPPORT for win32 bmps
+24 Dec 2010
+	* ctrl-quit (f15) will save screen contents to screen.bmp
+	* added DEBUG_EXPOSE and DEBUG_BLIT to flash yellow/brown on expose/blit areas
+	* fix/rewrite GdCaptureScreen to use framebuffer rather than /dev/fb0
+23 Dec 2010
+	* fix corner resize off by 2 bug
+	* buffered windows never displayed until GrFlushWindow called, remove GR_WM_PROPS_NODRAWONRESIZE
+		internal GR_WM_PROPS_DRAWING_DONE flag to indicate drawing finalized by calling GrFlushWindow
+	* unset GR_WM_PROPS_BUFFERED releases buffer, window can be used normally
+	* fixed buffered window background clear clipping bug (pixmap using root window clipregion)
+	* added GrNewBufferedWindow for quick buffered windows, same parameters as GrNewWindowEx
+	* added debug yellow clear rects for visual expose area and blit clip region display
+	* fix nanowm gc leaks
+22 Dec 2010
+	* optimized GrResizeWindow exposure for no blink
+	* added OSX/iOS-style buffered windows! use GR_WM_PROPS_BUFFERED flags in GrNewWindowEx
+		(demo in demos/nanox/composite.c, fontdemo.c, src/compositedemo.sh, fontdemo.sh)
+		Quick conversion for double buffered windows in any application:
+			add GR_WM_PROPS_BUFFERED to GrNewWindowEx flags
+			add GR_WM_PROPS_NOBACKGROUND if app paints background
+			add GrFlushWindow(wid) call in paint routine
+			add update mask and handling for GR_UPDATE_MAP & GR_UPDATE_SIZE and call paint routine
+			remove Exposure mask and event handling
+		Buffered windows allocate a 32bpp RGBA pixmap for automatic offscreen buffered drawing.
+		Pixmap is erased to bg color on create and resize unless GR_WM_PROPS_NOBACKGROUND set
+		On window expose, buffered contents are copied, app never gets expose events.
+		App must process resize and map Update events, flush buffer with GrFlushWindow(wid)
+	* fix memory leak with background pixmap windows
+21 Dec 2010
+	* fix optimization problem with DEBUG=Y, now -O3 with DEBUG, not -O0
+	* cleanup device.h HAVE_xxx defines, use Arch.rules -DHAVE_xxx=0/1 instead
+	* change HAVEFLOAT->HAVE_FLOAT, MW_NOSIGNALS=1->HAVE_SIGNAL=0, HAVESELECT->HAVE_SELECT
+	* fix BIG_ENDIAN define in dbcs and devfont
+	* cleanup printfs, use EPRINTF/DPRINTF, will call fprintf or GdError based on HAVE_FPRINTF,
+		GdError will call write() if HAVE_FILEIO set otherwise nothing
+		nano-X client programs will use fix in nano-X.h to remove printf/fprintf calls if HAVE_FPRINTF=0
+19 Dec 2010
+	* replaced strcmpi with strcasecmp
+	* special case FT2 termcs*.ttf fonts to use charmap[1] instead of unicode encoding
+	* added NOFONTS, NOCLIPPING config options, removed NOFONTSORCLIPPING
+	* added ENGINE config option to make libmwengine.a
+17 Dec 2010
+	* Configs/ config file cleanup, added SCRMEM option for memory screen driver
+	* added XK_F15 for macosx x11 quit
+	* fixed time_to_expiry definition for MACOSX port
+	* fixed stretchblit in right portrait 32bpp
+	* rm demos/nxkbd/key*.c, convbmp will recreate from .bmp
+16 Dec 2010
+	* remove GdSetFont, font not cached in gc because passed directly to GdText
+	* fix PSF_ADDRMALLOC flag
+	* wrote new memory screen driver scr_mem.c, keeps update region for fb_graphicsflush
+14 Dec 2010
+	* reduce code size, GrDrawImageToFit now calls GrDrawImagePartToFit
+	* added convstretchblit rop copy for 32/24/16bpp dest
+13 Dec 2010
+	* coalesced GdCheckCursor calls in GdBlit/GdStretchBlit for speed
+	* added stretch convblits for RGBA -> BGRA/BGR/16bpp
+	* runtime auto portrait switching now works including with offscreen pixmaps!
+		(see blitdemo.sh and compositedemo.sh)
+	* all pixmaps kept in non-portrait addressing mode, allows convblit/frameblit to copy
+12 Dec 2010
+	* 1st RGBA offscreen compositing operation!, portable across 8,16,24,32bpp framebuffers
+		new 32bpp RGBA pixmaps allow compositing on any system regardless of framebuffer format
+		added compositing demo compositdemo.sh (demos/nanox/composite.c)
+	* create new MWHWPIXEVAL, size varies with MWPF_PIXEL_FORMAT
+		changed GR_PIXEVAL to MWHWPIXELVAL for compatibility
+	* make MWPIXELVAL constant size, can't vary as 32bpp driver could be called in 16bpp systems
+	* enhanced fblin32.c for 32bpp rgba pixmaps
+	* added GrNewPixmapEx with MWIF_xxxx image format parameter (allows creation of 32bpp pixmaps)
+		passed format parameter: use 0 for framebuffer bpp, 32 for any 32bpp format,
+		or MWIF_RGBA8888 / MWIF_BGRA8888 for specific image format
+	* cleanup nano-X.h
+	* change GrCreateFont GR_CHAR * parm to const char *
+11 Dec 2010
+	* fix GR_BACKGROUND_TRANS, rewrite GsDrawBackgroundPixmap, change GsWp prefix to Gs
+	* fix background clear again when drawing background pixmaps with alpha channel
+	* remove MWIMAGEHDR compression member (replaced with data_format)
+	* rewrote convbmp to convert images to rightside up, BGR->RGB, BGRX->RGBA
+	* fix skip blit/send expose bug in GrCopyArea (window partially offscreen and root expose)
+10 Dec 2010
+	* revert back to original faster GrResizeWindow code from before 12/5/2010
+	* comment out skip blit and send expose in GrCopyArea(), fixes root window expose/clip bug
+		bug was seen in chess.sh and blitdemo.sh
+	* new blitdemo.sh demo (uses renamed/updated ft2test.c -> blitdemo.c)
+	* add srcxvirtres, srcyvirtres to MWBLITPARMS for src coord rotations, remove srcpsd-> in blit
+9 Dec 2010
+	* fix err_x init in stretch blits, caused glitches/crash in portrait modes
+	* fix mouse/touch code for down portrait mode (Uwe)
+8 Dec 2010
+	* cleanup MWIMAGE_RGB in engine/image_xxx routines
+7 Dec 2010
+	* fix GrNewBitmapFromPixmap/GrNewRegionFromPixmap, remove alpha (needs fix in 0.92 also)
+		fixes FLTK 1.10 bitmap.  FLTK 1.10 pixmap requires nxlib/SetClip.c fix
+5 Dec 2010
+	* prelim 64 bit MACOSX X11 port
+	* fix parms.srcpsd bug from last checkin
+	* revert to older GrResizeWindow method to fix bug shown by demos/nanox/ft2test.c
+	* remove PSF_HAVEBLIT, cleanup
+	* fillrect in GsDrawBackground if pixmap has alpha channel
+4 Dec 2010
+	* all blits except 16bpp are endian neutral
+	* cleanup GdBlit, rename GdStretchBlit, use common GdConvBlitInternal for all blit clipping
+	* added FrameBlit and FrameStretchBlit subdriver framebuffer blits
+	* removed Blit from fblin32/24/16/8 subdrivers, renamed driver proc BlitFallback
+	* rewrote APPLYOP for speed, optimized fblin32/24/16/8 pixel/hline/vline drawing
+	* MWROP_BLENDCONSTANT supported in 16/24/32bpp frameblit only (was 8/16/24/32bpp)
+	* frameblit src_over supported in 32bpp only, otherwise copy
+	* rewrote GdStretchBlitEx upper/lower layers to use frameblit_stretch_xxxx
+	* removed StretchBlitEx from subdrivers
+	* background pixmap draw now uses SRC_OVER, added SRC_OVER/XOR_FGBG to GdStretchBlit/GdBlit
+	* fix bug in 24bpp stretchblit (dst_y_step = dstpsd->linelen*3), (needs fix in 0.92 also)
+	* deprecated MWROP_SRCCOPY, use MWROP_COPY
+29 Nov 2010
+	* rewrote GdBlit to use frameblit_xxxx rather than old format psd->Blit
+	* added framebuffer frameblit_copy, copies backwards if required, used in GdBlit MWROP_COPY
+	* combined portrait blits for rgba/rgb/mono, added rgba output for psp
+	* cleaned up SCREENDEV struct, deprecated many screen drivers (see src/DEPRECATED)
+	* added copy convblits for 32bpp rgba (GdArea MWPF_RGB)
+28 Nov 2010
+	* cleaned up config file
+	* runtime bpp is used to select subdriver, but subdriver format must be set in config file:
+		32bpp byte order |B|G|R|A| = MWPF_TRUECOLOR8888 (pc)
+		32bpp byte order |R|G|B|A| = MWPF_TRUECOLORABGR (psp)
+		24bpp byte order |B|G|R| = MWPF_TRUECOLOR888
+		16bpp LE RGB565 = MWPF_TRUECOLOR565
+		16bpp LE RGB555 = MWPF_TRUECOLOR555
+	* deprecated MWPF_TRUECOLOR0888, now MWPF_TRUECOLOR8888 (|B|G|R|A| format)
+	* deprecated fblin32alpha.c driver, TCABGR now uses fblin32.c
+	* fixed MWPF_TRUECOLORABGR emulation in X11 driver
+	* added amask (alpha mask) to SCREENINFO, standardized gen_getscreeninfo function
+	* rewrote GdBitmap to use fast convblit, added GdBitmapByPoint
+27 Nov 2010
+	* added GdFindConvBlit, GdPrintBitmap, set_data_format functions
+	* require data_format on all screen drivers, used by GdArea
+	* added fast convblit handling to GdArea routine for 32,24,16bpp
+	* added Update to fblin8, palette mode fixes, fix X11 for palette mode
+	* cleaned up drivers and source, removed commented-out stretchblit
+24 Nov 2010
+	* removed PSDOP_xxx and GdDrawAreaInternal, all DrawArea entry points
+	* convered portrait mode drawarea to convblit, used only for 1,2,4,8 bpp subdrivers
+	* converted drawarea drivers to convblits for 1,2,4,8 bpp subdrivers
+	* fixed nonzero srcx offset and word src index bugs in convblit_mask_mono blits
+21 Nov 2010
+	* cleaned up framebuffer screen driver/subdrivers
+	* added psd->Update calls in fblin32/24/16.c routines for new X11 driver
+	* rewrote X11 driver to only draw using blits from memory framebuffer
+	* v0.93 non-fb draw model changed: engine always draws bits into real or memory
+		framebuffer, with Update() required for non-fb screen devices. Devices
+		cannot draw directly from screendev, must use blit Update() called afterwards
+17 Jul 2010 (Ludwig)
+	* added CreateDibSection, GetLastError, SetLastError, RegisterHotKey, UnRegisterHotkey
+	* various editbox fixes, added WM_CLOSE dialog handling, fixed close crash
+	* added keyflags in WM_MOUSEMOVE wParam, winerror.h
+	* add MoSync screen/mouse/kbd driver support
+16 Jul 2010
+	* fix RGB2PIXEL in convblit functions, 16bpp alpha blend bug
+22 Jun 2010
+	* remove MW_FEATURE_PSDOP_*
+	* remove fblin18.c 6/6/6 driver (reimplement using fblin24.c and new COLOR macros)
+	* remove DrawArea driver entrypoint for fblin32/24/16, copyall/copytrans for fblin16
+	* removed freetype v1 support, DBGDRIVER
+21 June 2010
+	* fast convblits for all font drawing and RGBA/RGA images on 16/24/32bpp, all rotations
+	* use fast convblit for PCF/FNT/builtin corefont text drawing
+	* replaced gen16_drawtext in PCF/FNT, and corefont_drawtext with gen_drawtext
+	* replaced gen16_gettextsize with gen_gettextsize in PCF/FNT
+	* temp add left, right, downsubdriver to SCREENDEVICE, kluge select_fb_driver for now
+	* added convblits to SUBDRIVER and SCREENDEVICE
+	* added 16bpp convblits (endian specific), muldiv255_16bpp macro (set with MWPIXEL_FORMAT)
+	* added portrait modes to all mask convblits
+18 June 2010
+	* use fast convblit for FT2/T1 text output on 24/32bpp, anti and non-aliased (rotations not complete)
+	* use gr_foreground_rgb in FT2 driver for mask convblits
+		drawarea stil uses MWPIXELVAL gr_foreground, so BLITPARMS must have both for now
+	* added convblit mask macros for 1bpp mask and 8bpp alpha mask blits
+	* rewrote convblits using static inline for high speed
+14 June 2010
+	* images output using fast convblits on 24/32bpp framebuffer
+	* changed bmp image decoder to return 24bpp RGB or 32bpp RGBA images no alpha
+	* changed pnm image decoder to return 24bpp RGB images
+	* changed xpm image decoder to return 32bpp RGBA8888 images w/alpha
+	* add data_format to MWIMAGEHDR, MWIMAGEINFO, SCREENINFO
+		working for image decoders, not implemented for screens/pixmaps yet
+	* completed png RGB/RGBA, tiff RGBA decoder image display using fast convblit
+		unset FASTJPEG as default, generate 24bpp RGB jpegs
+	* added fast conversion blit srcover/copy RGB/A for rotate left/right/down w/no copy in GdConvBlitInternal
+	* added Update entry point to SCREENDEVICE for X11 convblits
+	* added pitch, data_format to SCREENDEVICE, MapMemGC, GdCalcMemGCAlloc
+	* added convblit entry points for GdConvBlitInternal: convblit_srcover_rgba8888, copy_rgb888
+		any 32bpp RGBA or 24bpp RGB can now be displayed using fast blit (srcover and copy)
+	* added GdConvBlitInternal path from GdDrawImage for very fast image blitting (32bpp hw only)
+		if image decoder uses MWIF_ image format then GdConversionBlit/GdConvBlitInternal used
+		otherwise emulated with old GdDrawImage routine pixel by pixel
+Version 0.92 - 11 June 2010 - greg@censoft.com
+	* fix freetype 2 off-by-one height bug (ascent + descent != height)
+10 June 2010
+	* added capabilities flag word in font subdriver for h/w scaling
+	* use new freetype2 scaler cache api (>= v2.3.9) (Johannes)
+		can now compile freetype 2 without FT_CONFIG_OPTION_OLD_INTERNALS
+	* fix ncolor assert in fblin24.c
+26 May 2010
+	* fix nanowm cursor to resize in window bottom right to indicate resize
+	* added window x,y and root window rootx,rooty to GR_GENERAL_EVENT
+		(mouse enter event should be a mouse event, not general event)
+	* added WM_PROPS_NORESIZE window property to disallow window resizing
+24 May 2010
+	* rewrote adobe type1 (T1LIB) and truetype (freetype2) font subdrivers to use fast blit
+		blit project halfway done - will move GdBitmap to driver blit for PCF/CORE fonts
+		will remove/replace PSDOP_* and and combine drawarea/blit driver routines
+		all drivers will support mono lsb/msb and blendfgbg blit, meaning all fonts supported
+	* wrote drawarea_bitmap_bytes_lsb_first (t1lib) rotations for all fbportrait_xxx.c
+	* rewrote adobe type 1 font driver (font_t1lib.c), new fonts/type1 dir
+		added T1LIB_FONT_DIR to config (defaults fonts/type1)
+		requires blit_mono_byte_lsb routine in drawarea
+	* added width and height scaling to t1lib and freetype2 fonts (was height only)
+		added width parm to GrCreateFontFromBuffer, GrCopyFont
+		use GrCreateFontEx, GrSetFontSizeEx to set height and width for scaleable fonts (t1,ft2)
+	* freetype2 driver uses TTFONTDIR environ var for default font dir
+	* freetype 1 driver deprecated - use freetype 2 instead
+	* fix .fnt loader padding bug (again)
+23 May 2010
+	* split engine/devdraw.c into engine/devblit.c for blit changes
+	* major driver reorganization, DrawArea parameters change
+	* remove MWROP_TO_MODE, MWMODE_TO_ROP
+	* rename MWMODE_xxx modes to MWROP_xxx, change MWROP_SETTO1 to MWROP_SET
+	* rearrange device.h and mwtypes.h for more exportability info in mwtypes.h
+23 May 2010 - Ludwig Ertl
+	scrollbar various fixes, SB_THUMBTRACK
+	listbox fixes w/scrollbars, WM_CTLCOLORLISTBOX
+	added newlistbox.c from ReactOS (GPL only, not used by default)
+	replace Draw3dButtonRect with Draw3dUpDownState
+	rewrite mwDrawTextOut/mwDrawText heavily, internal prefix/& support
+		add #if OLD_DRAWTEXT for old drawtext code
+		no need for mwCheckUnderlineChar special drawing, button.c modified
+	add GetTextColor, Muldiv, WindowFromPoint, WM_SETREDRAW
+	add WM_COMPAREITEM, WM_DELETEITEM, COMPAREITEMSTRUCT etc handling
+	remove GetDlgBaseUnits (replaced by GetDialogBaseUnits)
+21 May 2010
+	* fixed applyOp4 off-by-one bug (affects XOR+ blits), applyOp2/3 (fblin16 v/h draw)
+	* started 64 bit compatibility, requires <stdint.h> (uint32_t and int32_t)
+	* fix map non-existent char to default char with PCF fonts, port to 64 bit
+	* fix space glyph width bug with PCF fonts (negative leftBearing still not handled)
+	* fill background in FT2 when usebg set (done again in alphacol driver for charbox)
+13 May 2010
+	* fix bug in non-MWMODE_COPY blit in fblin32/32a/24/18 and X11 drivers
+2 May 2010 - Ludwig Ertl
+	* check hdc NULL in mwTabbedTextOut fixes crash in mwdvetest
+	* enhanced DT_CALCRECT for multiline text
+	* dialog enhancements: pressing RETURN or VK_MBUTTON now pushes button w/focus,
+		CreateDialogIndirectParam, DialogBoxIndirectParam, GetDialogBaseUnits,
+		DS_CENTER calc
+	* added MessageBox, MessageBoxEx, MessageBoxIndirect, MessageBoxTimeout
+		from ReactOS (GPL only)
+	* ShowWindow always shows window except on SW_HIDE
+	* pressing RETURN or VK_MBUTTON now pushes button w/focus
+	* map VK_MBUTTON to MWKEY_ACCEPT
+1 May 2010 - greg@censoft.com
+	* added stretchblitex to left/right/down portrait modes
+	* add stretchblitex to fblin8, stretchblit test to ft2test.c
+	* deprecated StretchBlit screen driver entry point and GdStretchBlit
+		use GdStretchBlitEx, StretchBlitEx screen driver entry point
+	* added 15, 16, 24 and 32bpp to fb emulator, fix bug in fblin24 blit/alphacol
+	* fixed bug in fblin24 reversed b/g colors when alpha 0 and usebg
+29 April 2010 - Greg/Ludwig
+	* added SetWindowPlacement, GetWindowPlacement, BeginDeferWindowPos,
+		DeferWindowPos, EndDeferWindowPos, GetWindow, GetMenu, GetForegroundwindow,
+		SW_MAXIMIZE, SW_MINIMIZE, workarea maximize, partial WM_SYSCOMMAND,
+		dialog maximize via CS_DBLCLKS, MWKEY_ACCEPT, FillRgn (Ludwig)
+	* added drawarea_bitmap_bytes_msb_first to fblin4rev.c, fixed MWROP blit bug
+	* fix bug in linear24_alphacol, not blending properly, added ft2test.c pgm
+	* speedup fblin1/2, wrote msb_first drivers for fblin2/2rev
+	* add fblin1rev.c drawarea_bitmap_bytes_msb_first (Vladimir)
+	* dynamically allocate buffers in GdGetTextSize, GdText, and GdConvertEncoding
+28 April 2010 - Ludwig Ertl
+	* changed BM_SETIMAGE and STM_SETIMAGE to use lParam in button/static
+	* add SystemParametersInfo, non-overlapped workarea feature
+	* add GetProp, SetProp, RemoveProp window property routines
+		use these rather than window userdata
+	* rewrite KillTimer to allow deleting currently executing timer
+	* fix free szExecCommand in mwFreeInstance
+	* fix mwFindResource endless loop on last resource when closed resfile
+	* rewrite peekmessage loop in windlg.c with getmessage
+	* replace sscanf with strtoul in windlg.c
+	* fix BS_RIGHT style in button.c
+	* added BS_PUSHLIKE button style
+27 April 2010 - greg@censoft.com
+	* speedup fblin8/4/2/1 drivers, no asserts by default
+	* speedup 4bpp drawarea_bitmap_bytes_msb_first with linear4_drawpixelfast
+	* wrote drawarea_alphacol for 8bpp fblin8.c (FT2 antialiased output)
+	* change back FIRSTUSERENTRY to 256 for palette mode and fbe in non ALPHABLEND
+	* added bin/fbe (demos/fbe.c), frame buffer emulator on X11 for 1, 2, 4 and 8bpp!
+		to use set default BPP/XRES/YRES in drivers/scr_fb.c, FBEMULATOR=Y in config
+		run FRAMEBUFFER=/tmp/fb0 bin/fbe -d<bpp>
+		reverse bit order supported for 1,2,4 bpp (-r option)
+	* removed EMBEDDEDPLANET and TPHELIO special cases in scr_fb.c
+26 April 2010 - greg@censoft.com
+	* fixed FT2 non-antialias (bitmap) display in left/right/down portrait
+	* implemented drawarea_bitmap_bytes_msb_first in fbportrait*.c
+		(current requires bitmap rotatation)
+	* wrote rotate bitmap 1bpp left/right/down routines
+	* fix mask bug in drivers/fblin1rev.c (Vladimir)
+	* generalize portrait routines, add gen_setportrait, gen_mapmemgc
+		portrait mode should work with most any screen driver
+		by adding gen_setportrait scrdev entry and setting psd->orgsubdriver
+	* add portrait mode to X11 screen driver
+Version 0.92RC4 - 11 April 2010 - greg@censoft.com
+	* fixed drawarea_alphacol driver for right/left/down portrait
+		(freetype2 w/anti-aliasing now works right/left/down)
+	* speedup fblin32/16 drivers, no asserts by default
+	* add partial Hanzi Bitmap Font support (hbf.c, genfont.hbf.c)
+	* add WDTV sigma 863x drivers scr_smp863x.c, scr_em86xx.c
+	* fix invalid event return on mou_tslib.c driver (Kave Dai)
+	* finally correct muldiv255 macro, moved all to include/device.h
+	* update alpha channel with muldiv255
+	* fixed bad free in GrSetSelectionOwner
+1 April 2010 (Foedrowitz)
+	* revised GsCheckCursor() handles grab window differently
+	* inherit cursor from parent window(s)
+	* revised GrMovewindow screen blit move algorithm
+	* rewrite GrResizeWindow so no unmap required
+	* add GrCopyEvent, GrFreeEvent, must use for CLIENT_DATA events
+		when GrPeekEvent or GrPeekWaitEvent called, as data later freed
+31 March 2010
+	* remove obsolete.c from engine/, fonts/, drivers/
+	* cleanup fblin32.c, fblin32alpha.c, fblin24.c, fblin16.c, fblin8.c
+	* rewrite alpha blend code in fblin32.c, fblin32alpha, fblin24.c, fblin16.c
+	* change alpha calc in drawarea alphablend routine to a+1 from a+(a>>7)
+	* remove bad background draw on ft2 rotated fonts
+	* fix draw background for ft2 fonts when usebg=1 in alphablend drawarea driver
+		background is now drawn only for char glyph bbox, not entire text bbox
+	* added underline for non-rotated ft2 fonts
+23 March 2010
+	* use macros for alphablend in GdDrawImage, default fast inc/shift method
+	* cleanup fblin*.c code
+	* fix PCF/FNT and core font gettextsize to display default char if out of range
+	* added test RGBA tif file strike.tif
+	* fix bitfield order declarations for big endian GdDrawImage w/alpha (Sung Joo)
+11 March 2010
+	* changed win32 BUTTON control to get/put longs on longword boundary
+	* add -DARCH_NEED_ALIGN32 to CFLAGS for PSP port fix
+	* special thanks to YuTao <yut616@21cn.com> for debugging PSP port!
+	* cleanup mdemo.c for various options (for PSP port debug)
+Version 0.92RC3 - 9 March 2010 - greg@censoft.com
+	* remove assert(c<psd->ncolors) check in fblin32.c, allow nonzero alpha
+	* careful edit of GdDrawImage for handling image draw w/alpha channel
+	* change many comments to clarify framebuffer and longword A,R,G,B order
+	* add new MW_TRUECOLORABGR ABGR pixel format (RR GG BB AA LE framebuffer)
+	* Sony PSP port using 32bpp ABGR pixel format (Jim Paris - ps2dev.org)
+		great port and ABGR fb format by Jim Paris, untested in this version
+7 March 2010 - greg@censoft.com
+	* added back MWIMAGE_ALPHA_CHANNEL flag to tiff decoder (untested)
+	* fix inconsistency with PNG GdDrawImage w/alpha ARGB order (Byun Sung Joo)
+	* nanowm enhancements: moved to library, wm_handle_event/wm_init api,
+		added to apps in LINK_APP_INTO_SERVER case when NANOWM=Y,
+		window close on button up, NO_CORNER_RESIZE, NO_AUTO_MOVE options,
+		GR_WM_PROPS_NORAISE and NOMOVE supported in container bits (Johannes)
+	* GrGetWMProperties now returns malloc'd props.title in NONETWORK case
+	* fix long offset for win*.c fonts, fix GsAcceptClientFd close()
+21 February 2010 - greg@censoft.com
+	* widen space char width in PCF font decoder (usually was 1 pixel wide)
+	* fixed clipping code for pixmaps with offsets (Johannes)
+30 January 2010 - greg@censoft.com
+	* added PACKEDDATA structure attribute/define for packed data structs
+	* fixed BMPHEAD packing for screen.bmp files, add portrait mode (Steven)
+	* fix to support clipping for shaped windows with borders (Byun Sung Joo)
+Version 0.92RC1 - 24 Jan 2010 - greg@censoft.com
+	* fix multithread bug: allow other threads to run while in select: (Robert)
+	* 	unlock lock around client.c::select() (test in demos/nanox/threadtest.c)
+	* finalized Linux default UNIX98 pty support for nxterm, reformatted heavily
+	* added ngterm terminal type and TERMCAP environment string to nxterm
+	* implement alpha channel using C bitfields in GdDrawImage (Byun Sung Joo)
+	* add nxview -p for background pattern, -s for window half screen size
+11 January 2010 - greg@censoft.com
+	* added pcfdemo.sh to test problem helvB12_lin.pcf.gz and large pcfs
+	* cleaned up defines for RTEMS, __ECOS, LINUX
+10 January 2010 - greg@censoft.com
+	* clear background in freetype 2 rotated text (Junior)
+	* turned back on auto caching for Freetype 2.3.x (tested 2.3.9) (Riaz)
+	* fixed bug in applyOp2/3/4 macros affecting 16bpp non-copy drawing (Uwe)
+	* added GetTextAlign, implemented TA_CENTER, TA_RIGHT (Uwe)
+	* removed createfont fail verbose messages
+	* faster fillrect in genmem.c when portrait mode
+	* added 18bpp (RGB666 LSB) framebuffer support/driver ARM PXA270 (V Brach)
+	* enhanced korean KSC5601 dbcs support, modified jo16x16.c font
+	* enhanced nxterm w/cursor key support, started UNIX98 /dev/ptmx support
+	* vncserver patches (still broken), updated snap_jpeg for palette support
+	* added tomtom support and mouse driver
+9 January 2010 - greg@censoft.com
+	* fix copyright notice sscanf in convbdf.c
+	* fix off-by-one in GdFillPoly (Foedrowitz)
+	* added Linux tslib driver TSLIBMOUSE=Y (/dev/input/event0) (Daniel)
+	* added Linux AVR32 target support (Daniel)
+	* added Linux Blackfin target support
+	* fixed bug in pcf font subdriver, added test helvB12_lin.pcf.gz test
+	* test and update src for latest png, tiff, t1lib, libz libraries
+	* add patches for RTEMS 4.10 support (Joel and Roxana)
+21 January 2008 - greg@censoft.com
 	* fix .fnt.gz loader padding bug
 6 January 2008 - neuros patches from Vladimir
 	* add generic window message send GrSendMsg, GR_EVENT_MSG, GR_EVENT_MASK_MSG

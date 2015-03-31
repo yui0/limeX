@@ -5,6 +5,11 @@
  * Win32 GDI structures and API
  */
 
+#ifndef _WINGDI_H_
+#define _WINGDI_H_
+
+#include "device.h"
+
 /* portable coordinate definition*/
 typedef MWCOORD	GDICOORD;
 
@@ -68,6 +73,14 @@ typedef struct tagPAINTSTRUCT {
 HDC WINAPI 	BeginPaint(HWND hWnd, LPPAINTSTRUCT lpPaint);
 BOOL WINAPI 	EndPaint(HWND hWnd, CONST PAINTSTRUCT *lpPaint);
 
+typedef HANDLE HDWP;
+
+HDWP BeginDeferWindowPos(int nNumWindows);
+HDWP DeferWindowPos(HDWP hWinPosInfo, HWND hWnd, HWND hWndInsertAfter,
+		int x, int y, int cx, int cy, UINT uFlags);
+BOOL EndDeferWindowPos(HDWP hWinPosInfo);
+
+
 #define RGB(r,g,b)	    MWRGB(r,g,b)
 #define GetRValue(rgb)      ((BYTE)(rgb))
 #define GetGValue(rgb)      ((BYTE)(((WORD)(rgb)) >> 8))
@@ -92,27 +105,29 @@ BOOL WINAPI 	EndPaint(HWND hWnd, CONST PAINTSTRUCT *lpPaint);
 #define TA_MASK       (TA_BASELINE+TA_CENTER+TA_UPDATECP+TA_RTLREADING)
 
 COLORREF WINAPI	SetTextColor(HDC, COLORREF);
+COLORREF WINAPI GetTextColor(HDC hdc);
 COLORREF WINAPI	SetBkColor(HDC, COLORREF);
 int WINAPI 	SetBkMode(HDC, int);
 UINT WINAPI     SetTextAlign(HDC hdc, UINT fMode);
+UINT WINAPI		GetTextAlign(HDC hdc);
 
 /* Binary raster ops*/
-#define R2_BLACK            (MWMODE_CLEAR+1)		/*  0       */
-#define R2_NOTMERGEPEN      (MWMODE_NOR+1)		/* DPon     */
-#define R2_MASKNOTPEN       (MWMODE_ANDINVERTED+1)	/* DPna     */
-#define R2_NOTCOPYPEN       (MWMODE_COPYINVERTED+1)	/* Pn       */
-#define R2_MASKPENNOT       (MWMODE_ANDREVERSE+1)	/* PDna     */
-#define R2_NOT              (MWMODE_INVERT+1)		/* Dn       */
-#define R2_XORPEN           (MWMODE_XOR+1)		/* DPx      */
-#define R2_NOTMASKPEN       (MWMODE_NAND+1)		/* DPan     */
-#define R2_MASKPEN          (MWMODE_AND+1)		/* DPa      */
-#define R2_NOTXORPEN        (MWMODE_EQUIV+1)		/* DPxn     */
-#define R2_NOP              (MWMODE_NOOP+1)		/* D        */
-#define R2_MERGENOTPEN      (MWMODE_ORINVERTED+1)	/* DPno     */
-#define R2_COPYPEN          (MWMODE_COPY+1)		/* P        */
-#define R2_MERGEPENNOT      (MWMODE_ORREVERSE+1)	/* PDno     */
-#define R2_MERGEPEN         (MWMODE_OR+1)		/* DPo      */
-#define R2_WHITE            (MWMODE_SETTO1+1)		/*  1       */
+#define R2_BLACK            (MWROP_CLEAR+1)		/*  0       */
+#define R2_NOTMERGEPEN      (MWROP_NOR+1)		/* DPon     */
+#define R2_MASKNOTPEN       (MWROP_ANDINVERTED+1)	/* DPna     */
+#define R2_NOTCOPYPEN       (MWROP_COPYINVERTED+1)	/* Pn       */
+#define R2_MASKPENNOT       (MWROP_ANDREVERSE+1)	/* PDna     */
+#define R2_NOT              (MWROP_INVERT+1)		/* Dn       */
+#define R2_XORPEN           (MWROP_XOR+1)		/* DPx      */
+#define R2_NOTMASKPEN       (MWROP_NAND+1)		/* DPan     */
+#define R2_MASKPEN          (MWROP_AND+1)		/* DPa      */
+#define R2_NOTXORPEN        (MWROP_EQUIV+1)		/* DPxn     */
+#define R2_NOP              (MWROP_NOOP+1)		/* D        */
+#define R2_MERGENOTPEN      (MWROP_ORINVERTED+1)	/* DPno     */
+#define R2_COPYPEN          (MWROP_COPY+1)		/* P        */
+#define R2_MERGEPENNOT      (MWROP_ORREVERSE+1)	/* PDno     */
+#define R2_MERGEPEN         (MWROP_OR+1)		/* DPo      */
+#define R2_WHITE            (MWROP_SET+1)		/*  1       */
 #define R2_LAST             16
 
 int WINAPI	SetROP2(HDC hdc, int fnDrawMode);
@@ -227,6 +242,7 @@ BOOL WINAPI	DrawDIB(HDC hdc,int x, int y,PMWIMAGEHDR pimage); /* microwin*/
 
 DWORD WINAPI	GetSysColor(int nIndex);
 COLORREF WINAPI	SetSysColor(int nIndex, COLORREF crColor);/* Microwindows only*/
+HBRUSH WINAPI	GetSysColorBrush(int nIndex);
 
 /* Stock Logical Objects */
 #define WHITE_BRUSH         0
@@ -288,6 +304,50 @@ HBRUSH WINAPI	CreateSolidBrush(COLORREF crColor);
 HPEN WINAPI	CreatePen(int nPenStyle, int nWidth, COLORREF crColor);
 
 HBITMAP WINAPI	CreateCompatibleBitmap(HDC hdc, int nWidth, int nHeight);
+
+/* constants for the biCompression field */
+#define BI_RGB        0L
+#define BI_RLE8       1L
+#define BI_RLE4       2L
+#define BI_BITFIELDS  3L
+
+#pragma pack(2)
+typedef struct tagBITMAPINFOHEADER { // bmih
+    DWORD  PACKEDDATA biSize;
+    LONG   PACKEDDATA biWidth;
+    LONG   PACKEDDATA biHeight;
+    WORD   PACKEDDATA biPlanes;
+    WORD   PACKEDDATA biBitCount;
+    DWORD  PACKEDDATA biCompression;
+    DWORD  PACKEDDATA biSizeImage;
+    LONG   PACKEDDATA biXPelsPerMeter;
+    LONG   PACKEDDATA biYPelsPerMeter;
+    DWORD  PACKEDDATA biClrUsed;
+    DWORD  PACKEDDATA biClrImportant;
+} BITMAPINFOHEADER;
+#pragma pack()
+
+typedef struct tagRGBQUAD { // rgbq
+    BYTE    rgbBlue;
+    BYTE    rgbGreen;
+    BYTE    rgbRed;
+    BYTE    rgbReserved;
+} RGBQUAD;
+
+typedef struct tagBITMAPINFO { // bmi
+    BITMAPINFOHEADER bmiHeader;
+    RGBQUAD          bmiColors[1];
+} BITMAPINFO;
+
+
+/* DIB color table identifiers */
+
+#define DIB_RGB_COLORS      0 /* color table in RGBs */
+#define DIB_PAL_COLORS      1 /* color table in palette indices */
+
+HBITMAP CreateDIBSection(
+  HDC hdc, CONST BITMAPINFO *pbmi, UINT iUsage,
+  VOID **ppvBits, HANDLE hSection, DWORD dwOffset);
 HDC WINAPI	CreateCompatibleDC(HDC hdc);
 
 /* BitBlit raster opcodes*/
@@ -388,11 +448,13 @@ HRGN WINAPI CreateRoundRectRgn(INT left, INT top, INT right, INT bottom,
 		INT ellipse_width, INT ellipse_height );
 HRGN WINAPI CreateEllipticRgn(INT left, INT top, INT right, INT bottom );
 HRGN WINAPI CreateEllipticRgnIndirect(const RECT *rect );
+HRGN WINAPI CreatePolygonRgn(const POINT *points, INT count, INT mode);
 DWORD WINAPI GetRegionData(HRGN hrgn, DWORD count, LPRGNDATA rgndata);
 BOOL WINAPI PtInRegion(HRGN hrgn, INT x, INT y );
 BOOL WINAPI RectInRegion(HRGN hrgn, const RECT *rect );
 BOOL WINAPI EqualRgn(HRGN hrgn1, HRGN hrgn2 );
 INT  WINAPI CombineRgn(HRGN hDest, HRGN hSrc1, HRGN hSrc2, INT mode);
+BOOL FillRgn(HDC hdc, HRGN hrgn, HBRUSH hbr);
 
 /* Rect entry points*/
 BOOL WINAPI IntersectRect(LPRECT dest, const RECT *src1, const RECT *src2 );
@@ -400,3 +462,7 @@ BOOL WINAPI UnionRect(LPRECT dest, const RECT *src1, const RECT *src2 );
 BOOL WINAPI EqualRect(const RECT* rect1, const RECT* rect2 );
 BOOL WINAPI SubtractRect(LPRECT dest, const RECT *src1, const RECT *src2 );
 
+/* GDI math stuff */
+int WINAPI MulDiv(int nMultiplicand, int nMultiplier, int nDivisor);
+
+#endif

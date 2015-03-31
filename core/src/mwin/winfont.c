@@ -110,9 +110,9 @@ CreateFontIndirect(CONST LOGFONT *lplf)
 			strcat(mwlf.lfFaceName, "i");
 	}
 
-	hfont->pfont = GdCreateFont(&scrdev, NULL, 0, &mwlf);
+	hfont->pfont = GdCreateFont(&scrdev, NULL, 0, 0, &mwlf);
 	if (!hfont->pfont)
-		hfont->pfont = GdCreateFont(&scrdev, NULL, 0, NULL);
+		hfont->pfont = GdCreateFont(&scrdev, NULL, 0, 0, NULL);
 
 	return (HFONT)hfont;
 }
@@ -199,7 +199,7 @@ GetTextExtentPoint(
 	lpSize->cx = width;
 	lpSize->cy = height;
 
-	/*printf("<MWIN>: lpszStr=\"%s\", cchString=%d, lpsize->cx=%d, lpSize->cy=%d\n", lpszStr, cchString, lpSize->cx, lpSize->cy);*/
+	/*DPRINTF("<MWIN>: lpszStr=\"%s\", cchString=%d, lpsize->cx=%d, lpSize->cy=%d\n", lpszStr, cchString, lpSize->cx, lpSize->cy);*/
 	return TRUE;
 }
 
@@ -222,10 +222,9 @@ GetTextExtentExPoint(HDC hdc,	/* handle to DC*/
 		cchString = strlen((char *)lpszStr);
 		
 	attr = hdc->font->pfont->fontattr;
-	if (attr&MWTF_FREETYPE) { 
+	if (attr & MWTF_FREETYPE) {
 		if (GdGetTextSizeEx(hdc->font->pfont, lpszStr, cchString,
-			nMaxExtent, lpnFit, alpDx, &width, &height, NULL,
-								mwTextCoding)) {
+			nMaxExtent, lpnFit, alpDx, &width, &height, NULL, mwTextCoding)) {
 			lpSize->cx=width;
 			lpSize->cy=height;
 			return TRUE;
@@ -319,7 +318,7 @@ EnumFonts(
 			return 0;
 	}
 
-#if (HAVE_FREETYPE_SUPPORT | HAVE_FREETYPE_2_SUPPORT)
+#if HAVE_FREETYPE_SUPPORT
 	if (freetype_init(psd)) {
 		int		n = 0;
 		char		*p;
@@ -328,10 +327,9 @@ EnumFonts(
 		GdGetFontList(&lst, &n);
 		memset(&lf, 0, sizeof(lf));
 		for (i = 0; i < n; i++) {
-			strncpy(lf.lfFaceName, lst[i]->mwname,
-				sizeof(lf.lfFaceName));
+			strncpy(lf.lfFaceName, lst[i]->mwname, sizeof(lf.lfFaceName));
 			p = strrchr(lf.lfFaceName, '.');
-			if ((p != NULL) && strcasecmp(p, ".ttf") == 0)
+			if (p != NULL && strcasecmp(p, ".ttf") == 0)
 				*p = 0;
 //snprintf (lf.lfFaceName, sizeof(lf.lfFaceName), "%s:%s", lst[i]->mwname, lst[i]->ttname);
 			if (!lpFontFunc(&lf, &tm, 0, lParam))

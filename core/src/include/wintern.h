@@ -6,16 +6,6 @@
  */
 #include <string.h>
 
-#if (UNIX | DOS_DJGPP)
-#define strcmpi	strcasecmp
-#elif (VXWORKS)
-int strcmpi(const char *s1, const char *s2);
-#endif
-
-#ifdef __PACIFIC__
-#define strcmpi		stricmp
-#endif  
-
 #define DBLCLICKSPEED	750		/* mouse dblclik speed msecs (was 450)*/
 
 /* gotPaintMsg values*/
@@ -49,7 +39,6 @@ void		MwPaintNCArea(HWND hwnd);
 HWND		MwPrepareDC(HDC hdc);
 void		MwSetClipWindow(HDC hdc);
 void		MwSetTextCoding(long mode);
-BOOL		MwCheckUnderlineChar(HDC hdc, char *text, int *pLen, LPRECT rcLine);
 
 /* winsbar.c*/
 void		MwAdjustNCScrollbars(HWND hwnd);
@@ -72,7 +61,7 @@ void		MwExposeArea(HWND wp, MWCOORD rootx,MWCOORD rooty,
 BOOL		MwCheckMouseEvent(void);
 BOOL		MwCheckKeyboardEvent(void);
 void 		MwHandleMouseStatus(MWCOORD newx, MWCOORD newy, int newbuttons);
-void		MwTranslateMouseMessage(HWND hwnd,UINT msg,int hittest);
+void		MwTranslateMouseMessage(HWND hwnd,UINT msg,int hittest,int buttons);
 void		MwDeliverMouseEvent(int buttons, int changebuttons,
 			MWKEYMOD modifiers);
 void		MwDeliverKeyboardEvent(MWKEY keyvalue, MWKEYMOD modifiers,

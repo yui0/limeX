@@ -13,12 +13,14 @@ main(int ac,char **av)
   GR_WINDOW_ID 	window2, subwindow2;
   /*GR_WINDOW_ID	subsubwin2;*/
   GR_EVENT 	event;
+  GR_GC_ID defgc;
 
   fprintf(stderr,"This is a demo program.\n");
   fprintf(stderr,"Left-button drags window\n");
   fprintf(stderr,"Right-button raises window\n");
   
   GrOpen();
+  defgc = GrNewGC();
   window1 = GrNewWindow(GR_ROOT_WINDOW_ID, 20, 20, 100, 60, 4, BLACK, BLUE);
   subwindow1 = GrNewWindow(window1, 5, 5, 90, 50, 4, WHITE, RED);
   subsubwin1 = GrNewWindow(subwindow1, 10, 10, 10, 10, 2, GREEN, BLUE);
@@ -93,9 +95,9 @@ main(int ac,char **av)
       }
       break;
     case GR_EVENT_TYPE_EXPOSURE:
-      /*GrFillRect(event.exposure.wid, defgc,
+      GrFillRect(event.exposure.wid, defgc,
 	event.exposure.x, event.exposure.y,
-	event.exposure.width, event.exposure.height);*/
+	event.exposure.width, event.exposure.height);
       break;
     case GR_EVENT_TYPE_CLOSE_REQ:
       GrClose();

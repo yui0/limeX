@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2000, 2004, 2005 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2004, 2005, 2010 Greg Haerr <greg@censoft.com>
  *
  * Main module of Microwindows
  */
@@ -27,12 +27,18 @@
 #include <linuxmt/time.h>
 #endif
 
-#if RTEMS || __ECOS
+#if RTEMS
 #include <rtems/mw_uid.h>
 #endif
 
 #if __ECOS
 #include <cyg/kernel/kapi.h>
+#endif
+
+#if PSP
+#include <pspkernel.h>
+#include <psputils.h>
+#define exit(...) sceKernelExitGame()
 #endif
 
 #include "windows.h"
@@ -56,35 +62,63 @@ DWORD		startTicks;		/* tickcount on startup */
 int		keyb_fd;		/* the keyboard file descriptor */
 int		mouse_fd;		/* the mouse file descriptor */
 int		escape_quits = 1;	/* terminate when pressing ESC */
+DWORD		lastWIN32Error = 0;	/* Last error */
+
+#if PSP
+int exit_callback(void)
+{
+	sceKernelExitGame();
+	return 0;
+}
+
+void CallbackThread(void *arg)
+{
+	int cbid;
+
+	cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
+	sceKernelRegisterExitCallback(cbid);
+	sceKernelSleepThreadCB();
+}
+#endif
 
 int
-#if __ECOS
-invoke_WinMain(int ac,char **av)
+#if __ECOS | NOMAIN
+invoke_WinMain(int ac, char **av)
 #else
-   main(int ac,char **av)
+main(int ac, char **av)
 #endif
 {
     HINSTANCE hInstance;
 
+#if PSP
+	int thid;
+	thid = sceKernelCreateThread("update_thread", CallbackThread, 0x11, 0xFA0, 0, 0);
+	if (thid >= 0)
+		sceKernelStartThread(thid, 0, 0);
+
+        pspDebugScreenInit();
+		pspDebugScreenPrintf("\n Microwindows init...");
+#endif
+
 	/* call user hook routine before anything*/
-	if(MwUserInit(ac, av) < 0)
+	if (MwUserInit(ac, av) < 0)
 		exit(1);
 
-	if(MwOpen() < 0)
+	if (MwOpen() < 0)
 		exit(1);
 
-	if( (hInstance=mwCreateInstance(ac, av)) == NULL )
+	if ((hInstance = mwCreateInstance(ac, av)) == NULL)
 	    exit(1);
 		
 	rootwp->hInstance = hInstance;
 
 	/* call windows main program entry point*/
-	WinMain ( hInstance, NULL, 
-		  (LPSTR)((PMWAPPINSTANCE)hInstance)->szCmdLine, SW_SHOW );
+	WinMain(hInstance, NULL, (LPSTR)((PMWAPPINSTANCE)hInstance)->szCmdLine, SW_SHOW);
 
-	mwFreeInstance ( hInstance );
+	mwFreeInstance(hInstance);
 	MwClose();
-	return 0;
+
+	exit(0);
 }
 
 /*
@@ -111,7 +145,7 @@ MwClose(void)
 	MwTerminate();
 }
 
-#if (UNIX | DOS_DJGPP) && !_MINIX
+#if UNIX && HAVE_SELECT
 /*
  * Support for more than one user fd.
  * Chris Johns (ccj@acm.org)
@@ -244,7 +278,25 @@ MwUnregisterFdExcept(HWND hwnd, int fd)
 	}
 }
 
-#endif /* UNIX | DOS_DJGPP*/
+#endif /* UNIX && HAVE_SELECT*/
+
+#if NDS
+void
+MwSelect(BOOL mayWait)
+{
+	/* If mouse data present, service it*/
+	if(mousedev.Poll())
+		while(MwCheckMouseEvent())
+			continue;
+
+	/* If keyboard data present, service it*/
+	if(kbddev.Poll())
+		while(MwCheckKeyboardEvent())
+			continue;
+
+	MwHandleTimers();
+}
+#endif
 
 #if MSDOS | _MINIX
 void
@@ -264,7 +316,40 @@ MwSelect(BOOL mayWait)
 }
 #endif
 
-#if UNIX && defined(HAVESELECT)
+#if PSP
+void 
+MwSelect(BOOL mayWait)
+{
+	int mouseevents = 0;
+	int keybdevents = 0;
+
+	/* If mouse data present, service it */
+	while (mousedev.Poll() > 0)
+	{
+		MwCheckMouseEvent();
+		if (mouseevents++ > 10)
+			break;
+	}
+	
+	
+	/* If keyboard data present, service it */
+	while (kbddev.Poll() > 0)
+	{
+		MwCheckKeyboardEvent();
+		if (keybdevents++ > 10)
+			break;
+	}
+	
+	/* did we not process any input? if so, yield so we don't freeze system */
+	if (mouseevents==0 && keybdevents==0)
+		sceKernelDelayThread(100);
+
+	MwHandleTimers();
+}
+#endif
+
+
+#if UNIX && HAVE_SELECT
 #if ANIMATEPALETTE
 static int fade = 0;
 #endif
@@ -392,9 +477,9 @@ MwSelect(BOOL mayWait)
 		if(errno != EINTR)
 			EPRINTF("Select() call in main failed. Errno=%d\n", errno);
 }
-#endif
+#endif /* UNIX && HAVE_SELECT*/
 
-#if RTEMS || __ECOS
+#if RTEMS | __ECOS
 extern MWBOOL MwCheckMouseEvent();
 extern MWBOOL MwCheckKeyboardEvent();
 extern struct MW_UID_MESSAGE m_kbd;
@@ -454,7 +539,7 @@ void MwSelect (BOOL mayWait)
 	        break;
 	}
 }
-#endif /* RTEMS */
+#endif /* RTEMS | __ECOS*/
 
 #if VTSWITCH
 static void
@@ -497,7 +582,7 @@ MwInitialize(void)
 
 	extern MWLISTHEAD mwClassHead;
 
-#if (UNIX | DOS_DJGPP) && !_MINIX
+#if UNIX && HAVE_SELECT
 	for (fd = 0; fd < FD_SETSIZE; fd++) {
 		userregfd[fd].read = NULL;
 		userregfd[fd].write = NULL;
@@ -507,7 +592,7 @@ MwInitialize(void)
 	userregfd_head = -1;
 #endif
 
-#ifndef __ECOS
+#if HAVE_SIGNAL
 	/* catch terminate signal to restore tty state*/
 	signal(SIGTERM, (void *)MwTerminate);
 #endif	
@@ -589,6 +674,9 @@ MwInitialize(void)
 	rootwp = wp;
 	focuswp = wp;
 	mousewp = wp;
+
+	/* set default work area to whole root window*/
+	SystemParametersInfo(SPI_SETWORKAREA, 0, NULL, 0);
 
 	/* schedule desktop window paint*/
 	InvalidateRect(rootwp, NULL, TRUE);

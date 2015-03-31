@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2005 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2005, 2010 Greg Haerr <greg@censoft.com>
  *
  * Win32 API upper level window creation, management and msg routines
  *
@@ -13,6 +13,9 @@
  *  2003/09/24  Gabriele Brugnoni       WA_ACTIVE with WA_INACTIVE is sent before changing
  *                                      the pointer focus variable.
  *  2003/09/24  Gabriele Brugnoni       Implemented WM_SYSCHAR for ALT-Key
+ *  2010/04/23	Ludwig Ertl				Fixed KillTimer to work in TimerProc for current timer
+ *  									Implemented SetProp/GetProp/RemoveProp
+ *  2010/06/24  Ludwig Ertl				Implemented RegisterHotKey/UnregisterHotKey
  */
 #include "windows.h"
 #include "wintern.h"
@@ -25,6 +28,7 @@
 
 MWLISTHEAD mwMsgHead;		/* application msg queue*/
 MWLISTHEAD mwClassHead;		/* register class list*/
+MWLISTHEAD mwHotkeyHead={0};/* Hotkey table list */
 
 int	mwSYSMETRICS_CYCAPTION = 12;	/* Y caption height*/
 int	mwSYSMETRICS_CXFRAME = 3;	/* width of frame border*/
@@ -40,6 +44,7 @@ int	mwSYSMETRICS_CYDOUBLECLK = 2;	/* +/- Y double click position*/
 int	mwpaintSerial = 1;		/* experimental alphablend sequencing*/
 int	mwpaintNC = 1;			/* experimental NC paint handling*/
 BOOL 	mwforceNCpaint = FALSE;		/* force NC paint when alpha blending*/
+RECT mwSYSPARAM_WORKAREA = {0, 0, -1, -1};
 
 struct timer {			/* private timer structure*/
 	HWND	hwnd;		/* window associated with timer, NULL if none*/
@@ -47,12 +52,30 @@ struct timer {			/* private timer structure*/
 	UINT	uTimeout;	/* timeout value, in msecs*/
 	DWORD	dwClockExpires;	/* GetTickCount timer expiration value*/
 	TIMERPROC lpTimerFunc;	/* callback function*/
+	BOOL   bRemove;		/* Remove timer entry on next run */
 	struct timer *next;
 };
 static struct timer *timerList = NULL;	/* global timer list*/
 
+/* property */
+typedef struct {
+	MWLIST link;
+	ATOM Atom;
+	HANDLE hData;
+} MWPROP;
+
+typedef struct {
+	MWLIST link;
+	int id;
+	HWND hWnd;
+	UINT fsModifiers;
+	UINT vk;
+} MWHOTKEY;
+
+
 static void MwOffsetChildren(HWND hwnd, int offx, int offy);
 static void MwRemoveWndFromTimers(HWND hwnd);
+static BOOL MwRemoveWndFromHotkeys (HWND hWnd);
 
 LRESULT WINAPI
 CallWindowProc(WNDPROC lpPrevWndFunc, HWND hwnd, UINT Msg, WPARAM wParam,
@@ -204,16 +227,15 @@ GetMessage(LPMSG lpMsg,HWND hwnd,UINT wMsgFilterMin,UINT wMsgFilterMax)
 	 * currently MwSelect() must poll for VT switch reasons,
 	 * so this code will work
 	 */
-	while(!PeekMessage(lpMsg, hwnd, wMsgFilterMin, wMsgFilterMax,PM_REMOVE))
-	    {
+	while(!PeekMessage(lpMsg, hwnd, wMsgFilterMin, wMsgFilterMax,PM_REMOVE)) {
 		/* Call select to suspend process until user input or scheduled timer */
 		MwSelect(TRUE);
 	    MwHandleTimers();
-#ifdef MW_CALL_IDLE_HANDLER	    
-	    idle_handler ();
-#endif	    
+#if MW_CALL_IDLE_HANDLER	    
+	    idle_handler();
+#endif
 		continue;
-	    }
+	}
 	return lpMsg->message != WM_QUIT;
 }
 
@@ -241,8 +263,79 @@ TranslateMessage(CONST MSG *lpMsg)
 LONG WINAPI
 DispatchMessage(CONST MSG *lpMsg)
 {
-	return SendMessage(lpMsg->hwnd, lpMsg->message, lpMsg->wParam,
-		lpMsg->lParam);
+	return SendMessage(lpMsg->hwnd, lpMsg->message, lpMsg->wParam, lpMsg->lParam);
+}
+
+static MWHOTKEY *MwFindHotkey (int id)
+{
+	PMWLIST		p;
+	MWHOTKEY	*pHotkey;
+
+	for (p=mwHotkeyHead.head; p; p=p->next) {
+		pHotkey = GdItemAddr (p, MWHOTKEY, link);
+		if (pHotkey->id == id)
+			return pHotkey;
+	}
+	return NULL;
+}
+
+static BOOL MwRemoveWndFromHotkeys (HWND hWnd)
+{
+	PMWLIST		p, pNext;
+	MWHOTKEY	*pHotkey;
+	BOOL        bRet = FALSE;
+
+	for (p=mwHotkeyHead.head; p; p=pNext) {
+		pNext = p->next;
+		pHotkey = GdItemAddr (p, MWHOTKEY, link);
+		if (pHotkey->hWnd == hWnd) {
+			GdListRemove(&mwHotkeyHead, &pHotkey->link);
+			GdItemFree(pHotkey);
+			bRet = TRUE;
+		}
+	}
+	return bRet;
+}
+
+BOOL MwDeliverHotkey (WPARAM VK_Code, BOOL pressed)
+{
+	PMWLIST		p;
+	MWHOTKEY	*pHotkey;
+
+	if (!pressed) return FALSE;
+	for (p=mwHotkeyHead.head; p; p=p->next) {
+		pHotkey = GdItemAddr (p, MWHOTKEY, link);
+		if (pHotkey->vk == VK_Code && IsWindow(pHotkey->hWnd)) {
+			PostMessage (pHotkey->hWnd, WM_HOTKEY, 0, MAKELPARAM(0, VK_Code));
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+BOOL RegisterHotKey(HWND hWnd, int id, UINT fsModifiers, UINT vk)
+{
+	MWHOTKEY *pHotkey;
+
+	if (MwFindHotkey (id) || !(pHotkey = GdItemNew (MWHOTKEY)))
+		return FALSE;
+	pHotkey->hWnd        = hWnd;
+	pHotkey->id          = id;
+	pHotkey->fsModifiers = fsModifiers;
+	pHotkey->vk          = vk;
+	GdListAdd(&mwHotkeyHead, &pHotkey->link);
+
+	return TRUE;
+}
+
+BOOL UnregisterHotKey(HWND hWnd, int id)
+{
+	MWHOTKEY *pHotkey = MwFindHotkey(id);
+
+	if (!pHotkey) return FALSE;
+	GdListRemove(&mwHotkeyHead, &pHotkey->link);
+	GdItemFree(pHotkey);
+	return TRUE;
 }
 
 /* find the registered window class struct by name*/
@@ -254,7 +347,7 @@ MwFindClassByName(LPCSTR lpClassName)
 
 	for(p=mwClassHead.head; p; p=p->next) {
 		pClass = GdItemAddr(p, WNDCLASS, link);
-		if(strcmpi(pClass->szClassName, lpClassName) == 0)
+		if(strcasecmp(pClass->szClassName, lpClassName) == 0)
 			return pClass;
 	}
 	return NULL;
@@ -352,10 +445,6 @@ CreateWindowEx(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName,
 	/* force all clipping on by default*/
 	dwStyle |= WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
 
-	titLen = 0;
-	if( lpWindowName != NULL )
-		titLen = strlen ( lpWindowName );
-	if( titLen < 64 ) titLen = 64; /* old mw compatibility */
 	wp->pClass = pClass;
 	wp->lpfnWndProc = pClass->lpfnWndProc;
 	wp->style = dwStyle;
@@ -376,15 +465,21 @@ CreateWindowEx(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName,
 	wp->unmapcount = pwp->unmapcount + 1;
 	wp->id = (int)hMenu;
 	wp->gotPaintMsg = PAINT_PAINTED;
-	wp->szTitle = (LPTSTR) malloc ( titLen+1 );
-	if( wp->szTitle == NULL ) {
-		free ( wp );
+
+	titLen = 0;
+	if (lpWindowName != NULL)
+		titLen = strlen(lpWindowName);
+	if (titLen < 64) titLen = 64; /* old mw compatibility */
+	wp->szTitle = (LPTSTR)malloc(titLen + 1);
+	if (wp->szTitle == NULL) {
+		free(wp);
 		return NULL;
 	}
-	if( lpWindowName != NULL )
-		strcpy ( wp->szTitle, lpWindowName );
+	if (lpWindowName != NULL)
+		strcpy(wp->szTitle, lpWindowName);
 	else
-		strcpy ( wp->szTitle, "" );
+		wp->szTitle[0] = '\0';
+
 #if UPDATEREGIONS
 	wp->update = GdAllocRegion();
 #endif
@@ -445,7 +540,7 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 	PMWLIST	p;
 	PMSG	pmsg;
 
-	if (wp == rootwp)
+	if (wp == rootwp || !IsWindow (hwnd))
 		return;
 
 	/*
@@ -463,9 +558,13 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 	MwRemoveWndFromTimers(hwnd);
 
 	/*
+	 * Remove hotkeys
+	 */
+	MwRemoveWndFromHotkeys(hwnd);
+
+	/*
 	 * Disable all sendmessages to this window.
 	 */
-	wp->pClass = NULL;
 	wp->lpfnWndProc = NULL;
 
 	/*
@@ -473,6 +572,8 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 	 */
 	while (wp->children)
 		MwDestroyWindow(wp->children, bSendMsg);
+
+	wp->pClass = NULL;
 
 	/*
 	 * Free any cursor associated with the window.
@@ -489,9 +590,9 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 	if (prevwp == wp)
 		wp->parent->children = wp->siblings;
 	else {
-		while (prevwp->siblings != wp)
+		while (prevwp && prevwp->siblings != wp)
 			prevwp = prevwp->siblings;
-		prevwp->siblings = wp->siblings;
+		if (prevwp) prevwp->siblings = wp->siblings;
 	}
 	wp->siblings = NULL;
 
@@ -502,7 +603,7 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 	if (prevwp == wp)
 		listwp = wp->next;
 	else {
-		while (prevwp->next != wp)
+		while (prevwp->next && prevwp->next != wp)
 			prevwp = prevwp->next;
 		prevwp->next = wp->next;
 	}
@@ -524,6 +625,16 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 			p = p->next;
 	}
 
+	/*
+	 * Remove all properties from this window.
+	 */
+	for(p=hwnd->props.head; p; ) {
+		MWPROP  *pProp = GdItemAddr(p, MWPROP, link);
+		p = p->next;
+		GdListRemove (&hwnd->props, &pProp->link);
+		GdItemFree (pProp);
+	}
+
 	/* FIXME: destroy hdc's relating to window?*/
 
 	if (wp == capturewp) {
@@ -541,10 +652,18 @@ MwDestroyWindow(HWND hwnd,BOOL bSendMsg)
 		ReleaseDC(wp, hdc);
 	}
 
-	free ( wp->szTitle );
+	if (wp->szTitle) {
+		free(wp->szTitle);
+		wp->szTitle = NULL;
+	}
+
 #if UPDATEREGIONS
-	GdDestroyRegion(wp->update);
+	if (wp->update) {
+		GdDestroyRegion(wp->update);
+		wp->update = NULL;
+	}
 #endif
+
 	GdItemFree(wp);
 }
 
@@ -573,14 +692,35 @@ ShowWindow(HWND hwnd, int nCmdShow)
 			return FALSE;
 		MwHideWindow(hwnd, TRUE, TRUE);
 		hwnd->style &= ~WS_VISIBLE;
-		break;
+		return TRUE;
 
+	case SW_MAXIMIZE:
+		if (!(hwnd->style & WS_MAXIMIZE)) {
+			RECT rc;
+
+			hwnd->restorerc = hwnd->winrect;
+			SystemParametersInfo(SPI_GETWORKAREA, 0, &rc, 0);
+			MoveWindow(hwnd, rc.top, rc.left, rc.right - rc.left,
+					rc.bottom - rc.top, TRUE);
+			hwnd->style |= WS_MAXIMIZE;
+		}
+		break;
+	case SW_RESTORE:
+	case SW_SHOWDEFAULT:
+		if(hwnd->style & WS_MAXIMIZE) {
+			RECT rc = hwnd->restorerc;
+			MoveWindow(hwnd, rc.left, rc.top,
+				rc.right-rc.left, rc.bottom-rc.top,
+				TRUE);
+			hwnd->style &= ~WS_MAXIMIZE;
+		}
+		break;
 	default:
 		if (hwnd->style & WS_VISIBLE)
 			return FALSE;
-		hwnd->style |= WS_VISIBLE;
-		MwShowWindow(hwnd, TRUE);
 	}
+	hwnd->style |= WS_VISIBLE;
+	MwShowWindow(hwnd, TRUE);
 	return TRUE;
 }
 
@@ -1144,6 +1284,98 @@ SetWindowWord(HWND hwnd, int nIndex, WORD wNewWord)
 	return oldval;
 }
 
+/* -------------- begin STATIC atom functions --------------
+ * FIXME:
+ * Microwindows currently doesn't have functions for handling the Atom
+ * table. TODO: Replace them by correct Atom handling functions.
+ *
+ * Therefore we are just implementing a stupid function that calculates
+ * a "unique" value from a string and returns this as an "atom" so that
+ * out property methods can work as expected.
+ *
+ */
+static
+ATOM WINAPI
+GlobalFindAtom(LPCSTR lpString)
+{
+	LPCSTR p;
+	ATOM atom = 0;
+
+	for (p = lpString; *p; p++)
+		atom = ((atom + *p) % 0xFFFF);
+	return atom;
+}
+
+static
+ATOM WINAPI
+GlobalAddAtom(LPCSTR lpString)
+{
+	return GlobalFindAtom (lpString);
+}
+/* -------------- end STATIC atom functions -------------- */
+
+BOOL WINAPI
+SetProp(HWND hWnd, LPCSTR lpString, HANDLE hData)
+{
+	MWPROP *pProp;
+
+	if (!(pProp = GdItemNew(MWPROP)))
+		return FALSE;
+	if (HIWORD(lpString))
+		pProp->Atom = GlobalAddAtom(lpString);
+	else
+		pProp->Atom = LOWORD((DWORD)lpString);
+	pProp->hData = hData;
+
+	GdListAdd (&hWnd->props, &pProp->link);
+	return TRUE;
+}
+
+HANDLE WINAPI
+GetProp(HWND hWnd, LPCSTR lpString)
+{
+	ATOM Atom;
+	PMWLIST p;
+	MWPROP *pProp;
+
+	if (HIWORD(lpString))
+		Atom = GlobalFindAtom(lpString);
+	else
+		Atom = LOWORD((DWORD)lpString);
+
+	for(p=hWnd->props.head; p; p=p->next) {
+		pProp = GdItemAddr(p, MWPROP, link);
+		if (pProp->Atom == Atom)
+			return pProp->hData;
+	}
+	return NULL;
+}
+
+HANDLE WINAPI
+RemoveProp(HWND hWnd, LPCSTR lpString)
+{
+	ATOM Atom;
+	PMWLIST p;
+	MWPROP *pProp;
+	HANDLE hRet;
+
+	if (HIWORD(lpString))
+		Atom = GlobalFindAtom(lpString);
+	else
+		Atom = LOWORD((DWORD)lpString);
+
+	for(p=hWnd->props.head; p; p=p->next) {
+		pProp = GdItemAddr(p, MWPROP, link);
+		if (pProp->Atom == Atom) {
+			hRet = pProp->hData;
+			GdListRemove(&hWnd->props, &pProp->link);
+			GdItemFree(pProp);
+			return hRet;
+		}
+	}
+	return NULL;
+}
+
 DWORD WINAPI
 GetClassLong(HWND hwnd, int nIndex)
 {
@@ -1293,6 +1525,36 @@ SetWindowPos(HWND hwnd, HWND hwndInsertAfter, int x, int y, int cx, int cy,
 	return TRUE;
 }
 
+BOOL SetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl)
+{
+	if ((hWnd->style & (WS_MAXIMIZE | WS_MINIMIZE)) == 0)
+	{
+		SetWindowPos (hWnd, NULL, lpwndpl->rcNormalPosition.left,
+				lpwndpl->rcNormalPosition.top,
+				lpwndpl->rcNormalPosition.right - lpwndpl->rcNormalPosition.left,
+				lpwndpl->rcNormalPosition.bottom - lpwndpl->rcNormalPosition.top,
+				SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+	ShowWindow (hWnd, lpwndpl->showCmd);
+	hWnd->restorerc = lpwndpl->rcNormalPosition;
+
+	return TRUE;
+}
+
+BOOL GetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl)
+{
+	RECT rc;
+
+	lpwndpl->flags = 0;
+	lpwndpl->rcNormalPosition = hWnd->restorerc;
+	lpwndpl->showCmd = (hWnd->style & WS_MAXIMIZE)?SW_MAXIMIZE:SW_SHOWNORMAL;
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &rc, 0);
+	lpwndpl->ptMaxPosition.x = rc.left;
+	lpwndpl->ptMaxPosition.y = rc.top;
+	memset (&lpwndpl->ptMinPosition, 0, sizeof(lpwndpl->ptMinPosition));
+	return TRUE;
+}
+
 BOOL WINAPI
 MoveWindow(HWND hwnd, int x, int y, int nWidth, int nHeight, BOOL bRepaint)
 {
@@ -1412,6 +1674,43 @@ ReleaseCapture(VOID)
 	return TRUE;
 }
 
+HWND GetWindow(HWND hWnd, UINT uCmd)
+{
+	switch (uCmd)
+	{
+	case GW_OWNER: return hWnd->parent;
+	case GW_CHILD: return hWnd->children;
+	case GW_HWNDNEXT: return hWnd->siblings;
+	}
+	return NULL;
+}
+
+HWND GetMenu (HWND hWnd)
+{
+	return NULL;
+}
+
+HWND GetForegroundWindow(VOID)
+{
+	return focuswp;
+}
+
+HWND WindowFromPoint(POINT pt)
+{
+	HWND wp,wp1=NULL;
+
+	for(wp=GetDesktopWindow()->children; wp; wp=wp->next)
+	{
+		if (!(wp->style & WS_VISIBLE) || (wp->style & WS_DISABLED)
+				|| (wp->style & WS_CHILD) || !PtInRect (&wp->winrect, pt))
+			continue;
+		wp1 = wp;
+		break;
+	}
+
+	return wp1;
+}
+
 UINT WINAPI
 SetTimer(HWND hwnd, UINT idTimer, UINT uTimeout, TIMERPROC lpTimerFunc)
 {
@@ -1428,6 +1727,7 @@ SetTimer(HWND hwnd, UINT idTimer, UINT uTimeout, TIMERPROC lpTimerFunc)
 	tm->dwClockExpires = GetTickCount() + uTimeout;
 	tm->lpTimerFunc = lpTimerFunc;
 	tm->next = timerList;
+	tm->bRemove = FALSE;
 	timerList = tm;
 
 	return tm->idTimer;
@@ -1436,22 +1736,15 @@ SetTimer(HWND hwnd, UINT idTimer, UINT uTimeout, TIMERPROC lpTimerFunc)
 BOOL WINAPI
 KillTimer(HWND hwnd, UINT idTimer)
 {
-	struct timer *tm = timerList;
-	struct timer *ltm = NULL;
+	struct timer *tm;
 
-	while ( tm != NULL ) {
-		if( (tm->hwnd == hwnd) && (tm->idTimer == idTimer) ) {
-			if( ltm != NULL )
-				ltm->next = tm->next;
-			else
-				timerList = tm->next;
-			
-			free ( tm );
-			return TRUE;
-		}
-		ltm = tm;
-		tm = tm->next;
-	}
+	/* Just mark it for removal, actual removal will
+	 * be done in MwHandleTimers, otherwise killing a
+	 * timer in a TimerProc will end up with memory errors
+	 */
+	for (tm=timerList; tm != NULL; tm = tm->next)
+		if( (tm->hwnd == hwnd) && (tm->idTimer == idTimer) )
+			return tm->bRemove = TRUE;
 	return FALSE;
 }
 
@@ -1488,19 +1781,32 @@ MwHandleTimers(void)
 {
 	DWORD	dwTime = 0;	/* should be system time in UTC*/
 	struct timer *tm = timerList;
+	struct timer *ltm = NULL;
 
-	while ( tm != NULL ) {
-		if( GetTickCount() >= tm->dwClockExpires ) {
-			/* call timer function or post timer message*/
-			if( tm->lpTimerFunc )
-				tm->lpTimerFunc ( tm->hwnd, WM_TIMER, tm->idTimer, dwTime );
-			else
-				PostMessage ( tm->hwnd, WM_TIMER, tm->idTimer, 0 );
+	while (tm != NULL) {
+		if (!tm->bRemove) {
+			if (GetTickCount() >= tm->dwClockExpires) {
+				/* call timer function or post timer message*/
+				if (tm->lpTimerFunc)
+					tm->lpTimerFunc (tm->hwnd, WM_TIMER, tm->idTimer, dwTime);
+				else
+					PostMessage (tm->hwnd, WM_TIMER, tm->idTimer, 0);
 
-			/* reset timer*/
-			tm->dwClockExpires = GetTickCount() + tm->uTimeout;
+				/* reset timer*/
+				tm->dwClockExpires = GetTickCount() + tm->uTimeout;
+			}
 		}
-		tm = tm->next;
+		if (tm->bRemove) {
+			if(ltm != NULL)
+				ltm->next = tm->next;
+			else
+				timerList = tm->next;
+			free (tm);
+			tm = ltm?ltm->next:timerList;
+		} else {
+			ltm = tm;
+			tm = tm->next;
+		}
 	}
 }
 
@@ -1554,6 +1860,23 @@ GetSystemMetrics(int nIndex)
 		return mwSYSMETRICS_CYFRAME;
 	}
 	return 0;
+}
+
+BOOL WINAPI
+SystemParametersInfo (UINT uiAction,  UINT uiParam, PVOID pvParam, UINT fWinIni)
+{
+	switch (uiAction) {
+	case SPI_GETWORKAREA:
+		*(RECT*)pvParam = mwSYSPARAM_WORKAREA;
+		return TRUE;
+	case SPI_SETWORKAREA:
+		if (pvParam)
+			mwSYSPARAM_WORKAREA = *(RECT*)pvParam;
+		else
+			mwSYSPARAM_WORKAREA = rootwp->winrect;
+		return TRUE;
+	}
+	return FALSE;
 }
 
 HWND WINAPI

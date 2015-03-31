@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2003 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 2000, 2003, 2010 Greg Haerr <greg@censoft.com>
  * Copyright (c) 1991 David I. Bell
  *
  * Graphics server event routines for windows.
@@ -30,11 +30,11 @@ extern MOUSEDEVICE mousedev;
  */
 static GR_FNCALLBACKEVENT ErrorFunc = GrDefaultErrorHandler;
 
-/*
+/* 
  * The default error handler which is called when the server
  * reports an error event and the client hasn't set a handler for error events.
  */
-void
+void 
 GrDefaultErrorHandler(GR_EVENT *ep)
 {
 	if (ep->type == GR_EVENT_TYPE_ERROR) {
@@ -48,7 +48,7 @@ GrDefaultErrorHandler(GR_EVENT *ep)
 /*
  * Set an error handling routine, which will be called on any errors from
  * the server (when events are asked for by the client).  If zero is given,
- * then errors will be returned as regular events.
+ * then errors will be returned as regular events.  
  * Returns the previous error handler.
  */
 GR_FNCALLBACKEVENT
@@ -89,7 +89,7 @@ void GsError(GR_ERROR code, GR_ID id)
 	if (!curclient)
 		return;
 
-	/*
+	/* 
 	 * If we ran out of memory, another call to GsAllocEvent will
 	 * simply get us back here, so don't bother trying to report the event.
 	 */
@@ -153,7 +153,7 @@ GR_EVENT *GsAllocEvent(GR_CLIENT *client)
 	    client->eventtail->next = elp;
 	else
 	  client->eventhead = elp;
-
+	
 	client->eventtail = elp;
 	elp->next = NULL;
 	elp->event.type = GR_EVENT_TYPE_NONE;
@@ -178,10 +178,10 @@ GR_BOOL GsCheckMouseEvent(void)
 
 	/* Read the latest mouse status: */
 	mousestatus = GdReadMouse(&rootx, &rooty, &newbuttons);
-	if (mousestatus < 0) {
+	if(mousestatus < 0) {
 		GsError(GR_ERROR_MOUSE_ERROR, 0);
 		return FALSE;
-	} else if(mousestatus) {	/* Deliver events as appropriate: */
+	} else if(mousestatus) {	/* Deliver events as appropriate: */	
 		GsHandleMouseStatus(rootx, rooty, newbuttons);
 
 		/* possibly reset portrait mode based on mouse position*/
@@ -207,28 +207,34 @@ GR_BOOL GsCheckKeyboardEvent(void)
 	/* Read the latest keyboard status: */
 	keystatus = GdReadKeyboard(&mwkey, &modifiers, &scancode);
 
-	if (keystatus < 0) {
-		if (keystatus == -2)	/* special case return code*/
+	if(keystatus < 0) {
+		if(keystatus == -2)	/* special case return code*/
 			GsTerminate();
 		GsError(GR_ERROR_KEYBOARD_ERROR, 0);
 		return FALSE;
-	} else if (keystatus) {		/* Deliver events as appropriate: */
+	} else if(keystatus) {		/* Deliver events as appropriate: */	
 		switch (mwkey) {
 		case MWKEY_QUIT:
-			GsTerminate();
-			/* no return*/
+#if DEBUG
+			if (modifiers & MWKMOD_CTRL)
+				GdCaptureScreen(NULL, "screen.bmp");
+			else 
+#endif
+				GsTerminate(); /* no return*/
+			break;
 		case MWKEY_REDRAW:
 			GsRedrawScreen();
 			break;
 		case MWKEY_PRINT:
+#if DEBUG
 			if (keystatus == 1)
-				GdCaptureScreen("screen.bmp");
+				GdCaptureScreen(NULL, "screen.bmp");
+#endif
 			break;
 		}
-
+				
 		GsDeliverKeyboardEvent(0,
-			(keystatus==1?
-			GR_EVENT_TYPE_KEY_DOWN: GR_EVENT_TYPE_KEY_UP),
+			(keystatus==1?  GR_EVENT_TYPE_KEY_DOWN: GR_EVENT_TYPE_KEY_UP),
 			mwkey, modifiers, scancode);
 		return TRUE;
 	}
@@ -244,11 +250,11 @@ void GsHandleMouseStatus(GR_COORD newx, GR_COORD newy, int newbuttons)
 {
 	int	 changebuttons;	/* buttons that have changed */
 	MWKEYMOD modifiers;	/* latest modifiers */
-
+	
 	GdGetModifierInfo(NULL, &modifiers); /* Read kbd modifiers */
 
 	/* If we are currently in raw mode, then just deliver the raw event */
-	if (mousedev.flags & MOUSE_RAW) {
+	if (mousedev.flags & MOUSE_RAW) { 
 		GsDeliverRawMouseEvent(newx, newy, newbuttons, modifiers);
 		return;
 	}
@@ -260,14 +266,12 @@ void GsHandleMouseStatus(GR_COORD newx, GR_COORD newy, int newbuttons)
 	 * mouse position events.  Flush the device queue to make sure the
 	 * new cursor location is quickly seen by the user.
 	 */
-	if ((newx != cursorx) || (newy != cursory)) {
+	if (newx != cursorx || newy != cursory) {
 		GsResetScreenSaver();
 		GrMoveCursor(newx, newy);
 
-		GsDeliverMotionEvent(GR_EVENT_TYPE_MOUSE_MOTION,
-			newbuttons, modifiers);
-		GsDeliverMotionEvent(GR_EVENT_TYPE_MOUSE_POSITION,
-			newbuttons, modifiers);
+		GsDeliverMotionEvent(GR_EVENT_TYPE_MOUSE_MOTION, newbuttons, modifiers);
+		GsDeliverMotionEvent(GR_EVENT_TYPE_MOUSE_POSITION, newbuttons, modifiers);
 	}
 
 	/*
@@ -277,8 +281,7 @@ void GsHandleMouseStatus(GR_COORD newx, GR_COORD newy, int newbuttons)
 	if (changebuttons) {
 
 	  GsResetScreenSaver();
-	  GsDeliverButtonEvent(GR_EVENT_TYPE_BUTTON_UP,
-			       newbuttons, changebuttons, modifiers);
+	  GsDeliverButtonEvent(GR_EVENT_TYPE_BUTTON_UP, newbuttons, changebuttons, modifiers);
 	}
 
 	/*
@@ -366,7 +369,7 @@ void GsDeliverButtonEvent(GR_EVENT_TYPE type, int buttons, int changebuttons,
 			{
 				tempmask = GR_EVENT_MASK_BUTTON_UP;
 				if (ecp->eventmask & tempmask) {
-					DPRINTF("nano-X: implicit grab on window %d\n", wp->id);
+					//DPRINTF("nano-X: implicit grab on window %d\n", wp->id);
 					grabbuttonwp = wp;
 				}
 			}
@@ -395,14 +398,14 @@ void GsDeliverButtonEvent(GR_EVENT_TYPE type, int buttons, int changebuttons,
 		 */
 		if (grabbuttonwp) {
 			if (buttons == 0) {
-				DPRINTF("nano-X: implicit ungrab on window %d\n", grabbuttonwp->id);
+				//DPRINTF("nano-X: implicit ungrab on window %d\n", grabbuttonwp->id);
 				grabbuttonwp = NULL;
 				GrMoveCursor(cursorx, cursory);
 			}
 			return;
 		}
 
-		if ((wp == rootwp) || (wp->nopropmask & eventmask))
+		if (wp == rootwp || (wp->nopropmask & eventmask))
 			return;
 
 		wp = wp->parent;
@@ -461,7 +464,7 @@ void GsDeliverMotionEvent(GR_EVENT_TYPE type, int buttons, MWKEYMOD modifiers)
 			 * then search the event queue for an existing
 			 * event of this type (if any), and free it.
 			 */
-			if (type == GR_EVENT_TYPE_MOUSE_POSITION)
+			if (type == GR_EVENT_TYPE_MOUSE_POSITION) 
 				GsFreePositionEvent(client, wp->id, subwid);
 
 			ep = (GR_EVENT_MOUSE *) GsAllocEvent(client);
@@ -479,8 +482,7 @@ void GsDeliverMotionEvent(GR_EVENT_TYPE type, int buttons, MWKEYMOD modifiers)
 			ep->modifiers = modifiers;
 		}
 
-		if ((wp == rootwp) || grabbuttonwp ||
-			(wp->nopropmask & eventmask))
+		if (wp == rootwp || grabbuttonwp || (wp->nopropmask & eventmask))
 				return;
 
 		wp = wp->parent;
@@ -530,8 +532,7 @@ void GsDeliverKeyboardEvent(GR_WINDOW_ID wid, GR_EVENT_TYPE type,
 	 */
 	for (keygrab = list_grabbed_keys; keygrab != NULL; keygrab = keygrab->next) {
 		if (keygrab->key == keyvalue) {
-			if ((keygrab->type == GR_GRAB_HOTKEY)
-			 || (keygrab->type == GR_GRAB_HOTKEY_EXCLUSIVE)) {
+			if ((keygrab->type == GR_GRAB_HOTKEY) || (keygrab->type == GR_GRAB_HOTKEY_EXCLUSIVE)) {
 				ep = (GR_EVENT_KEYSTROKE *) GsAllocEvent(keygrab->owner);
 				if (ep == NULL)
 					continue;
@@ -642,8 +643,7 @@ void GsDeliverKeyboardEvent(GR_WINDOW_ID wid, GR_EVENT_TYPE type,
 			return;			/* only one client gets it */
 		}
 
-		if ((wp == rootwp) || (wp == kwp) ||
-			(wp->nopropmask & eventmask))
+		if (wp == rootwp || wp == kwp || (wp->nopropmask & eventmask))
 				return;
 
 		wp = wp->parent;
@@ -751,8 +751,7 @@ update_again:
 		if (ep == NULL)
 			continue;
 
-		ep->type = lcount?
-			GR_EVENT_TYPE_CHLD_UPDATE: GR_EVENT_TYPE_UPDATE;
+		ep->type = lcount?  GR_EVENT_TYPE_CHLD_UPDATE: GR_EVENT_TYPE_UPDATE;
 		ep->utype = utype;
 		ep->wid = wp->id;	/* GrSelectEvents window id*/
 		ep->subwid = id;	/* update window id*/
@@ -762,9 +761,9 @@ update_again:
 		ep->height = height;
 	}
 
-	/* If we are currently checking the window updated, go back and
+	/* If we are currently checking the window updated, go back and 
 	 * check its parent too */
-	if (!lcount++) {
+	if (!lcount++) {	
 		wp = wp->parent;
 		/* check for NULL on root window id*/
 		if (wp == NULL)
@@ -777,7 +776,7 @@ update_again:
 /*
  * Try to deliver a general event such as focus in, focus out, mouse enter,
  * or mouse exit to the clients which have selected for it.  These events
- * only have the window id as data, and do not propagate upwards.
+ * do not propagate upwards.
  */
 void
 GsDeliverGeneralEvent(GR_WINDOW *wp, GR_EVENT_TYPE type, GR_WINDOW *other)
@@ -803,6 +802,14 @@ GsDeliverGeneralEvent(GR_WINDOW *wp, GR_EVENT_TYPE type, GR_WINDOW *other)
 		if (other)
 			gp->otherid = other->id;
 		else gp->otherid = 0;
+
+		/* add root window x, y mouse coordinates*/
+		gp->rootx = cursorx;
+		gp->rooty = cursory;
+
+		/* window x,y only valid for mouse enter*/
+		gp->x = cursorx - wp->x;
+		gp->y = cursory - wp->y;
 	}
 }
 
@@ -1006,7 +1013,7 @@ GsDeliverSelectionChangedEvent(GR_WINDOW_ID old_owner, GR_WINDOW_ID new_owner)
    we just start at the "focus" window and try to deliver events to the path
 */
 void
-GsDeliverRawMouseEvent(int rx, int ry, int buttons, int modifiers)
+GsDeliverRawMouseEvent(GR_COORD rx, GR_COORD ry, int buttons, int modifiers)
 {
 	int i;
 
@@ -1056,7 +1063,7 @@ GsDeliverRawMouseEvent(int rx, int ry, int buttons, int modifiers)
 	/* Deliver button events if we have to */
 	for (i = 0; i < 2; i++) {
 		GR_EVENT_BUTTON *gp;
-		unsigned long cbuttons = 0;
+		uint32_t cbuttons = 0;
 		GR_EVENT_TYPE etype = (i == 0) ? GR_EVENT_TYPE_BUTTON_DOWN :
 			GR_EVENT_TYPE_BUTTON_UP;
 
