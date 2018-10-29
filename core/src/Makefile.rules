@@ -49,6 +49,12 @@ INCLUDEDIRS += -I. -I$(MW_DIR_SRC)/include
 # Libraries required for the 'engine' functionality.
 MW_CORE_LIBS :=
 
+# Clear these first since Makefile.rules is called several times
+NANOXCLIENTLIBS :=
+CCNANOXCLIENTLIBS :=
+NANOXSERVERLIBS :=
+CCNANOXSERVERLIBS :=
+
 
 ifeq ($(VTSWITCH), Y)
 DEFINES += -DVTSWITCH=1
@@ -68,13 +74,20 @@ LDFLAGS += $(X11LDFLAGS)
 else
 MW_CORE_LIBS += /usr/X11R6/lib/libX11.a
 endif
+
+ifeq ($(FBEMULATOR), Y)
+DEFINES += -DX11=1
+LDFLAGS += $(X11LDFLAGS)
+INCLUDEDIRS += -I/usr/X11R6/include
+endif
+
 ifeq ($(ARCH),FREEBSD-X86)
 INCLUDEDIRS += -I/usr/X11R6/include
 endif
 ifeq ($(ARCH),CYGWIN)
 INCLUDEDIRS += -I/usr/X11R6/include
 endif
-endif
+endif #ifeq X11
 
 ifeq ($(HAVE_VNCSERVER_SUPPORT), Y)
 INCLUDEDIRS += -I$(INCVNC) -I$(INCZ)
@@ -208,6 +221,10 @@ endif
 ifneq ($(INCFT2LIB),)
 INCLUDEDIRS += -I$(INCFT2LIB)/freetype2
 endif
+#Harfbuzz together with Freetype only
+ifeq ($(HAVE_HARFBUZZ_SUPPORT),Y)
+DEFINES += -DHAVE_HARFBUZZ_SUPPORT=1
+endif
 endif
 
 ifeq ($(HAVE_FRIBIDI_SUPPORT), Y)
@@ -221,6 +238,38 @@ else
 LDFLAGS += -lfribidi
 endif
 endif
+
+# ALLEGRO4+5
+ifeq ($(ALLEGRO5), Y)
+ifneq ($(ARCH),ANDROID)
+#if allegro5
+ #for srvmain.c and winmain.c
+ LDFLAGS += -lallegro 
+else
+ #if android
+#LDFLAGS += -L$(HOME)/allegro5111/ba/lib -lallegro-debug 
+LDFLAGS += -Landroid/buildandroid/lib -lallegro-debug 
+endif
+DEFINES += -D_ALLEGRO_=1
+endif
+
+ifeq ($(ALLEGRO4), Y)
+LDFLAGS += -lalleg 
+DEFINES += -D_ALLEGRO_=1
+endif
+
+ifeq ($(SDL1), Y)
+ LDFLAGS += -lSDL 
+ #for srvmain.c and winmain.c
+ DEFINES += -D_SDL1_2_=1
+endif
+
+ifeq ($(SDL2), Y)
+ LDFLAGS += -lSDL2 
+ #for srvmain.c and winmain.c
+ DEFINES += -D_SDL1_2_=1
+endif
+
 ifeq ($(HAVE_SHAPEJOINING_SUPPORT), Y)
 DEFINES += -DHAVE_SHAPEJOINING_SUPPORT=1
 endif
@@ -287,6 +336,13 @@ DEFINES += -DSCREEN_DEPTH=$(SCREEN_DEPTH)
 HOSTCFLAGS += -DSCREEN_DEPTH=$(SCREEN_DEPTH)
 endif
 
+#some screen drivers use this instead of MWPIXEL_FORMAT defined above
+ifdef SCREEN_PIXTYPE
+DEFINES += -DSCREEN_PIXTYPE=$(SCREEN_PIXTYPE)
+HOSTCFLAGS += -DSCREEN_PIXTYPE=$(SCREEN_PIXTYPE)
+endif
+
+
 ifeq ($(TPHELIO), Y)
 DEFINES += -DTPHELIO=1
 endif
@@ -296,7 +352,7 @@ ifeq ($(LIRCMOUSE), Y)
 DEFINES += -DHAVE_LIRC_MOUSE=1
 endif
 
-ifeq ($(LIRCKBD2), Y)
+ifeq ($(2NDKBD), Y)
 DEFINES += -DMW_FEATURE_TWO_KEYBOARDS=1
 endif
 
@@ -344,7 +400,13 @@ CFLAGS += -fpic
 endif
 
 ifeq ($(OPTIMIZE), Y)
+ifneq (,$(findstring -O,$(OPTLEVEL)))
+# found - comma means: compare empty string with result of findstring, 
+# which is not empty if -O is found
+OPTFLAGS += $(OPTLEVEL)
+else
 OPTFLAGS += -O3
+endif
 endif
 
 ifeq ($(GPROF), Y)
@@ -355,7 +417,8 @@ endif
 endif
 
 ifeq ($(DEBUG), Y)
-OPTFLAGS += -ggdb
+OPTFLAGS += -g
+#OPTFLAGS += -ggdb
 DEFINES += -DDEBUG=1
 else
 #OPTFLAGS += -DNDEBUG
@@ -459,6 +522,10 @@ CCMWINLIBS += -lc -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpspsdk \
 	-lpspuser -lpspkernel -lpsplibc
 endif
 
+#$(info    CFLAGS is $(CFLAGS))
+
+#export for nxlib/test makefile - CC and CFLAGS not passed
+export NANOXCLIENTLIBS CCNANOXCLIENTLIBS LDFLAGS $(CC) $(CFLAGS) TOOLSPREFIX MW_DIR_LIB SHOWSTUBS OPTFLAGS
 ##############################################################################
 # Build rules
 ##############################################################################
@@ -712,7 +779,8 @@ endif
 		$(MW_DIR_OBJ)/$(MW_DIR_RELATIVE)*.d \
 		$(MW_DIR_OBJ)/$(MW_DIR_RELATIVE)TAGS \
 		$(MW_DIR_LIB)/*.a \
-		$(MW_DIR_LIB)/*.so
+		$(MW_DIR_LIB)/*.so \
+		$(MW_DIR_LIB)/*.so.* 
 	for file in $(wildcard $(MW_DIR_BIN)/*); do \
 		if [ ! -d $$file ]; then \
 			$(RM) $$file; \
@@ -720,26 +788,91 @@ endif
 	done
 	$(foreach dir, $(dirs), $(MAKE) -C $(dir) clean;)
 	$(foreach dir, $(demos), $(MAKE) -C $(dir) clean;)
+	$(foreach dir, $(nxlib), $(MAKE) -C $(dir) clean;)
 
-install: default
+cleanusr:
+	-rm -f /usr/bin/nano-X
+	-rm -f /usr/bin/nanowm
+	-rm -f /usr/lib/libnano-X.a
+	-rm -f /usr/lib/libnano-X.so
+
+	-rm -f /usr/lib/libmwengine.a
+	-rm -f /usr/lib/libmwengine.so
+	-rm -f /usr/lib/libmwimages.a
+	-rm -f /usr/lib/libmwimages.so
+	-rm -f /usr/lib/libmwin.a
+	-rm -f /usr/lib/libmwin.so
+	
+	-rm -f /usr/lib/libNX11.a
+	-rm -f /usr/lib/libNX11.so
+	-rm -f /usr/lib/libNX11.so.0	
+	-rm -f /usr/lib/libPX11.a
+	-rm -f /usr/lib/libPX11.so
+	-rm -f /usr/lib/libPX11.so.0	
+	-rm -f /usr/lib/libNXext.a
+	-rm -f /usr/lib/libNXext.so
+	-rm -f /usr/lib/libNXext.so.0	
+
+	-rm -f /usr/lib64/libnano-X.a
+	-rm -f /usr/lib64/libnano-X.so
+
+	-rm -f /usr/lib64/libmwengine.a
+	-rm -f /usr/lib64/libmwengine.so
+	-rm -f /usr/lib64/libmwimages.a
+	-rm -f /usr/lib64/libmwimages.so
+	-rm -f /usr/lib64/libmwin.a
+	-rm -f /usr/lib64/libmwin.so
+
+	-rm -f /usr/lib64/libNX11.a
+	-rm -f /usr/lib64/libNX11.so
+	-rm -f /usr/lib64/libNX11.so.0
+	-rm -f /usr/lib64/libPX11.a
+	-rm -f /usr/lib64/libPX11.so
+	-rm -f /usr/lib64/libPX11.so.0	
+	-rm -f /usr/lib64/libNXext.a
+	-rm -f /usr/lib64/libNXext.so
+	-rm -f /usr/lib64/libNXext.so.0	
+	#avoid "Cannot bind to named socket" error - see faq.html
+	-rm -f /tmp/.nano-X
+	
+install:
 	$(INSTALL_DIR) $(HDRINSTALLDIR)
 	echo "Copying hdrs to $(HDRINSTALLDIR)"
 	$(INSTALL_HDR) $(MW_DIR_SRC)/include/*.h $(HDRINSTALLDIR)
 	echo "Copying libs to $(LIBINSTALLDIR)"
 	$(INSTALL_DIR) $(LIBINSTALLDIR)
 	$(INSTALL_LIB) $(MW_DIR_LIB)/*.a $(LIBINSTALLDIR)
+	#if 64bit system, install in /usr/lib64 too
+	if [ -d "$(LIBINSTALLDIR)64" ]; then \
+	echo "Copying libs to $(LIBINSTALLDIR)64"; \
+	$(INSTALL_LIB) $(MW_DIR_LIB)/*.a $(LIBINSTALLDIR)64; \
+	fi
 ifeq ($(SHAREDLIBS), Y)
 	$(INSTALL_LIB) $(MW_DIR_LIB)/*.so $(LIBINSTALLDIR)
+	# copy logical links
+	$(CP) -d $(MW_DIR_LIB)/*.so.* $(LIBINSTALLDIR)
+	#if 64bit system, install in /usr/lib64 too and copy logical links
+	if [ -d "$(LIBINSTALLDIR)64" ]; then \
+	$(INSTALL_LIB) $(MW_DIR_LIB)/*.so $(LIBINSTALLDIR)64; \
+	$(CP) -d $(MW_DIR_LIB)/*.so.* $(LIBINSTALLDIR)64; \
+	fi
+else
+	rm -f $(LIBINSTALLDIR)/nano-X.so
+	-rm -f $(LIBINSTALLDIR)64/nano-X.so
 endif
 ifeq ($(NANOX), Y)
 ifeq ($(LINK_APP_INTO_SERVER), N)
 	echo "Copying binaries to $(BININSTALLDIR)"
 	$(INSTALL_DIR) $(BININSTALLDIR)
 	$(INSTALL_BIN) $(MW_DIR_BIN)/nano-X $(BININSTALLDIR)
-else
+ifeq ($(NANOWM), Y)
+	$(INSTALL_BIN) $(MW_DIR_BIN)/nanowm $(BININSTALLDIR)
+endif
+	
+else # ==($(LINK_APP_INTO_SERVER), Y)
 	rm -f $(BININSTALLDIR)/nano-X
 endif
-else
+else # ==($(NANOX), N)
 	rm -f $(BININSTALLDIR)/nano-X
 endif
 	echo "Installation completed successfully."

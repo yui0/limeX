@@ -1,14 +1,28 @@
 #ifndef _MWTYPES_H
 #define _MWTYPES_H
 /*
- * Copyright (c) 1999, 2000, 2001, 2002, 2003, 2005, 2010 Greg Haerr <greg@censoft.com>
+ * Copyright (c) 1999, 2000, 2001, 2002, 2003, 2005, 2010, 2011 Greg Haerr <greg@censoft.com>
  * Portions Copyright (c) 2002 by Koninklijke Philips Electronics N.V.
  *
  * Exported Microwindows engine typedefs and defines
  */
+ 
+/* Microwindows version macros */ 
+/* We must not include leading zeros e.g. 092 would be octal.*/
+#define MW_VERSION          9
+#define MW_SUB_VERSION      2
+#define MW_WIP_VERSION      2 /* work in progress */
+#define MW_VERSION_STR      "92.2"
+#define MW_DATE_STR         "2015"
+#define MW_DATE             20150829    /* yyyymmdd */
+  
 #include <stdint.h> 		/* for uint32_t, int32_t*/
 #if __ECOS
 #include <ecosmwconfig.h>	/*include the eCos configuration "translation" header */
+#endif
+
+#if __MINGW32__
+#include <malloc.h> /* for alloca */
 #endif
 
 /* configurable options*/
@@ -77,6 +91,11 @@
 #define MWTF_KERNING	0x0001		/* font kerning*/
 #define MWTF_ANTIALIAS	0x0002		/* antialiased output*/
 #define MWTF_UNDERLINE	0x0004		/* draw underline*/
+#define MWTF_BOLD		0x0008		/* draw bold glyph (not present on all renderers)*/
+
+#define MWTF_CMAP_DEFAULT 0x0010	/* use default (unicode) charset in truetype font (not required)*/
+#define MWTF_CMAP_0		  0x0020	/* use charmap 0 in truetype font*/
+#define MWTF_CMAP_1       0x0040	/* use charmap 1 in truetype font*/
 
 #define MWTF_FREETYPE	0x1000		/* FIXME: remove*/
 #define MWTF_SCALEHEIGHT 0x2000		/* font can scale height seperately*/
@@ -1418,6 +1437,9 @@ typedef struct {
 #define MWBUTTON_L	04
 #define MWBUTTON_M	02
 #define MWBUTTON_R	01
+#define MWBUTTON_U	16
+#define MWBUTTON_D	32
+#define MWBUTTON_F	08
 
 /* Keyboard values*/
 typedef unsigned short	MWKEY;

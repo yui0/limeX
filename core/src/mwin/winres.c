@@ -248,7 +248,7 @@ mwIsSameType(FILE * f, LPCTSTR id, BOOL * pEof)
 	WORD w;
 	int i, n;
 
-	if ((id == NULL)) {
+	if (id == NULL) {
 		w = resReadWord(f, pEof);
 		w = resReadWord(f, pEof);
 		return !(*pEof);
@@ -492,7 +492,7 @@ resFirstDlgItem(PMWDLGTEMPLATE pDlg)
 		RES_SKIP_WSTRING(pw);	// skip font name
 	}
 	//  dword align
-	if ((((uint32_t) pw) & 2) != 0)
+	if ((((intptr_t) pw) & 2) != 0)
 		pw++;
 	return (PMWDLGITEMTEMPLATE) pw;
 }
@@ -510,7 +510,7 @@ resNextDlgItem(PMWDLGITEMTEMPLATE pItem)
 	RES_SKIP_WSTRING(pw);
 	pw += 1 + ((*pw) >> 1);
 	//  dword align
-	if ((((uint32_t) pw) & 2) != 0)
+	if ((((intptr_t) pw) & 2) != 0)
 		pw++;
 	return (PMWDLGITEMTEMPLATE) pw;
 }

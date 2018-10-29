@@ -53,7 +53,7 @@ ifeq ($(ARCH), ECOS)
 MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_ecos.o
 else
 ifeq ($(ARCH), RTEMS)
-MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_rtems.o $(MW_DIR_OBJ)/drivers/romfont.o
+MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_rtems.o $(MW_DIR_OBJ)/drivers/deprecated/romfont.o
 else
 MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_fb.o
 endif
@@ -90,6 +90,44 @@ endif
 ifeq ($(ARCH), PSP)
 MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
 MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_psp.o
+endif
+
+# NULL
+ifeq ($(NOSCR), Y)
+MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/scr_null.o
+endif
+
+# ALLEGRO
+ifeq ($(ALLEGRO5), Y)
+MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+MW_CORE_OBJS += \
+	$(MW_DIR_OBJ)/drivers/scr_allegro5.o \
+	$(MW_DIR_OBJ)/drivers/mou_allegro5.o \
+	$(MW_DIR_OBJ)/drivers/kbd_allegro5.o
+endif
+ifeq ($(ALLEGRO4), Y)
+MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+MW_CORE_OBJS += \
+	$(MW_DIR_OBJ)/drivers/scr_allegro.o \
+	$(MW_DIR_OBJ)/drivers/mou_allegro.o \
+	$(MW_DIR_OBJ)/drivers/kbd_allegro.o
+endif
+
+ifeq ($(SDL1), Y)
+MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+MW_CORE_OBJS += \
+	$(MW_DIR_OBJ)/drivers/scr_sdl1.o \
+	$(MW_DIR_OBJ)/drivers/mou_sdl1.o \
+	$(MW_DIR_OBJ)/drivers/kbd_sdl1.o
+endif
+
+ifeq ($(SDL2), Y)
+MW_CORE_OBJS += $(MW_SUBDRIVER_OBJS)
+MW_CORE_OBJS += \
+	$(MW_DIR_OBJ)/drivers/scr_sdl2.o \
+	$(MW_DIR_OBJ)/drivers/mou_sdl2.o \
+	$(MW_DIR_OBJ)/drivers/kbd_sdl2.o
 endif
 
 ifeq ($(EM8400), Y)

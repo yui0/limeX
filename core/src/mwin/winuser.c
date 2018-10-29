@@ -22,6 +22,9 @@
 #include "device.h"
 #include <stdlib.h>
 #include <string.h>
+#ifdef __EMSCRIPTEN__
+  #include <emscripten.h>
+#endif  
 
 #define PAINTONCE	1	/* =1 to queue paint msgs only once*/
 #define MOUSETEST	1
@@ -228,6 +231,9 @@ GetMessage(LPMSG lpMsg,HWND hwnd,UINT wMsgFilterMin,UINT wMsgFilterMax)
 	 * so this code will work
 	 */
 	while(!PeekMessage(lpMsg, hwnd, wMsgFilterMin, wMsgFilterMax,PM_REMOVE)) {
+#ifdef __EMSCRIPTEN__
+	    emscripten_sleep(1);
+#endif
 		/* Call select to suspend process until user input or scheduled timer */
 		MwSelect(TRUE);
 	    MwHandleTimers();
@@ -463,7 +469,7 @@ CreateWindowEx(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName,
 	wp->cursor = pwp->cursor;
 	wp->cursor->usecount++;
 	wp->unmapcount = pwp->unmapcount + 1;
-	wp->id = (int)hMenu;
+	wp->id = (intptr_t)hMenu;
 	wp->gotPaintMsg = PAINT_PAINTED;
 
 	titLen = 0;
@@ -1470,11 +1476,11 @@ SetWindowPos(HWND hwnd, HWND hwndInsertAfter, int x, int y, int cx, int cy,
 	hidden = hwnd->unmapcount || (fuFlags & SWP_NOREDRAW);
 
 	if(bZorder) {
-		switch((int)hwndInsertAfter) {
-		case (int)HWND_TOP:
+		switch((intptr_t)hwndInsertAfter) {
+		case (intptr_t)HWND_TOP:
 			MwRaiseWindow(hwnd);
 			break;
-		case (int)HWND_BOTTOM:
+		case (intptr_t)HWND_BOTTOM:
 			MwLowerWindow(hwnd);
 			break;
 		default:

@@ -967,7 +967,7 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 					newItem->dwData = 0L;
 			} else
 				if (!(dwStyle & LBS_HASSTRINGS))
-					newItem->dwData = newItem->key;
+					newItem->dwData = (intptr_t)newItem->key;
 			newItem->dwAddData = 0L;
 
 			if (message == LB_ADDSTRING)
@@ -1529,7 +1529,7 @@ ListboxCtrlProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 			HDC hdc;
 			HBRUSH hbr;
 
-			if (hbr = (HBRUSH)SendMessage (GetParent(hwnd), WM_CTLCOLORLISTBOX, wParam, (LPARAM)hwnd))
+			if (hbr = ((HBRUSH)SendMessage (GetParent(hwnd), WM_CTLCOLORLISTBOX, wParam, (LPARAM)hwnd)))
 			{
 				hdc = GetDCEx(hwnd, NULL, DCX_DEFAULTCLIP);
 				FillRect(hdc, NULL, hbr);

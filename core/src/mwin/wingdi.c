@@ -7,6 +7,7 @@
 #include "windows.h"
 #include "wintern.h"
 #include "device.h"
+#include "../drivers/genmem.h"
 #include "intl.h"
 #include <stdlib.h>
 #include <string.h>
@@ -760,8 +761,8 @@ FillRect(HDC hdc, CONST RECT *lprc, HBRUSH hbr)
 		MapWindowPoints(hwnd, NULL, (LPPOINT)&rc, 2);
 
 	/* handle COLOR_xxx + 1 passed as HBRUSH*/
-	if((PTRTOINT)obr <= MAXSYSCOLORS)
-		crFill = GetSysColor((int)obr-1);
+	if((intptr_t)obr <= MAXSYSCOLORS)
+		crFill = GetSysColor((intptr_t)obr-1);
 	else {
 		/* get color from passed HBRUSH*/
 		if(obr->style == BS_NULL)
@@ -1111,7 +1112,7 @@ mwDrawTextOut(HDC hDC, int x, int y, LPSTR str, int len, UINT uFormat, int flags
 static int WINAPI
 MwDrawText(HDC hDC, LPCVOID lpsz, int cb, LPRECT lprc, UINT uFormat, int flags)
 {
-	LPSTR str = lpsz;
+	LPSTR str = (LPSTR)lpsz;
 	int lineheight;
 	int textwidth;
 	int x, y, baseline, baselinefnt;

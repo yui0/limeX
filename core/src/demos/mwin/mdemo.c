@@ -45,7 +45,7 @@ unsigned _stklen = 4096;
 #define USEBLIT		0	/* use blit rather than DrawDIB()*/
 #endif
 
-#if RTEMS || ECOS || PSP
+#if RTEMS || ECOS || PSP || __MINGW32__
 #define  srandom  srand
 #define  random   rand
 #endif
@@ -134,7 +134,7 @@ CreateAppWindow(void)
 		WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		width, height,
-		NULL, (HMENU)nextid++, NULL, NULL);
+		NULL, (HMENU)(intptr_t)nextid++, NULL, NULL);
 
 #if CONTROLS
 	if(hwnd

@@ -1,12 +1,24 @@
-APPS    = ibm_cairo_logo 
+# ©2018 YUICHIRO NAKADA
 
-CFLAGS  = -Wall -g
-LDFLAGS = -lm
+PROGRAM = $(patsubst %.c,%,$(wildcard *.c))
 
-CFLAGS  += `pkg-config gtk+-2.0 --cflags`
-LDFLAGS += `pkg-config gtk+-2.0 --libs`
+CC = clang
+CFLAGS = -Os -ffunction-sections -fdata-sections
+LDFLAGS = -lX11 -lm -Wl,-s -Wl,--gc-sections
 
-all: $(APPS) 
+.PHONY: all
+all: depend $(PROGRAM)
 
+%.o : %.c $(HEAD)
+	$(CC) $(LDFLAGS) $(CFLAGS) -c $(@F:.o=.c) -o $@
+
+.PHONY: clean
 clean:
-	rm -f $(APPS)
+	$(RM) $(PROGRAM) $(OBJS) _depend.inc
+
+.PHONY: depend
+depend: $(OBJS:.o=.c)
+	-@ $(RM) _depend.inc
+	-@ for i in $^; do cpp -MM $$i | sed "s/\ [_a-zA-Z0-9][_a-zA-Z0-9]*\.c//g" >> _depend.inc; done
+
+-include _depend.inc

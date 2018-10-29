@@ -10,9 +10,14 @@
 #define MWINCLUDECOLORS
 #include "nano-X.h"
 
-/*#define FONTNAME	"lt1-r-omega-serif.ttf"*/
-/*#define FONTNAME	"arial.ttf"*/
-#define FONTNAME	"times.ttf"
+#if defined(__ANDROID__)
+  #define FONTNAME      "Roboto-MediumItalic.ttf"; //if android
+#else
+  /*#define FONTNAME	"lt1-r-omega-serif.ttf"*/
+  /*#define FONTNAME	"arial.ttf"
+  #define FONTNAME	"times.ttf"*/
+  /*#define FONTNAME	"fogblack.otf"*/
+#endif
 
 #define FGCOLOR		BLACK
 #define BGCOLOR		WHITE

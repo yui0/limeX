@@ -7,27 +7,43 @@
 #define MWINCLUDECOLORS
 #include "nano-X.h"
 
-#define ANTIALIAS	0		/* set =1 to enable anti aliasing*/
+#define ANTIALIAS	1		/* set =1 to enable anti aliasing*/
+
+#if defined(__ANDROID__)
+//#define FONTNAME "Times"
+//#define FONTNAME "Arial" 
+//#define FONTNAME "DroidSans"
+//#define FONTNAME "Cour"
+//#define FONTNAME "Chococooky"
+#define FONTNAME "Georgia-Italic"
+
+#else //defined(__ANDROID__) 
 
 #if HAVE_T1LIB_SUPPORT
-#define FONTNAME "fonts/type1/bchr.pfb"
+   #define FONTNAME "fonts/type1/bchr.pfb"
 #elif HAVE_FREETYPE_2_SUPPORT
-#define FONTNAME "lt1-r-omega-serif"
-//#define FONTNAME "cour"
+   //#define FONTNAME "lt1-r-omega-serif"
+    #define FONTNAME "times.ttf"
+   //#define FONTNAME "termcs1"
+   //#define FONTNAME "lucon"
+   //#define FONTNAME "cour"
 #elif HAVE_PCF_SUPPORT
-//#define FONTNAME	"jiskan24.pcf.gz"
-#define FONTNAME	"helvB12.pcf.gz"
-//#define FONTNAME	"helvB12_lin.pcf.gz"
-//#define FONTNAME	"fonts/bdf/symb18.pcf"
+   //#define FONTNAME	"jiskan24.pcf.gz"
+   #define FONTNAME	"helvB12.pcf.gz"
+   //#define FONTNAME	"helvB12_lin.pcf.gz"
+   //#define FONTNAME	"fonts/bdf/symb18.pcf"
 #elif HAVE_FNT_SUPPORT
-#define FONTNAME	"timBI18.fnt"
+   #define FONTNAME	"timBI18.fnt"
 #elif HAVE_EUCJP_SUPPORT
-#define FONTNAME	"k16x16.fnt"
+   #define FONTNAME	"k16x16.fnt"
 #elif HAVE_HZK_SUPPORT
-#define FONTNAME	"HZKFONT"
+   #define FONTNAME	"HZKFONT"
 #else
-#define FONTNAME GR_FONT_SYSTEM_VAR
+   #define FONTNAME GR_FONT_SYSTEM_VAR
 #endif
+
+#endif //defined(__ANDROID__)
+
 
 #define MAXW 400
 #define MAXH 400
@@ -36,6 +52,7 @@ GR_GC_ID gid;
 GR_FONT_ID fontid, fontid2;
 GR_BOOL kerning = GR_FALSE;
 GR_BOOL aa = ANTIALIAS;
+GR_BOOL bold = GR_FALSE;
 GR_BOOL underline = GR_FALSE;
 int angle = 0;
 int state = GR_TFBOTTOM;
@@ -61,7 +78,13 @@ int main(int argc, char **argv)
   gid = GrNewGC ();
   GrSelectEvents(window, GR_EVENT_MASK_KEY_DOWN |
 		GR_EVENT_MASK_CLOSE_REQ | GR_EVENT_MASK_EXPOSURE);
-
+#if defined(__ANDROID__)
+  sprintf(buffer,"%s","gEût été ôté de là ...");
+  for (n = 0; n < 128 && buffer[n]; n++) {
+	if (buffer[n] == '\n')
+	break;
+  }
+#else
   if ((file = fopen("bin/ftdemo.txt", "r")) == NULL) {
 	printf("Can't open text file\n");
 	return (-1);
@@ -76,6 +99,8 @@ int main(int argc, char **argv)
 	}
   }
   fclose(file);
+  
+#endif
 
   fontid = GrCreateFontEx(FONTNAME, 20, 20, NULL);
   fontid2 = GrCreateFontEx(FONTNAME, 36, 36, NULL);
@@ -101,13 +126,16 @@ int main(int argc, char **argv)
           angle %= 3600;
           break;
         case 'a':
-          aa = (aa == GR_FALSE)?GR_TRUE:GR_FALSE;
+          aa = !aa;
+          break;
+        case 'b':
+          bold = !bold;
           break;
         case 'k':
-          kerning = (kerning == GR_FALSE)?GR_TRUE:GR_FALSE;
+          kerning = !kerning;
           break;
         case 'l':
-          state = (state == GR_TFBOTTOM)?GR_TFBASELINE: \
+          state = (state == GR_TFBOTTOM)?GR_TFBASELINE:
                   (state == GR_TFBASELINE)?GR_TFTOP:GR_TFBOTTOM;
           break;
         case 'u':
@@ -133,7 +161,19 @@ int main(int argc, char **argv)
 
 void Render(GR_WINDOW_ID window)
 {
+   int flags = 0;
    GR_SCREEN_INFO info;
+
+   if (aa)
+   	flags |= GR_TFANTIALIAS;
+   if (kerning)
+   	flags |= GR_TFKERNING;
+   if (underline)
+   	flags |= GR_TFUNDERLINE;
+   if (bold)
+   	flags |= GR_TFBOLD;
+
+// flags |= MWTF_CMAP_0;	/* termcs1 only*/
 
    GrGetScreenInfo(&info);
    GrSetGCBackground(gid, WHITE);
@@ -148,13 +188,15 @@ void Render(GR_WINDOW_ID window)
  
    /* Draw menu */
    GrSetGCFont(gid, fontid);
-   GrSetFontAttr(fontid, aa? (GR_TFKERNING | GR_TFANTIALIAS): GR_TFKERNING, -1);
+   GrSetFontAttr(fontid, flags & ~GR_TFUNDERLINE, -1);
    GrText(window, gid, 5, 20, "+ Rotate string clockwise", 25, GR_TFASCII);
    GrText(window, gid, 5, 40, "-  Rotate string counter-clockwise", 34, GR_TFASCII);
    GrText(window, gid, 5, 60, "a Toggle anti-aliasing", 22, GR_TFASCII);
-   GrText(window, gid, 5, 80, "k Toggle kerning", 16, GR_TFASCII);
-   GrText(window, gid, 5, 100, "u Toggle underline", 18, GR_TFASCII);
-   GrText(window, gid, 5, 120, "l  Toggle alignment bottom/baseline/top", 39, GR_TFASCII);
+   GrText(window, gid, 5, 80, "b Toggle bold", 13, GR_TFASCII);
+   GrText(window, gid, 5, 100, "k Toggle kerning", 16, GR_TFASCII);
+   GrText(window, gid, 5, 120, "u Toggle underline", 18, GR_TFASCII);
+   GrText(window, gid, 5, 140, "l  Toggle alignment bottom/baseline/top", 39, GR_TFASCII);
+   //GrText(window, gid, 5, 160, buffer, 39, GR_TFASCII);
 #if HAVE_KSC5601_SUPPORT
    GrText(window, gid, 5, 160, "\xB0\xA1\xB0\xA2\xB0\xA3", 6, MWTF_DBCS_EUCKR);
 #endif
@@ -188,8 +230,7 @@ void Render(GR_WINDOW_ID window)
 
    /* Draw test string */
    GrSetGCFont(gid, fontid2);
-   GrSetFontAttr(fontid2, (kerning?GR_TFKERNING:0) | (aa?GR_TFANTIALIAS:0) |
-	(underline?GR_TFUNDERLINE: 0), -1);
+   GrSetFontAttr(fontid2, flags, -1);
    GrSetFontRotation(fontid2, angle);
    GrText(window, gid, MAXW/2, MAXH/2, buffer, n, state|GR_TFUTF8);
  

@@ -59,6 +59,7 @@ TARGETS = \
 	$(MW_DIR_BIN)/arcdemo \
 	$(MW_DIR_BIN)/polydemo \
 	$(MW_DIR_BIN)/bmpdemo \
+	$(MW_DIR_BIN)/hello \
 	$(MW_DIR_BIN)/rgndemo 
 
 ifneq ($(ARCH), PSP)
@@ -76,15 +77,19 @@ TARGETS += \
 	$(MW_DIR_BIN)/grabdemo
 endif
 ifneq ($(ARCH),RTEMS)
+ifneq ($(ARCH),ANDROID)
 TARGETS += \
 	$(MW_DIR_BIN)/nterm \
 #	$(MW_DIR_BIN)/threadtest \
 	$(MW_DIR_BIN)/convpbm
+endif	
 endif
 ifneq ($(ARCH),CYGWIN) 
   ifneq ($(ARCH),RTEMS)
+  ifneq ($(ARCH),ANDROID)
     TARGETS += \
 	$(MW_DIR_BIN)/nxterm
+  endif
   endif
 endif
 
@@ -125,6 +130,7 @@ all: default $(TARGETS)
 		$(MW_DIR_SRC)/demos/nanox/icons/*.ppm \
 		$(MW_DIR_SRC)/demos/nanox/icons/*.pgm \
 		$(MW_DIR_SRC)/demos/nanox/ftdemo.txt\
+		$(MW_DIR_SRC)/demos/nanox/rundemos.sh\
 		$(MW_DIR_BIN)
 
 #		$(MW_DIR_SRC)/demos/nanox/transtest.gif
